@@ -1,16 +1,40 @@
 #!/usr/bin/env julia
-function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false)
-    binEdges = typeof(bins) == Int ? collect(range(minimum(x),stop=maximum(x),length=bins+1)) : bins
+function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false, centered::Bool=false, minX::Union{Float64,Nothing}=nothing, maxX::Union{Float64,Nothing}=nothing)
+    binEdges = nothing 
+    if typeof(bins) == Int
+        if isnothing(minX)
+            minX = isnan(minimum(x)) ? minimum(i for i in x if !isnan(i)) : minimum(x)
+        end
+        if isnothing(maxX)
+            maxX = isnan(maximum(x)) ? maximum(i for i in x if !isnan(i)) : maximum(x)
+        end
+        if centered
+            middle = (maxX+minX)/2
+            Δ = (maxX-minX)/bins
+            nBins = 2*ceil(Int,(maxX-(middle+Δ/2))/Δ) + 1
+            maxX = (middle + Δ/2) + nBins/2*Δ
+            minX = (middle - Δ/2) - nBins/2*Δ
+            binEdges = collect(range(minX,stop=maxX,length=nBins+1))
+        else
+            binEdges = collect(range(minX,stop=maxX,length=bins+1))
+        end
+    else
+        binEdges = bins
+    end
     binCenters = @. (binEdges[1:end-1] + binEdges[2:end])/2
     result = zeros(length(binEdges)-1)
     for (x,y) in zip(x,y)
-        if x < binEdges[1] && overflow
-            result[1] += y
-        elseif x >= binEdges[end] && overflow
-            result[end] += y
-        else
-            bin = searchsortedfirst(binEdges,x)
-            if bin >= 1 && bin <= length(binCenters)
+        if isfinite(x) && isfinite(y)
+            if x <= binEdges[1]
+                if overflow
+                    result[1] += y
+                end
+            elseif x >= binEdges[end]
+                if overflow
+                    result[end] += y
+                end
+            else
+                bin = searchsortedfirst(binEdges,x)-1
                 result[bin] += y
             end
         end
@@ -67,20 +91,37 @@ function binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariabl
     return binnedSum(x,y.*dx,bins=bins;kwargs...)
 end
 
-t(ring::ring) = ring.r.*(1 .+ sin.(ring.ϕ).*ring.i) # time delays for Keplerian disk [rₛ]
+tDisk(ring::ring) = ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ]
+tCloud(ring::ring) = begin 
+    xyzSys = rotate3D(ring.r,ring.ϕₒ,ring.i,ring.rot,ring.θₒ,ring.reflect) 
+    ring.r - xyzSys[1] # time delays for clouds [rₛ]
+end
 
 function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{Int,Vector{Float64}}=100, dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
     n = Symbol(name); p = nothing;
     if n == :line
         p = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
-    elseif n == :delay 
-        p = isnothing(dx) ? binModel(bins,m=m,yVariable=t,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:t,xVariable=:v;kwargs...)
+    elseif n == :delay
+        d(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring).*ring.I : tDisk(ring).*ring.I
+        #WORK IN PROGRESS -- need to weight by I
+        # define Base./ for profile struct? 
+        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:t,xVariable=:v;kwargs...)
+        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     elseif n == :r
-        p = isnothing(dx) ? binModel(bins,m=m,yVariable=:r,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
+        r(ring::ring) = ring.r.*ring.I
+        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=r,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
+        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     elseif n == :ϕ
-        p = isnothing(dx) ? binModel(bins,m=m,yVariable=:ϕ,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
+        ϕ(ring::ring) = ring.ϕ.*ring.I
+        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=ϕ,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
+        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     elseif isa(name,Function)
-        p = isnothing(dx) ? binModel(bins,m=m,yVariable=name,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=name,xVariable=:v;kwargs...)
+        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=name,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=name,xVariable=:v;kwargs...)
+        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     else
         throw(ArgumentError("profile $(name) not recognized -- choose from [:line, :delay, :r, :ϕ] or pass a function that can be applied to model.rings"))
     end

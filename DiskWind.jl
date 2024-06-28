@@ -6,4 +6,6 @@ include("profiles.jl")
 include("intensity.jl")
 include("velocity.jl")
 include("analysis.jl")
+include("clouds.jl")
+include("transfer.jl")
 end

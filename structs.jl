@@ -1,16 +1,16 @@
 #!/usr/bin/env julia
-
 struct ring{V,F}
     """structure to hold parameters of model ring
     attributes:
         r: distance from central mass (in terms of rₛ) Union{Vector{Float64},Float64
-            - in the case of circular orbits (e=0) or for a single angle r is a Float64, 
-              otherwise it is a Vector{Float64} of distances corresponding to azimuthal angles ϕ
+            - can be Float64 for constant r across ϕ or single point at (r,ϕ), otherwise it is a Vector{Float64} of distances corresponding to azimuthal angles ϕ
             - user can (optionally) supply a function to calculate r from other parameters (see constructor) that returns a Vector{Float64} or Float64
         i: inclination angle (rad) {Float64}
             - must be between 0 and π/2, with 0 being face-on and π/2 being edge-on
-        e: eccentricity {Float64}
-            - must be between 0 and 1, defaults to 0.0, if non-zero, r is a function of ϕ (must be supplied to constructor)
+        rot: rotation of system plane about z axis (rad) {Float64}
+        θₒ: opening angle (rad) of ring {Float64}
+            - should be between 0 and π/2
+            - optional, defaults to 0
         v: line of sight velocity {Union{Vector{Float64},Float64}}
             - Float64 for a single angle, otherwise a Vector{Float64} of velocities corresponding to azimuthal angles ϕ
             - user can (optionally) supply a function to calculate v from other parameters (see constructor) that returns a Vector{Float64}
@@ -18,18 +18,28 @@ struct ring{V,F}
             - Float64 for a single angle, otherwise a Vector{Float64} of intensities corresponding to azimuthal angles ϕ
             - user can (optionally) supply a function to calculate I from other parameters (see constructor) that returns a Vector{Float64}
         ϕ: azimuthal angle (rad) {Union{Vector{Float64},Float64}}
-            - Float64 for a single angle, otherwise a Vector{Float64} of azimuthal angles between 0 and 2π
+            - Float64 for a single point, otherwise a Vector{Float64} of azimuthal angles
+        ϕₒ (optional): azimuthal angle of system before rotation (rad) {Union{Vector{Float64},Float64}}
+            - Float64 for a single point, otherwise a Vector{Float64} of azimuthal angles
+            - defaults to 0.0 if not provided or if rot is 0.0 (if no rotation ϕ = ϕₒ)
+        ΔA: projected area of ring in image (used in calculating profiles) {Union{Vector{Float64},Float64}}
+            - Float64 for a single point, otherwise a Vector{Float64} of projected areas corresponding to azimuthal angles ϕ
+            - defaults to 1.0 if not provided
     
     constructor:
-        ring(;r, i, e, v, I, ϕ, kwargs...)
+        ring(;r, i, rot, θₒ, v, I, ϕ, ϕₒ, kwargs...)
         r: Float64, Vector{Float64} or Function
             - if function, must return a Vector{Float64} or Float64 corresponding to ϕ
         i: Float64
             - must be between 0 and π/2
-        e: Float64
-            - optional
-            - must be between 0 and 1, defaults to 0.0
-            - if non-zero, r should be a function (of at least ϕ) -- but can still be passed (with warning) as a Float64/Vector{Float64} if calculated elsewhere
+        rot: Float64
+            - optional (defaults to 0.0)
+            - must be between 0 and 2π (or -π to π)
+            - describes 3D rotation about z axis of ring plane
+        θₒ: Float64
+            - optional (defaults to 0.0)
+            - must be between 0 and π/2
+            - opening angle of ring (i.e. thin disk has opening angle near 0.0 and spherical shell has opening angles distributed between 0 and π/2)
         v: Float64, Vector{Float64} or Function
             - if function, must return a Vector{Float64} corresponding to ϕ
         I: Float64, Vector{Float64}, Matrix{Float64}, or Function
@@ -37,6 +47,8 @@ struct ring{V,F}
         ϕ: Float64 or Vector{Float64}
             - must be between 0 and 2π
             - if Float64, r, v, and I must be Float64 (or functions that return Float64)
+        ϕₒ: Float64 or Vector{Float64}
+            - optional (defaults to 0.0)
         ΔA: Float64 or Vector{Float64}
             - projected area of ring in image (used in calculating profiles)
             - i.e. for log-spherical ring ΔA = r^2*Δr*Δϕ, for linear-spherical ring ΔA = r*Δr*Δϕ, for cloud ΔA could be size of cloud (note here r would be the image r not the physical r)
@@ -46,55 +58,46 @@ struct ring{V,F}
 
     r::Union{V,F,Function}
     i::F
-    e::F
+    rot::F
+    θₒ::F
     v::Union{V,F,Function}
     I::Union{V,F,Matrix{F},Function}
     ϕ::Union{V,F}
+    ϕₒ::Union{V,F}
     ΔA::Union{V,F}
+    reflect::Bool
 
     function ring(;kwargs...) #could re-write this to use multiple dispatch? i.e. ring(;r::Float64, i::Float64, e::Float64, v::Float64, I::Float64, ϕ::Float64) etc.
         """
         constructor for ring struct -- takes in kwargs (detailed above) and returns a ring object (detailed above) while checking for errors
         """
-        r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; e = 0.0; ΔA = 1.0
+        r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; ΔA = 1.0; rot = 0.0; θₒ = 0.0; ϕₒ = 0.0; reflect = false
         try; r = kwargs[:r]; catch; error("r must be provided as kwarg"); end
         try; i = kwargs[:i]; catch; error("i must be provided as kwarg"); end
-        try; e = kwargs[:e]; catch; println("e not provided: defaulting to 0.0"); end
         try; v = kwargs[:v]; catch; error("v must be provided as kwarg"); end
         try; I = kwargs[:I]; catch; error("I must be provided as kwarg"); end
         try; ϕ = kwargs[:ϕ]; catch; error("ϕ must be provided as kwarg"); end
         try; ΔA = kwargs[:ΔA]; catch; error("ΔA not provided, defaulting to 1.0"); end
+        try; rot = kwargs[:rot]; catch; println("rot not provided: defaulting to 0.0"); end
+        try; θₒ = kwargs[:θₒ]; catch; println("θₒ not provided: defaulting to 0.0"); end
+        try; ϕₒ = kwargs[:ϕₒ]; catch; println("ϕₒ not provided: defaulting to 0.0"); end
+        try; reflect = kwargs[:reflect]; catch; println("reflect not provided: defaulting to false"); end
         kwargs = values(kwargs)
-
+        
+        @assert typeof(reflect) == Bool "reflect must be Bool, got $(typeof(reflect))"
         @assert typeof(i) == Float64 "i must be Float64, got $(typeof(i))"
         @assert (i >= 0) && (i <= π/2) "i must be between 0 and π/2, got $i"
-        @assert typeof(e) == Float64 "e must be Float64, got $(typeof(e))"
-        @assert (e >= 0) && (e < 1) "e must be between 0 and 1, got $e"
+        @assert (typeof(rot) == Float64) "rot must be Float64, got $(typeof(rot))"
+        @assert (typeof(θₒ) == Float64) "θₒ must be Float64, got $(typeof(θₒ))"
+        @assert (θₒ >= 0) && (θₒ <= π/2) "θₒ must be between 0 and π/2, got $θₒ"
         @assert (typeof(ΔA) == Float64) || (typeof(ΔA) == Vector{Float64}) "ΔA must be Float64 or Vector{Float64}, got $(typeof(ΔA))"
         if typeof(ΔA) == Vector{Float64}
             @assert length(ΔA) == length(ϕ) "ΔA must be the same length as ϕ"
-            @assert all(ΔA .> 0) "ΔA must be greater than 0"
-        else
-            @assert ΔA > 0 "ΔA must be greater than 0"
         end
         @assert (typeof(r) == Vector{Float64}) || (typeof(r) == Float64) || (isa(r,Function)) "r must be Float64, Vector{Float64} or Function, got $(typeof(v))"        
-        if (e != 0.0)
-            if isa(r,Function)
-                try; r = r(;kwargs...); kwargs = merge(kwargs, (; r = r)); catch; error("error in function r -- check kwargs"); end
-                @assert length(r) == length(ϕ) "r must return a vector of the same length as ϕ"
-                @assert typeof(r) == typeof(ϕ) "r and ϕ must be the same type"
-                @assert all(r .>= 0) "r must be greater than 0"
-            else
-                @warn "e is non-zero but r is not a function -- make sure r is calculated elsewhere correctly"
-                if typeof(r) == Float64
-                    @assert r > 0 "r must be greater than 0"
-                else
-                    @assert all(r .> 0) "r must be greater than 0"
-                end
-            end
-        end
 
         @assert (typeof(ϕ) == Vector{Float64}) || (typeof(ϕ) == Float64) "ϕ must be Float64 or Vector{Float64}, got $(typeof(ϕ))"
+        @assert (typeof(ϕₒ) == Vector{Float64}) || (typeof(ϕₒ) == Float64) "ϕₒ must be Float64 or Vector{Float64}, got $(typeof(ϕₒ))"
 
         @assert (typeof(v) == Vector{Float64}) || (typeof(v) == Float64) || (isa(v,Function)) "v must be Float64, Vector{Float64} or Function, got $(typeof(v))"
         if isa(v,Function)
@@ -124,37 +127,79 @@ struct ring{V,F}
             @assert size(I) == (length(r),length(ϕ)) "I must be a matrix of size (length(r),length(ϕ))"
         end
 
-        new{Vector{Float64},Float64}(r,i,e,v,I,ϕ,ΔA)
+        new{Vector{Float64},Float64}(r,i,rot,θₒ,v,I,ϕ,ϕₒ,ΔA,reflect)
     end
 end
 
 Base.show(io::IO, r::ring) = begin
-    println(io, "ring struct with inclination $(r.i) rad")
-    println(io, "eccentricity: $(r.e)")
+    println(io, "ring struct with inclination $(round(r.i,sigdigits=3)) rad, rotation $(round(r.rot,sigdigits=3)) rad, and opening angle $(round(r.θₒ,sigdigits=3)) rad")
+    xMin = nothing; xMax = nothing
     if typeof(r.ϕ) == Float64
-        println(io, "cloud with azimuthal angle: $(r.ϕ) rad")
+        if r.ϕ != r.ϕₒ
+            println(io, "cloud with final azimuthal angle: $(round(r.ϕ,sigdigits=3)) rad and initial azimuthal angle: $(round(r.ϕₒ,sigdigits=3)) rad")
+        else
+            println(io, "cloud with final azimuthal angle: $(round(r.ϕ,sigdigits=3)) rad")
+        end
+        if r.reflect
+            println("\t--cloud originally on back side of disk, reflected across disk mid-plane to front")
+        end
     else
-        println(io, "intensity distributed over $(length(r.ϕ)) azimuthal angles ($(minimum(r.ϕ)) < ϕ < $(maximum(r.ϕ)) rad)")
+        try 
+            xMin = minimum(i for i in r.ϕ if !isnan(i))
+            xMax = maximum(i for i in r.ϕ if !isnan(i)) 
+        catch 
+            xMin = NaN
+            xMax = NaN 
+        end
+        println(io, "intensity distributed over $(length(r.ϕ)) azimuthal angles ($(round(xMin,sigdigits=3)) < ϕ < $(round(xMax,sigdigits=3)) rad)")
     end
     if typeof(r.r) == Float64
         println(io, "cloud at radius: $(r.r) rₛ")
     else
-        println(io, "intensity distributed over $(length(r.r)) radii ($(minimum(r.r)) < r < $(maximum(r.r)) rₛ)")
+        try 
+            xMin = minimum(i for i in r.r if !isnan(i))
+            xMax = maximum(i for i in r.r if !isnan(i)) 
+        catch 
+            xMin = NaN
+            xMax = NaN 
+        end
+        println(io, "intensity distributed over $(length(r.r)) radii ($(round(xMin,sigdigits=3)) < r < $(round(xMax,sigdigits=3)) rₛ)")
     end
     if typeof(r.v) == Float64
-        println(io, "cloud line of sight velocity: $(r.v) c")
+        println(io, "cloud line of sight velocity: $(round(r.v,sigdigits=3)) c")
     else
-        println(io, "line of sight velocity: $(minimum(r.v)) < v < $(maximum(r.v)) c")
+        try 
+            xMin = minimum(i for i in r.v if !isnan(i))
+            xMax = maximum(i for i in r.v if !isnan(i)) 
+        catch 
+            xMin = NaN
+            xMax = NaN 
+        end
+        println(io, "line of sight velocity: $(round(xMin,sigdigits=3)) < v < $(round(xMax,sigdigits=3)) c")
     end
     if typeof(r.I) == Float64
-        println(io, "cloud intensity: $(r.I) arbitrary units")
+        println(io, "cloud intensity: $(round(r.I,sigdigits=3)) arbitrary units")
     else
-        println(io, "intensity: $(minimum(r.I)) < I < $(maximum(r.I)) arbitrary units")
+        try
+            xMin = minimum(i for i in r.I if !isnan(i))
+            xMax = maximum(i for i in r.I if !isnan(i))
+        catch
+            xMin = NaN
+            xMax = NaN
+        end
+        println(io, "intensity: $(round(xMin,sigdigits=3)) < I < $(round(xMax,sigdigits=3)) arbitrary units")
     end
     if typeof(r.ΔA) == Float64
-        println(io, "projected area: $(r.ΔA) rₛ²")
+        println(io, "projected area: $(round(r.ΔA,sigdigits=3)) rₛ²")
     else
-        println(io, "projected area: $(minimum(r.ΔA)) < ΔA < $(maximum(r.ΔA)) rₛ²")
+        try
+            xMin = minimum(i for i in r.ΔA if !isnan(i))
+            xMax = maximum(i for i in r.ΔA if !isnan(i))
+        catch
+            xMin = NaN
+            xMax = NaN
+        end
+        println(io, "projected area: $(round(xMin,sigdigits=3)) < ΔA < $(round(xMax,sigdigits=3)) rₛ²")
     end
 end
 
@@ -188,13 +233,8 @@ struct camera
 end
 
 Base.show(io::IO, c::camera) = begin
-    xRes, yRes = nothing, nothing
-    if typeof(c.α) == Matrix{Float64}
-        xRes, yRes = size(c.α)
-    else
-        xRes, yRes = length(c.α), length(c.β)
-    end
-    println(io, "camera with resolution ($xRes, $yRes) and range: $(minimum(c.α)) < α < $(maximum(c.α)) and $(minimum(c.β)) < β < $(maximum(c.β))")
+    pix = length(c.α)
+    println(io, "camera with $pix pixels and range: $(round(minimum(c.α),sigdigits=3)) < α < $(round(maximum(c.α),sigdigits=3)) and $(round(minimum(c.β),sigdigits=3)) < β < $(round(maximum(c.β),sigdigits=3))")
 end 
 
 meshgrid(x,y) = (reshape(repeat(x,outer=length(y)),length(x),length(y)), reshape(repeat(y,inner=length(x)),length(x),length(y)))
@@ -207,11 +247,6 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
     attributes:
         rings: Vector{ring}
             - list of ring objects
-
-    constructor:
-        ***TO DO***: want several different constructor methods based on whether user provides rings (and Δr, Δϕ) or not
-        "ray tracing" should be in separate raytrace.jl file with helper methods for making these profiles from ensembles of rings
-        should struct be mutable? 
     """
     rings::Vector{ring}
     profiles::Union{Nothing,Dict{Symbol,profile}}
@@ -221,12 +256,11 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
         """
         constructor for model struct -- takes in rings and returns a model object (detailed above) while checking for errors
         """
-        r = [r.r for r in rings]; ϕ = [r.ϕ for r in rings]; i = [r.i for r in rings]
-        r_c = zeros(length(r)); ϕ_c = zeros(length(r))
-        for (i,(ri,ϕi,ii)) in enumerate(zip(r,ϕ,i))
-            r_c[i], ϕ_c[i] = photograph(ri,ϕi,ii) #get camera coordinates from physical 
+        r = [ring.r for ring in rings]; ϕₒ = [ring.ϕₒ for ring in rings]; i = [ring.i for ring in rings]; rot = [ring.rot for ring in rings]; θₒ = [ring.θₒ for ring in rings]; reflect = [ring.reflect for ring in rings]
+        α = zeros(length(r)); β = zeros(length(r))
+        for (i,(ri,ϕi,ii,roti,θₒi,reflecti)) in enumerate(zip(r,ϕₒ,i,rot,θₒ,reflect))
+            α[i], β[i] = photograph(ri,ϕi,ii,roti,θₒi,reflecti)  #get camera coordinates from physical 
         end
-        α = r_c.*cos.(ϕ_c); β = r_c.*sin.(ϕ_c) #camera x and y
         new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1)))
     end
 
@@ -236,10 +270,11 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
             rMin: minimum radius of model (in terms of rₛ) {Float64}
             rMax: maximum radius of model (in terms of rₛ) {Float64}
             i: inclination angle (rad) {Float64} (all rings have the same inclination)
+            rot: rotation of system plane about z axis (rad) {Float64}
             nr: number of radial bins {Int}
             nϕ: number of azimuthal bins {Int}
             I: intensity function {Function} (defaults to DiskWindIntensity)
-            v: velocity function {Function} (defaults to vCircular)
+            v: velocity function {Function} (defaults to vCircularDisk)
             scale: radial binning scale (:log or :linear)
             kwargs: extra keyword arguments for I and v if they are functions (see examples)
         returns:
@@ -250,7 +285,7 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
         @assert nr > 0 "nr must be greater than 0"
         @assert nϕ > 0 "nϕ must be greater than 0"
 
-        ϕ = collect(range(0,stop=2π,length=nϕ))
+        ϕ = collect(range(-π,stop=π,length=nϕ)) #non-rotated frame
         Δϕ = ϕ[2] - ϕ[1]
         if scale == :log        
             logr = collect(range(log(rMin*cos(i)),stop=log(rMax),length=nr))
@@ -263,18 +298,31 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
             error("scale must be :log or :linear")
         end
 
-        rMesh, ϕMesh = meshgrid(r,ϕ)
-        # ΔA = scale == :log ? @. rMesh^2*Δr*Δϕ : @. rMesh*Δr*Δϕ
-        ΔA = scale == :log ? [rMesh[i,:].^2 .* (Δr * Δϕ) for i in 1:nr] : [rMesh[i,:] .* (Δr * Δϕ) for i in 1:nr]
-        # α = r*cos(ϕ); β = @. r*sin(ϕ) #camera coordinates in x and y
-        α = [ri.*cos.(ϕ) for ri in r]; β = [ri.*sin.(ϕ) for ri in r] #camera coordinates in x and y
-        r = [sqrt.(αi.^2 .+ (βi./cos(i)).^2) for (αi,βi) in zip(α,β)] #converting camera r to physical r, raytraced back to disk
-        ϕ = [atan.(βi./cos(i),αi) for (αi,βi) in zip(α,β)] #converting camera ϕ to physical ϕ, raytraced from camera to disk plane
-        # r = @. sqrt(α^2 + (β/$cos(i))^2) #converting camera r to physical r, raytraced back to disk
-        # ϕ = @. atan(β/$cos(i),α) #converting camera ϕ to physical ϕ, raytraced from camera to disk plane
-        rings = [ring(r = ri, i = i, e = 0.0, v = v, I = I, ϕ = ϕi, ΔA = ΔAi, rMin=rMin, rMax=rMax; kwargs...) for (ri,ΔAi,ϕi) in zip(r,ΔA,ϕ)]
-        """PROBLEM: need to recalculate r and ϕ for raytracing reasons (where ray hits disk)"""
-        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1)))
+        rMesh, ϕMesh = meshgrid(r,ϕ) #camera r,ϕ
+        α = rMesh .* cos.(ϕMesh); β = rMesh .* sin.(ϕMesh) #camera coordinates
+        ΔA = scale == :log ? rMesh.^2 .* (Δr * Δϕ) : rMesh .* (Δr * Δϕ) #projected disk area, normalization doesn't matter
+        rSystem = zeros(nr,nϕ); ϕSystem = zeros(nr,nϕ); ϕₒ = zeros(nr,nϕ)
+        θₒ = 0.0; rot = 0.0
+        ϕ_rMat = getϕ_rMat(i,θₒ)
+        r3D = get_r3D(i,rot,θₒ)
+        xyz = [0.0;0.0;0.0]
+        matBuff = zeros(3,3)
+        colBuff = zeros(3)
+        rt = 0.0; ϕt = 0.0; ϕₒt = 0.0 #preallocate raytracing variables
+        for ri in 1:nr
+            for ϕi in 1:nϕ
+                rt, ϕt, ϕₒt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, ϕ_rMat, r3D, xyz, matBuff, colBuff)
+                if rt < rMin || rt > rMax #exclude portions outside of (rMin, rMax)
+                    rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕₒ[ri,ϕi] = NaN, NaN, NaN
+                else
+                    rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕₒ[ri,ϕi] = rt, ϕt, ϕₒt
+                end
+            end
+        end
+
+        rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕₒ = [ϕₒ[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
+        rings = [ring(r = ri, i = i, v = v, I = I, ϕ = ϕi, ϕₒ = ϕₒi, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ; kwargs...) for (ri,ϕi,ΔAi,ϕₒi) in zip(rSystem,ϕSystem,ΔA,ϕₒ)]
+        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1)))
     end
 
     function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
@@ -298,17 +346,54 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
         # println("r̄ = $r̄, rMin = $rMin, rMax = $rMax")
         kwargs = values(kwargs); kwargs = merge(kwargs, (; α = Sα))
         # println("kwargs = $kwargs")
-        model(rMin, rMax, i, nr, nϕ, DiskWindIntensity, vCircular, scale; kwargs...)
+        model(rMin, rMax, i, nr, nϕ, DiskWindIntensity, vCircularDisk, scale; kwargs...)
     end
 end
 
-function model(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircular, scale::Symbol=:log, kwargs...)
+function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
     return model(rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
 end
 
-function model(r̄::Float64, rFac::Float64, α::Float64, i::Float64; nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
+function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
     return model(r̄, rFac, α, i, nr, nϕ, scale; kwargs...)
 end
+
+function cloudModel(ϕₒ::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5,
+    I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,kwargs...)
+
+    @assert length(ϕₒ) == length(i) == length(rot) == length(θₒ) "ϕ, i, rot, and θₒ must be the same length -- got $(length(ϕ)), $(length(i)), $(length(rot)), and $(length(θₒ))"
+    rings = [drawCloud(i=i[j],θₒ=θₒ[j],rot=rot[j],ϕₒ=ϕₒ[j],μ=μ,F=F,β=β,rₛ=rₛ,θₒSystem=θₒSystem,I=I,v=v,ξ=ξ;kwargs...) for j=1:length(ϕₒ)]
+    return model(rings)
+end
+
+function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, 
+    I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, kwargs...)
+    
+    ϕₒ = rand(nClouds).*2π
+    #θₒ = rand(nClouds).*θₒ #note: need to implement equation 13 here -- should add a system θₒ parameter to ring (or model?) struct, then each ring can have a different θ
+    θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(nClouds).^γ) #θₒ for each cloud, from eqn 14
+    #idea: models should have set i, θₒ, but define + operator to "add" two models together that may have rings with different i, θₒ
+    rot = rand(nClouds).*2π
+    i = ones(nClouds).*i
+    return cloudModel(ϕₒ,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v;kwargs...)
+end
+
+function cloudModel(nClouds::Int64,μ::Float64,β::Float64,F::Float64,θₒ::Float64,i::Float64,rₛ::Float64=1.0,I=IsotropicIntensity,v=vCircularCloud)
+    γ = getGamma(μ=μ,β=β,F=F)
+    rings = Array{ring{Vector{Float64},Float64},1}(undef,nClouds)
+    for n=1:nClouds
+        rCam = getR(rₛ,γ)
+        ϕCam = rand()*2π
+        θₒn = rand()*θₒ
+        rot = rand()*2π
+        α,β = rCam*cos(ϕCam),rCam*sin(ϕCam)
+        r,ϕ = raytrace(α,β,i,rot,θₒn)
+        rings[n] = ring(r=r,i=i,rot=rot,θₒ=θₒn,v=v,I=I,ϕ=ϕ,ΔA=1.0)
+    end
+    return model(rings)
+end
+
+
 
 Base.show(io::IO, m::model) = begin 
     println(io, "model struct with $(length(m.rings)) rings:")
