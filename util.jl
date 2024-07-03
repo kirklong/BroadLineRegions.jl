@@ -253,6 +253,7 @@ end
     m, variable = nothing, nothing
     if length(p.args) == 2
         m, variable = p.args
+        variable = Symbol(variable)
     else
         if typeof(p.args[1]) == model
             m = p.args[1]
@@ -265,7 +266,7 @@ end
     end
     if isnothing(variable)
         variable = collect(keys(m.profiles))
-    elseif typeof(variable)
+    elseif typeof(variable) == Symbol
         variable = [variable]
     end
     title --> (length(variable) == 1 ? "Profile of $(variable[1])" : "Model profiles")

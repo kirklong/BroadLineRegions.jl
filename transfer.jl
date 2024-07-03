@@ -31,3 +31,27 @@ function getΨ(m::model,vBins::Int64,tBins::Int64)
     tCenters = @. (tEdges[1:end-1] + tEdges[2:end])/2
     return vCenters,tCenters,getΨ(m,vEdges,tEdges)
 end
+
+function getΨt(m::model,tEdges::Array{Float64})
+    I = getVariable(m,:I)
+    ΔA = getVariable(m,:ΔA)
+    d(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring) : tDisk(ring)
+    delays = getVariable(m,d)
+    Ψt = Array{Float64}(undef,length(tEdges)-1)
+    for j in 1:length(tEdges)-1
+        mask = (delays .>= tEdges[j]) .& (delays .< tEdges[j+1])
+        s = sum(I[mask].*ΔA[mask])
+        Ψt[j] = s > 0 ? s : 1e-30
+    end
+    return Ψ
+end
+
+function getΨt(m::model,tBins::Int64)
+    t(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring) : tDisk(ring)
+    delays = getVariable(m,t)
+    maxT =  maximum(i for i in delays if !isnan(i))
+    minT =  minimum(i for i in delays if !isnan(i))
+    tEdges = collect(range(minT,stop=maxT,length=tBins+1))
+    tCenters = @. (tEdges[1:end-1] + tEdges[2:end])/2
+    return tCenters,getΨt(m,tEdges)
+end

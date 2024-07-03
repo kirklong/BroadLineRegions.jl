@@ -95,7 +95,7 @@ end
 
 W(ϕ::Float64,κ::Float64) = 1/2+κ*cos(ϕ)
 
-function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,κ::Float64=0.0, _...)
+function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕₒ::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
     """calculate the intensity of the cloud at radius r from the central mass and inclined at angle i (rad) over grid of azimuthal angles ϕ (rad)
     params: 
         r: radius from central mass (in terms of rₛ) {Float64}
@@ -105,7 +105,48 @@ function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,κ::Float64=0.0, 
     returns:
         intensity (arbitrary units) {Float64}
     """
-    I = sin(θₒ)*W(ϕ,κ)/r^2 #when θₒ tends to ~0 this gives 1/r^3 scaling like DiskWind
-    I = W(ϕ,κ) #clouds don't have scaling -- the scaling is set by geometry itself, just whether they are on or off 
+    #I = sin(θₒ)*W(ϕ,κ)/r^2 #when θₒ tends to ~0 this gives 1/r^3 scaling like DiskWind
+    xyzSys = rotate3D(r,ϕₒ,i,rot,θₒ) #system coordinates xyz
+    ϕw = acos(xyzSys[1]/r) #angle between cloud and BH line of sight
+    I = W(ϕw,κ) #clouds don't have scaling -- the scaling is set by geometry itself, just whether they are on or off 
+    return I
+end
+
+function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕₒ::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
+    if ϕ > π || ϕ < -π
+        ϕ = atan(sin(ϕ),cos(ϕ))
+    end
+    if ϕMin > π || ϕMin < -π
+        ϕMin = atan(sin(ϕMin),cos(ϕMin))
+    end
+    if ϕMax > π || ϕMax < -π
+        ϕMax = atan(sin(ϕMax),cos(ϕMax))
+    end
+    I = 0.0
+    if ϕ >= ϕMin && ϕ <= ϕMax
+        I = cloudIntensity(r=r,ϕ=ϕ,θₒ=θₒ,ϕₒ=ϕₒ,rot=rot,i=i,κ=κ)
+        if overdense
+            I *= 2.0 #x2 to replace cloud "lost" 
+        end
+    end
+    return I 
+end
+
+function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Float64},Float64},i::Float64,f1::Float64,f2::Float64,f3::Float64,f4::Float64,α::Float64,ϕMin::Float64,ϕMax::Float64, _...)
+    I = nothing
+    if typeof(ϕ) == Float64
+        if ϕ > π || ϕ < -π
+            ϕ = atan(sin(ϕ),cos(ϕ))
+        end
+        if ϕMin > π || ϕMin < -π
+            ϕMin = atan(sin(ϕMin),cos(ϕMin))
+        end
+        if ϕMax > π || ϕMax < -π
+            ϕMax = atan(sin(ϕMax),cos(ϕMax))
+        end
+        I = (ϕ >= ϕMin && ϕ <= ϕMax) ? DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α) : 0.0
+    else
+        I = vcat([IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax) for (ri,ϕi) in zip(r,ϕ)]...)
+    end
     return I
 end

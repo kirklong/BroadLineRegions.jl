@@ -31,7 +31,7 @@ function vCircularCloud(;r::Float64, ϕₒ::Float64, i::Float64, rot::Float64, �
         line of sight velocity {Float64}
     """
     vₒ = vCirc(r,rₛ)
-    vXYZ = [vₒ*cos(ϕₒ),vₒ*sin(ϕₒ),0.0]
+    vXYZ = [-vₒ*sin(ϕₒ),vₒ*cos(ϕₒ),0.0] #match velocity sign conventions such that left side is coming towards observer
     r3D = get_r3D(i,rot,θₒ)
     vXYZ = r3D*vXYZ
     if reflect
@@ -67,14 +67,14 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
     vₜ = rand(Normal(0.0,σₜ))*vc
     ρ = 0.0; Θ = 0.0
     if rand() < fEllipse #elliptical orbit, distribution deviating from circular by σρc, σΘc, Pancoast 14 2.5.1
-        ρ = rand(Normal(0.0,σρc))
-        Θ = rand(Normal(vc,σΘc))
+        ρ = rand(Normal(vc,σρc))
+        Θ = π/2 + rand(Normal(0.0,σΘc))
     else #in/outflowing orbit, distribution deviating from circular by σρᵣ, σΘᵣ, Pancoast14 2.5.2
-        ρ = fFlow < 0.5 ? rand(Normal(-√2*vc,σρᵣ)) : rand(Normal(√2*vc,σρᵣ))
+        ρ = rand(Normal(vc,σρᵣ))
         Θ = fFlow < 0.5 ? rand(Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(Normal(0.0,σΘᵣ)) + θₑ
     end
-    vx = ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x and ϕ is along y at ϕ = 0
-    vXYZ = [vx*cos(ϕₒ)+vy*sin(ϕₒ),-vx*sin(ϕₒ)+vy*cos(ϕₒ),0.0] #rotate around z by ϕₒ
+    vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x and ϕ is along y at ϕ = 0
+    vXYZ = [vx*cos(ϕₒ)-vy*sin(ϕₒ),vx*sin(ϕₒ)+vy*cos(ϕₒ),0.0] #rotate around z by ϕₒ, match velocity sign conventions (left = towards observer)
     r3D = get_r3D(i,rot,θₒ) #transform initial coordinates to system coordinates
     vXYZ = r3D*vXYZ #rotate into system coordinates
     if reflect
