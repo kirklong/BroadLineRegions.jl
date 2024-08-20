@@ -1,4 +1,6 @@
 #!/usr/bin/env julia
+using Random
+
 struct ring{V,F}
     """structure to hold parameters of model ring
     attributes:
@@ -86,7 +88,7 @@ struct ring{V,F}
         
         @assert typeof(reflect) == Bool "reflect must be Bool, got $(typeof(reflect))"
         @assert typeof(i) == Float64 "i must be Float64, got $(typeof(i))"
-        @assert (i >= 0) && (i <= π/2) "i must be between 0 and π/2, got $i"
+        @assert (i >= -π/2) && (i <= π/2) "i must be between -π/2 and π/2, got $i"
         @assert (typeof(rot) == Float64) "rot must be Float64, got $(typeof(rot))"
         @assert (typeof(θₒ) == Float64) "θₒ must be Float64, got $(typeof(θₒ))"
         @assert (θₒ >= 0) && (θₒ <= π/2) "θₒ must be between 0 and π/2, got $θₒ"
@@ -303,15 +305,19 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
         ΔA = scale == :log ? rMesh.^2 .* (Δr * Δϕ) : rMesh .* (Δr * Δϕ) #projected disk area, normalization doesn't matter
         rSystem = zeros(nr,nϕ); ϕSystem = zeros(nr,nϕ); ϕₒ = zeros(nr,nϕ)
         θₒ = 0.0; rot = 0.0
-        ϕ_rMat = getϕ_rMat(i,θₒ)
-        r3D = get_r3D(i,rot,θₒ)
+        r3D = get_r3D(i,rot,θₒ) 
         xyz = [0.0;0.0;0.0]
         matBuff = zeros(3,3)
         colBuff = zeros(3)
         rt = 0.0; ϕt = 0.0; ϕₒt = 0.0 #preallocate raytracing variables
         for ri in 1:nr
             for ϕi in 1:nϕ
-                rt, ϕt, ϕₒt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, ϕ_rMat, r3D, xyz, matBuff, colBuff)
+                rt, ϕt, ϕₒt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, r3D, xyz, matBuff, colBuff) #flip i to match convention of +z being up, relic
+                # println("RAYTRACE: rt = $rt, ϕt = $ϕt, ϕₒt = $ϕₒt")
+                # x = β[ri,ϕi]/cos(i); y = α[ri,ϕi]; z = 0.0 #system coordinates from camera coordinates, raytraced back to disk plane
+                # rt = sqrt(x^2 + y^2 + z^2); ϕt = atan(y,x); ϕₒt = atan(y,x) #convert to polar coordinates
+                # println("OLD WAY: rt = $rt, ϕt = $ϕt, ϕₒt = $ϕₒt")
+                # exit()
                 if rt < rMin || rt > rMax #exclude portions outside of (rMin, rMax)
                     rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕₒ[ri,ϕi] = NaN, NaN, NaN
                 else
@@ -367,25 +373,24 @@ function cloudModel(ϕₒ::Vector{Float64}, i::Vector{Float64}, rot::Vector{Floa
 end
 
 function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, 
-    I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, kwargs...)
-    
-    ϕₒ = rand(nClouds).*2π
+    I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, rng::AbstractRNG=Random.GLOBAL_RNG, kwargs...)
+    ϕₒ = rand(rng,nClouds).*2π
     #θₒ = rand(nClouds).*θₒ #note: need to implement equation 13 here -- should add a system θₒ parameter to ring (or model?) struct, then each ring can have a different θ
-    θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(nClouds).^γ) #θₒ for each cloud, from eqn 14
+    θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(rng,nClouds).^γ) #θₒ for each cloud, from eqn 14
     #idea: models should have set i, θₒ, but define + operator to "add" two models together that may have rings with different i, θₒ
-    rot = rand(nClouds).*2π
+    rot = rand(rng,nClouds).*2π
     i = ones(nClouds).*i
-    return cloudModel(ϕₒ,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v;kwargs...)
+    return cloudModel(ϕₒ,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
 end
 
-function cloudModel(nClouds::Int64,μ::Float64,β::Float64,F::Float64,θₒ::Float64,i::Float64,rₛ::Float64=1.0,I=IsotropicIntensity,v=vCircularCloud)
+function cloudModel(nClouds::Int64,μ::Float64,β::Float64,F::Float64,θₒ::Float64,i::Float64,rₛ::Float64=1.0,I=IsotropicIntensity,v=vCircularCloud,rng::AbstractRNG=Random.GLOBAL_RNG)
     γ = getGamma(μ=μ,β=β,F=F)
     rings = Array{ring{Vector{Float64},Float64},1}(undef,nClouds)
     for n=1:nClouds
-        rCam = getR(rₛ,γ)
-        ϕCam = rand()*2π
-        θₒn = rand()*θₒ
-        rot = rand()*2π
+        rCam = getR(rₛ,γ,rng)
+        ϕCam = rand(rng)*2π
+        θₒn = rand(rng)*θₒ
+        rot = rand(rng)*2π
         α,β = rCam*cos(ϕCam),rCam*sin(ϕCam)
         r,ϕ = raytrace(α,β,i,rot,θₒn)
         rings[n] = ring(r=r,i=i,rot=rot,θₒ=θₒn,v=v,I=I,ϕ=ϕ,ΔA=1.0)

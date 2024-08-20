@@ -91,7 +91,7 @@ function binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariabl
     return binnedSum(x,y.*dx,bins=bins;kwargs...)
 end
 
-tDisk(ring::ring) = ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ]
+tDisk(ring::ring) = ring.r.*(1 .- cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ]
 tCloud(ring::ring) = begin 
     xyzSys = rotate3D(ring.r,ring.ϕₒ,ring.i,ring.rot,ring.θₒ,ring.reflect) 
     ring.r - xyzSys[1] # time delays for clouds [rₛ]
@@ -102,10 +102,10 @@ function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{I
     if n == :line
         p = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
     elseif n == :delay
-        d(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring).*ring.I : tDisk(ring).*ring.I
+        d(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring).*ring.I : tDisk(ring).*ring.I
         #WORK IN PROGRESS -- need to weight by I
         # define Base./ for profile struct? 
-        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:t,xVariable=:v;kwargs...)
+        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=d,xVariable=:v;kwargs...)
         pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
         p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     elseif n == :r

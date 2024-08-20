@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-using LinearAlgebra: *, inv, mul!
+using LinearAlgebra: ⋅, *, inv, mul!, norm, cross
 function get_rMinMaxDiskWind(r̄::Float64,rFac::Float64,α::Float64) 
     """calculate the minimum and maximum radius of model given the (intensity weighted) mean radius r̄, the radius factor rFac, and the power-law index α
     This is valid for the DiskWind model detailed in Long+ 2023
@@ -65,7 +65,7 @@ end
 
 
 #NOTE FOR RAYTRACING: i don't think I need to do this -- just take atan(y,x) of the system coordinates because camera is at +x in 3D space
-function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, ϕ_rMat::Matrix{Float64}, r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, colBuff::Vector{Float64})
+function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, colBuff::Vector{Float64})
     """performant version of raytrace function -- calculate where ray traced back from camera coordinates r_c, ϕ_c intersects the system (assumes circular geometry)
     params:
         α: image x coordinate (in terms of rₛ) {Float64}
@@ -88,11 +88,15 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     yRing = (α*(cosi*cosθₒ+sini/cosr*sinθₒ)+β*cosθₒ*sinr/cosr)/(cosi*cosθₒ/cosr+sini*sinθₒ)
     r = √(xRing^2 + yRing^2)
     ϕₒ = atan(yRing,xRing) #original ϕₒ (no rotation)
-    xyz[1] = r*cos(ϕₒ); xyz[2] = r*sin(ϕₒ); xyz[3] = 0.0
+    xyz[1] = xRing; xyz[2] = yRing; xyz[3] = 0.0
+    # xyz[1] = r*cos(ϕₒ); xyz[2] = r*sin(ϕₒ); xyz[3] = 0.0
     # mul!(matBuff,ϕ_rMat,r3D)
     # mul!(colBuff,matBuff,xyz) #rotate system plane into XY plane
     mul!(colBuff,r3D,xyz)
-    ϕ = atan(colBuff[2],colBuff[1]) #ϕ after rotation, measured from +x in disk plane
+    undo_tilt = [sini 0.0 cosi; 0.0 1.0 0.0; -cosi 0.0 sini]
+    mul!(xyz,undo_tilt,colBuff)
+    ϕ = atan(xyz[2],xyz[1]) #ϕ after rotation and being "puffed up", measured from +x in disk plane -- this is fine even for puffed up clouds but note ϕ is measured wrt to disk midplane then
+    #really this whole thing is stupid and should be removed this is not raytracing
     return r, ϕ, ϕₒ
 end
 

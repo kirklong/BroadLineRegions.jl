@@ -4,7 +4,7 @@ function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64};)
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
     v = getVariable(m,:v)
-    d(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring) : tDisk(ring)
+    d(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
     delays = getVariable(m,d)
     Ψ = Array{Float64}(undef,length(vEdges)-1,length(tEdges)-1)
     for i in 1:length(vEdges)-1
@@ -19,7 +19,7 @@ end
 
 function getΨ(m::model,vBins::Int64,tBins::Int64)
     v = getVariable(m,:v)
-    t(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring) : tDisk(ring)
+    t(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
     delays = getVariable(m,t)
     maxV =  maximum(i for i in v if !isnan(i))
     minV =  minimum(i for i in v if !isnan(i))
@@ -32,10 +32,10 @@ function getΨ(m::model,vBins::Int64,tBins::Int64)
     return vCenters,tCenters,getΨ(m,vEdges,tEdges)
 end
 
-function getΨt(m::model,tEdges::Array{Float64})
+function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
-    d(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring) : tDisk(ring)
+    d(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
     delays = getVariable(m,d)
     Ψt = Array{Float64}(undef,length(tEdges)-1)
     for j in 1:length(tEdges)-1
@@ -43,15 +43,25 @@ function getΨt(m::model,tEdges::Array{Float64})
         s = sum(I[mask].*ΔA[mask])
         Ψt[j] = s > 0 ? s : 1e-30
     end
-    return Ψ
+    if overflow
+        mask = delays .< tEdges[1]
+        s = sum(I[mask].*ΔA[mask])
+        Ψt[1] += s > 0 ? s : 1e-30
+        mask = delays .>= tEdges[end]
+        s = sum(I[mask].*ΔA[mask])
+        Ψt[end] += s > 0 ? s : 1e-30
+    end
+    return Ψt
 end
 
-function getΨt(m::model,tBins::Int64)
-    t(ring::ring) = (typeof(ring.r[1]) == Float64 && typeof(ring.ϕ[1]) == Float64) ? tCloud(ring) : tDisk(ring)
+function getΨt(m::model,tBins::Int64,maxT::Float64=Inf,overflow::Bool=false)
+    t(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
     delays = getVariable(m,t)
-    maxT =  maximum(i for i in delays if !isnan(i))
+    if isinf(maxT)
+        maxT =  maximum(i for i in delays if !isnan(i))
+    end
     minT =  minimum(i for i in delays if !isnan(i))
     tEdges = collect(range(minT,stop=maxT,length=tBins+1))
     tCenters = @. (tEdges[1:end-1] + tEdges[2:end])/2
-    return tCenters,getΨt(m,tEdges)
+    return tCenters,getΨt(m,tEdges,overflow)
 end

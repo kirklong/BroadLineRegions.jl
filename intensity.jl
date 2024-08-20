@@ -144,7 +144,7 @@ function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Flo
         if ϕMax > π || ϕMax < -π
             ϕMax = atan(sin(ϕMax),cos(ϕMax))
         end
-        I = (ϕ >= ϕMin && ϕ <= ϕMax) ? DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α) : 0.0
+        I = (ϕ >= ϕMin && ϕ <= ϕMax) ? DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α) : 0.0 #left side of disk goes 0 -> -π, right side goes 0 -> π, where 0 (top) is tilted towards the observer (exclude back of disk)
     else
         I = vcat([IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax) for (ri,ϕi) in zip(r,ϕ)]...)
     end
