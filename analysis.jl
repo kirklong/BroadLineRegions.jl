@@ -56,7 +56,7 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     r = √(xRing^2 + yRing^2)
     ϕₒ = atan(yRing,xRing) #original ϕₒ (no rotation)
     xyzSys = rotate3D(r,ϕₒ,i,rot,θₒPoint) #system coordinates xyz
-    ϕ = atan(xyzSys[2],xyzSys[1]) #ϕ after rotation, measured from +x in disk plane
+    ϕ = atan(xyzSys[2],-xyzSys[1]) #ϕ after rotation, measured from +x in disk plane, -x because of how rotation matrix was implemented and desire to have ϕ=0 at +x
     #rMat = getϕ_rMat(i,θₒSystem) #rotation matrix
     #xyzXY = rMat*xyzSys #rotate system plane into XY plane
     #ϕ = atan(xyzXY[2],xyzXY[1]) #ϕ after rotation, measured from +x in disk plane
@@ -95,7 +95,7 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     mul!(colBuff,r3D,xyz)
     undo_tilt = [sini 0.0 cosi; 0.0 1.0 0.0; -cosi 0.0 sini]
     mul!(xyz,undo_tilt,colBuff)
-    ϕ = atan(xyz[2],xyz[1]) #ϕ after rotation and being "puffed up", measured from +x in disk plane -- this is fine even for puffed up clouds but note ϕ is measured wrt to disk midplane then
+    ϕ = atan(xyz[2],-xyz[1]) #ϕ after rotation and being "puffed up", measured from +x in disk plane -- this is fine even for puffed up clouds but note ϕ is measured wrt to disk midplane then. -x because of how rotation matrix was implemented...
     #really this whole thing is stupid and should be removed this is not raytracing
     return r, ϕ, ϕₒ
 end

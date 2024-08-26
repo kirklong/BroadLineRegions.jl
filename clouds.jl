@@ -38,6 +38,6 @@ function drawCloud(;μ::Float64=500.,β::Float64=1.0,F::Float64=0.5,ϕₒ::Float
     end
     undo_tilt = [sin(i) 0.0 cos(i); 0.0 1.0 0.0; -cos(i) 0.0 sin(i)]
     xyzPlane = undo_tilt*xyzSys
-    ϕ = atan(xyzPlane[2],xyzPlane[1]) #ϕ after rotation, measured from +x in disk plane
+    ϕ = atan(xyzPlane[2],-xyzPlane[1]) #ϕ after rotation, measured from +x in disk plane, - sign relic of how rotation matrix was implemented + desire to have ϕ=0 at +x
     return ring(r=r,i=i,v=v,I=I,ϕ=ϕ,ΔA=1.0,rot=rot,θₒ=θₒ,ϕₒ=ϕₒ,reflect=reflect,rng=rng;kwargs...)
 end
