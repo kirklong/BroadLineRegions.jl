@@ -1,5 +1,46 @@
 #!/usr/bin/env julia
 using RecipesBase
+
+function reset!(m::model;profiles=true,img=true) #erase existing profiles/imgs
+    if profiles 
+        m.profiles = Dict{Symbol,profile}()
+    end
+    if img
+        m.camera.rays = nothing
+    end
+end
+#ERROR WITH COMBINED MODELS: CANNOT STACK ARRAYS + RANDOM floats
+#can't just do Iterator.flatten() because stacking goes like:
+#[[1,2,3],[4,5,6]] -> [1,4,2,5,3,6] (collapses along columns, not [1,2,3,4,5,6])
+#need to go through resulting array and check if it's a vector or scalar
+#if vector, check if neighbors are vectors then stack along columns, if scalar, just insert into next position
+function detectCombinedModel(m::model) #really should be called detect overlapping model? 
+    """detect if model is a conglomerate of multiple models
+    params:
+        m: model
+            - model object to check
+    returns:
+        isCombined: Bool
+            - whether model is a conglomerate of multiple models
+        startInds: Vector{Int}
+            - index of start of each model in the conglomerate
+        diskFlag: Vector{Bool}
+            - whether each model is a disk type model (or cloud if false)
+    """
+    isCombined = false
+    startInds = [1]
+    t = typeof(m.rings[1].r)
+    diskFlag = [t != Float64] #if float then cloud otherwise disk
+    for (i,ring) in enumerate(m.rings)
+        if typeof(ring.r) != t
+            isCombined = true
+            push!(startInds,i)
+            t = typeof(ring.r)
+            push!(diskFlag,t != Float64)
+        end
+    end
+    return isCombined, startInds, diskFlag
+end
 """retrive elements from model object and stack them into matrices for easy manipulation
 params:
     m: model
@@ -15,25 +56,67 @@ returns:
 """
 function getVariable(m::model,variable::String) # method for getting variable if String 
     variable = Symbol(variable)
-    if variable ∉ fieldnames(ring)
-        throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
-    end
-    return stack([getfield(ring,variable) for ring in m.rings],dims=1)
+    return getVariable(m,variable)
 end,
 function getVariable(m::model,variable::Symbol) # method for getting variable if Symbol
     if variable ∉ fieldnames(ring)
         throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
     end
-    return stack([getfield(ring,variable) for ring in m.rings],dims=1)
+    isCombined, startInds, diskFlags = detectCombinedModel(m)
+    if isCombined
+        chunks = []
+        l = 0
+        for i=1:length(startInds)
+            s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
+            chunk = [getfield(ring,variable) for ring in m.rings[s:e]]
+            push!(chunks,chunk)
+            l+=sum(length,chunk)
+        end
+        res = Array{Float64}(undef,l) #preallocate array
+        for (i,chunk) in enumerate(chunks)
+            startInd = i == 1 ? 1 : sum(length,chunks[i-1])*(i-1)+1
+            endInd = i == length(chunks) ? l : sum(length,chunk)*i
+            if diskFlags[i]
+                res[startInd:endInd] = vec(stack(chunk,dims=1))
+            else
+                res[startInd:endInd] = chunk
+            end
+        end
+        return res
+    else
+        return stack([getfield(ring,variable) for ring in m.rings],dims=1)
+    end
 end,
 function getVariable(m::model,variable::Function) # method for getting variable if Function
-    y = nothing
-    try
-        y = [variable(ring) for ring in m.rings]
-    catch
-        throw(error("error in function call $(variable)(ring)"))
+    res = nothing
+    isCombined, startInds, diskFlags = detectCombinedModel(m)
+    if isCombined
+        try
+            chunks = []
+            l = 0
+            for i=1:length(startInds)
+                s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
+                chunk = [variable(ring) for ring in m.rings[s:e]]
+                push!(chunks,chunk)
+                l+=sum(length,chunk)
+            end
+            res = Array{Float64}(undef,l) #preallocate array
+            for (i,chunk) in enumerate(chunks)
+                startInd = i == 1 ? 1 : sum(length,chunks[i-1])*(i-1)+1
+                endInd = i == length(chunks) ? l : sum(length,chunk)*i
+                if diskFlags[i]
+                    res[startInd:endInd] = vec(stack(chunk,dims=1))
+                else
+                    res[startInd:endInd] = chunk
+                end
+            end
+            return res
+        catch
+            throw(error("error in function call $(variable)(ring)"))
+        end
+    else
+        return stack([variable(ring) for ring in m.rings],dims=1)
     end
-    return stack(y,dims=1)
 end
 
 @userplot Image #note that then to call this method use lowercase, i.e. image(m,"I") -- PROBLEM: this doesn't actually loop through each x and y point -- need to collapse them into 1D arrays? 
@@ -107,7 +190,7 @@ end
 
 midPlaneXZ(x,i) = x*cot(i)
 
-@userplot Plot3d #note that then to call this method use lowercase, i.e. plot3d(m,"I") 
+@userplot Plot3d #note that then to call this method use lowercase, i.e. plot3d(m,"I") -- WIP need to make more general for combined Models -- do in 2 steps if isCombined? just call twice
 @recipe function f(p::Plot3d)
     xlabel --> "x [rₛ]"
     ylabel --> "y [rₛ]"
@@ -135,51 +218,82 @@ midPlaneXZ(x,i) = x*cot(i)
     else
         throw(ArgumentError("expected 1, 2, or 3 arguments, got $(length(p.args))"))
     end
-    title --> (isnothing(variable) ? "System geometry visualization" : "System geometry + $variable (color) visualization")
-    i = getVariable(model,:i)
-    r = getVariable(model,:r)
-    ϕₒ = getVariable(model,:ϕₒ)
-    xtmp = zeros(size(ϕₒ))
-    ytmp = zeros(size(ϕₒ))
-    ztmp = zeros(size(ϕₒ))
-    if typeof(r) == Matrix{Float64} && typeof(ϕₒ) == Matrix{Float64}
-        for ii in 1:size(r)[1]
-            for jj in 1:size(r)[2]
-                rot = model.rings[ii].rot
-                xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕₒ[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
-            end
-        end
-    elseif typeof(r) == Vector{Float64} && typeof(ϕₒ) == Matrix{Float64}
-        for ii in 1:size(ϕ)[1]
-            for jj in 1:size(ϕ)[2]
-                rot = model.rings[ii].rot
-                xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕₒ[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
-            end
-        end
-    else #if r is just a vector (with ϕ and i matching)
-        for ii in 1:length(r)
-            rot = model.rings[ii].rot
-            xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕₒ[ii],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+    variable = (isa(variable,Function) || isnothing(variable)) ? variable : Symbol(variable)
+    isCombined, startInds, diskFlags = detectCombinedModel(model)
+    mList = [deepcopy(model) for i=1:length(startInds)]
+    if isCombined
+        for (i,m) in enumerate(mList)
+            s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
+            m.rings = m.rings[s:e]
         end
     end
-    boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])
+    title --> (isnothing(variable) ? "System geometry visualization" : "System geometry + $variable (color) visualization")
+    boxSizeGlobal = 0.0
+    for (mInd,model) in enumerate(mList)
+        i = getVariable(model,:i)
+        r = getVariable(model,:r)
+        ϕₒ = getVariable(model,:ϕₒ)
+        xtmp = zeros(size(ϕₒ))
+        ytmp = zeros(size(ϕₒ))
+        ztmp = zeros(size(ϕₒ))
+        if typeof(r) == Matrix{Float64} && typeof(ϕₒ) == Matrix{Float64}
+            for ii in 1:size(r)[1]
+                for jj in 1:size(r)[2]
+                    rot = model.rings[ii].rot
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕₒ[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                end
+            end
+        elseif typeof(r) == Vector{Float64} && typeof(ϕₒ) == Matrix{Float64}
+            for ii in 1:size(ϕ)[1]
+                for jj in 1:size(ϕ)[2]
+                    rot = model.rings[ii].rot
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕₒ[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                end
+            end
+        else #if r is just a vector (with ϕ and i matching)
+            rot = getVariable(model,:rot)
+            θₒ = getVariable(model,:θₒ)
+            reflect = Bool.(getVariable(model,:reflect))
+            for ii in 1:length(r)
+                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕₒ[ii],i[ii],rot[ii],θₒ[ii],reflect[ii]) 
+            end
+        end
+        boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])
+        boxSizeGlobal = max(boxSize,boxSizeGlobal)
+        # nanMask = isnan.(vec(getVariable(model,:I)))
+        @series begin
+            subplot := 1
+            seriestype := :scatter
+            palette --> :magma
+            mz = (isnothing(variable) ? nothing : vec(getVariable(model,variable)))
+            nanMask = isnan.(mz)
+            marker_z := mz[.!nanMask]
+            markeralpha --> (diskFlags[mInd] ? 0.9 : 0.1)
+            markerstrokewidth --> 0.0
+            markersize --> 1.
+            label --> ""
+            x := vec(xtmp)[.!nanMask]
+            y := vec(ytmp)[.!nanMask]
+            z := vec(ztmp)[.!nanMask]
+            ()
+        end
+        @series begin
+            subplot := 1
+            x := [-boxSize,boxSize]./1.1
+            y := [0.0,0.0]
+            z := [midPlaneXZ(-boxSize/1.1,i[1]),midPlaneXZ(boxSize/1.1,i[1])]
+            seriestype := :path
+            cList = [:crimson,:darkorange]
+            color --> (mInd <= 2 ? cList[mInd] : mInd)
+            label --> (length(mList) == 1 ? "midplane" : "midplane $mInd ($(diskFlags[mInd] ? "disk" : "cloud"))")
+            ()
+        end
+    end
+    boxSize = boxSizeGlobal
     ylims --> (-boxSize,boxSize)
     xlims --> (-boxSize,boxSize)
     zlims --> (-boxSize,boxSize)
     foreground_color_legend --> nothing
-    @series begin
-        subplot := 1
-        seriestype := :scatter
-        palette --> :magma
-        marker_z := (isnothing(variable) ? nothing : vec(getVariable(model,variable)))
-        markerstrokewidth --> 0.0
-        markersize --> 1.
-        label --> ""
-        x := vec(xtmp)
-        y := vec(ytmp)
-        z := vec(ztmp)
-        ()
-    end
     if annotatedCamera
         r = sqrt(maximum(model.camera.α.^2 .+ model.camera.β.^2))
         @series begin
@@ -233,18 +347,6 @@ midPlaneXZ(x,i) = x*cot(i)
             label --> ""
             ()
         end
-        @series begin
-            subplot := 1 
-            x := [-boxSize,-boxSize,boxSize,boxSize]
-            y := [-boxSize,boxSize,boxSize,-boxSize]
-            z := [midPlaneXZ(-boxSize,i[1]),midPlaneXZ(-boxSize,i[1]),midPlaneXZ(boxSize,i[1]),midPlaneXZ(boxSize,i[1])]
-            seriestype := :path
-            color --> :crimson
-            fill --> true
-            fillalpha --> 0.1
-            label --> "midplane"
-            ()
-        end
     end
 end
 
@@ -273,7 +375,7 @@ end
     ylabel --> (length(variable) == 1 ? "$(variable[1])" : "normalized value")
     xlabel --> "Δv [c]"
     for (i,v) in enumerate(variable)
-        norm = length(variable) == 1 ? 1.0 : maximum(i for i in m.profiles[v].binSums if !isnan(i))
+        norm = length(variable) == 1 ? 1.0 : maximum(abs(i) for i in m.profiles[v].binSums if !isnan(i))
         @series begin
             subplot := 1
             seriestype := :path

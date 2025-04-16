@@ -17,6 +17,27 @@ function vCircularDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union
     return @. vCirc(r,$rₛ)*$sin(i)*sin(ϕ) #circular velocity where sides of disk are at ±π/2
 end
 
+function vCircularRadialDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, vᵣFrac::Union{Vector{Float64},Float64}=0.0, inflow::Union{Vector{Bool},Bool}=true, rₛ=1.0, _...) 
+    """
+    calculate line of sight velocity for circular orbit at radius r from central mass and inclined at angle i (rad) over grid of azimuthal angles ϕ (rad) with radial inflow/outflow
+    params: 
+        r: radius from central mass {Float64} (rₛ)
+        i: inclination angle (rad) {Float64}
+        ϕ: list of azimuthal angles (rad) {Vector{Float64}}
+        vᵣFrac: fraction of radial velocity {Union{Vector{Float64},Float64}} (defaults to 0.0)
+        inflow: whether the radial velocity is inflowing {Union{Vector{Bool},Bool}} (defaults to true)
+        rₛ: Schwarzschild radius {Float64} (optional, to convert to physical units, defaults to 1)
+        _: extra kwargs, ignored
+    returns:
+        line of sight velocity Union{Vector{Float64},Float64}
+    """
+    vsini = @. vCirc(r,$rₛ)*$sin(i)
+    inflow = @. inflow ? 1.0 : -1.0
+    vᵣ = @. vsini*cos(ϕ)*vᵣFrac*inflow
+    vϕ = @. vsini*sin(ϕ)*(1-vᵣFrac)
+    return vᵣ + vϕ
+end
+
 function vCircularCloud(;r::Float64, ϕₒ::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
     """calculate line of sight velocity for cloud in 3D space
     params:
@@ -74,14 +95,14 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
         ρ = rand(rng,Normal(vc,σρᵣ))
         Θ = fFlow < 0.5 ? rand(rng,Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(rng,Normal(0.0,σΘᵣ)) + θₑ
     end
-    vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x and ϕ is along y at ϕ = 0
+    vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x and ϕ is along y at ϕ = 0 when left is rotating towards observer
     vXYZ = [vx*cos(ϕₒ)-vy*sin(ϕₒ),vx*sin(ϕₒ)+vy*cos(ϕₒ),0.0] #rotate around z by ϕₒ, match velocity sign conventions (left = towards observer)
     r3D = get_r3D(i,rot,θₒ) #transform initial coordinates to system coordinates
     vXYZ = r3D*vXYZ #rotate into system coordinates
     if reflect
         vXYZ = DiskWind2.reflect!(vXYZ,i)
     end
-    return vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3)
+    return -vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3), negative sign to match disk convention left towards observer
 end
 
 function vElliptical(;a::Float64, i::Float64, ϕ::Union{Vector{Float64},Float64}, G::Float64=1.0, M::Float64=1.0, e::Float64=0.0, _...) 

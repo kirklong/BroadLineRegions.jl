@@ -91,22 +91,22 @@ function binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariabl
     return binnedSum(x,y.*dx,bins=bins;kwargs...)
 end
 
-tDisk(ring::ring) = ring.r.*(1 .- cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ]
+tDisk(ring::ring) = ring.η.*ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ]
 tCloud(ring::ring) = begin 
     xyzSys = rotate3D(ring.r,ring.ϕₒ,ring.i,ring.rot,ring.θₒ,ring.reflect) 
-    ring.r - xyzSys[1] # time delays for clouds [rₛ]
+    ring.η*(ring.r - xyzSys[1]) # time delays for clouds [rₛ]
 end
 
+#need to add raytrace flag for this -- if true use imgs instead of getVariable by rings
 function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{Int,Vector{Float64}}=100, dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
     n = Symbol(name); p = nothing;
     if n == :line
         p = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
     elseif n == :delay
-        d(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring).*ring.I : tDisk(ring).*ring.I
-        #WORK IN PROGRESS -- need to weight by I
-        # define Base./ for profile struct? 
+        d(ring::ring;kwargs...) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring;kwargs...).*ring.I : tDisk(ring;kwargs...).*ring.I
+        den(ring::ring;) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η 
         pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=d,xVariable=:v;kwargs...)
-        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=den,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=den,xVariable=:v;kwargs...)
         p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     elseif n == :r
         r(ring::ring) = ring.r.*ring.I
