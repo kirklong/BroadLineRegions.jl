@@ -183,7 +183,7 @@ function rotate3D(r,ϕₒ,i,rot,θₒ,reflect=false)
     matrix = get_r3D(i,rot,θₒ)
     xyzSys = matrix*[r*cos(ϕₒ);r*sin(ϕₒ);0] 
     if reflect
-        xyzSys = DiskWind2.reflect!(xyzSys,i)
+        xyzSys = BLR.reflect!(xyzSys,i)
     end
     return xyzSys
 end

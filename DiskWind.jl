@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-module DiskWind2
+module BLR
 include("structs.jl")
 include("util.jl")
 include("HSTutil.jl")

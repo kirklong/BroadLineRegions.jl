@@ -57,7 +57,7 @@ function vCircularCloud(;r::Float64, ϕₒ::Float64, i::Float64, rot::Float64, �
     r3D = get_r3D(i,rot,θₒ)
     vXYZ = r3D*vXYZ
     if reflect
-        vXYZ = DiskWind2.reflect!(vXYZ,i)
+        vXYZ = BLR.reflect!(vXYZ,i)
     end
     return vXYZ[1] #line of sight velocity is x component after rotation (camera is at +x)
 end
@@ -100,7 +100,7 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
     r3D = get_r3D(i,rot,θₒ) #transform initial coordinates to system coordinates
     vXYZ = r3D*vXYZ #rotate into system coordinates
     if reflect
-        vXYZ = DiskWind2.reflect!(vXYZ,i)
+        vXYZ = BLR.reflect!(vXYZ,i)
     end
     return -vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3), negative sign to match disk convention left towards observer
 end
