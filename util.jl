@@ -9,39 +9,8 @@ function reset!(m::model;profiles=true,img=true) #erase existing profiles/imgs
         m.camera.rays = nothing
     end
 end
-#ERROR WITH COMBINED MODELS: CANNOT STACK ARRAYS + RANDOM floats
-#can't just do Iterator.flatten() because stacking goes like:
-#[[1,2,3],[4,5,6]] -> [1,4,2,5,3,6] (collapses along columns, not [1,2,3,4,5,6])
-#need to go through resulting array and check if it's a vector or scalar
-#if vector, check if neighbors are vectors then stack along columns, if scalar, just insert into next position
-function detectCombinedModel(m::model) #really should be called detect overlapping model? 
-    """detect if model is a conglomerate of multiple models
-    params:
-        m: model
-            - model object to check
-    returns:
-        isCombined: Bool
-            - whether model is a conglomerate of multiple models
-        startInds: Vector{Int}
-            - index of start of each model in the conglomerate
-        diskFlag: Vector{Bool}
-            - whether each model is a disk type model (or cloud if false)
-    """
-    isCombined = false
-    startInds = [1]
-    t = typeof(m.rings[1].r)
-    diskFlag = [t != Float64] #if float then cloud otherwise disk
-    for (i,ring) in enumerate(m.rings)
-        if typeof(ring.r) != t
-            isCombined = true
-            push!(startInds,i)
-            t = typeof(ring.r)
-            push!(diskFlag,t != Float64)
-        end
-    end
-    return isCombined, startInds, diskFlag
-end
-"""retrive elements from model object and stack them into matrices for easy manipulation
+
+"""retrieve elements from model object and stack them into matrices for easy manipulation
 params:
     m: model
         - model object to extract variables from
@@ -62,8 +31,9 @@ function getVariable(m::model,variable::Symbol) # method for getting variable if
     if variable ∉ fieldnames(ring)
         throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
     end
-    isCombined, startInds, diskFlags = detectCombinedModel(m)
+    isCombined = m.subModelStartInds != [1]
     if isCombined
+        startInds = m.subModelStartInds
         chunks = []
         l = 0
         for i=1:length(startInds)
@@ -76,7 +46,7 @@ function getVariable(m::model,variable::Symbol) # method for getting variable if
         for (i,chunk) in enumerate(chunks)
             startInd = i == 1 ? 1 : sum(length,chunks[i-1])*(i-1)+1
             endInd = i == length(chunks) ? l : sum(length,chunk)*i
-            if diskFlags[i]
+            if typeof(chunk) == Vector{Vector{Float64}} #if chunk is 2D
                 res[startInd:endInd] = vec(stack(chunk,dims=1))
             else
                 res[startInd:endInd] = chunk
@@ -89,9 +59,10 @@ function getVariable(m::model,variable::Symbol) # method for getting variable if
 end,
 function getVariable(m::model,variable::Function) # method for getting variable if Function
     res = nothing
-    isCombined, startInds, diskFlags = detectCombinedModel(m)
+    isCombined = m.subModelStartInds != [1]
     if isCombined
         try
+            startInds = m.subModelStartInds
             chunks = []
             l = 0
             for i=1:length(startInds)
@@ -104,7 +75,7 @@ function getVariable(m::model,variable::Function) # method for getting variable 
             for (i,chunk) in enumerate(chunks)
                 startInd = i == 1 ? 1 : sum(length,chunks[i-1])*(i-1)+1
                 endInd = i == length(chunks) ? l : sum(length,chunk)*i
-                if diskFlags[i]
+                if typeof(chunk) == Vector{Vector{Float64}} #if chunk is 2D
                     res[startInd:endInd] = vec(stack(chunk,dims=1))
                 else
                     res[startInd:endInd] = chunk

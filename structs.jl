@@ -346,21 +346,37 @@ end
 
 meshgrid(x,y) = (reshape(repeat(x,outer=length(y)),length(x),length(y)), reshape(repeat(y,inner=length(x)),length(x),length(y)))
 
-mutable struct model #restructure to make mutable struct -- Δr doesn't need to be kept track of it only matters for binning profiles? profiles should be a dict i.e. LP => array, delayProfile => array, custom => array
-    #make immutable to see if improves performance cost
+mutable struct model
+    #make immutable to see if improves performance cost?
     #add image as keyword arg to constructors -- only initialize if true to save on performance
     
     """structure to hold many rings and their parameters
     attributes:
         rings: Vector{ring}
             - list of ring objects
+        profiles: Union{Nothing,Dict{Symbol,profile}}
+            - dictionary of profiles (see profile struct) with keys as symbols
+            - optional, usually initialized to empty dictionary and filled in with setProfile!
+        camera: Union{Nothing,camera}
+            - camera coordinates (α,β) corresponding to each ring used to generate images and in raytracing
+        subModelStartInds: Vector{Int}
+            - indices of start of each submodel in list of rings
+            - used to separate out submodels for raytracing or for the recovery of individual models after being combined
     """
     rings::Vector{ring}
     profiles::Union{Nothing,Dict{Symbol,profile}}
     camera::Union{Nothing,camera}
+    subModelStartInds::Vector{Int} #indices of start of each submodel in list of rings
     #note: move α,β for every point (as currently defined) to new struct -- camera α and β should be user defined and separate
     #also keep track of xyz in this new struct? call it coords and have one field be camera and the other be system
     #or just put it in each ring? probably less cluttered/better...do tomorrow
+
+    function model(rings::Vector{ring{Vector{Float64},Float64}},profiles::Union{Nothing,Dict{Symbol,profile}},camera::Union{Nothing,camera},subModelStartInds::Vector{Int})
+        """
+        constructor for model struct -- takes in rings, profiles, camera, and subModelStartInds and returns a model object (detailed above) while checking for errors
+        """
+        new(rings,profiles,camera,subModelStartInds)
+    end
 
     function model(rings::Vector{ring{Vector{Float64},Float64}})
         """
@@ -371,7 +387,7 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
         for (i,(ri,ϕi,ii,roti,θₒi,reflecti)) in enumerate(zip(r,ϕₒ,i,rot,θₒ,reflect))
             α[i], β[i] = photograph(ri,ϕi,ii,roti,θₒi,reflecti)  #get camera coordinates from physical 
         end
-        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),nothing))
+        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),nothing),[1])
     end
 
     function model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
@@ -437,7 +453,7 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
 
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕₒ = [ϕₒ[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
         rings = [ring(r = ri, i = i, v = v, I = I, ϕ = ϕi, ϕₒ = ϕₒi, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi; kwargs...) for (ri,ϕi,ΔAi,ϕₒi,ηi) in zip(rSystem,ϕSystem,ΔA,ϕₒ,η)]
-        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),nothing))
+        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),nothing),[1])
     end
 
     function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
@@ -466,16 +482,61 @@ mutable struct model #restructure to make mutable struct -- Δr doesn't need to 
 end
 
 function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
+    """uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025
+    params: (similar to function below but must explicitly pass rMin and rMax)
+        rMin: minimum radius of model (in terms of rₛ) {Float64}
+        rMax: maximum radius of model (in terms of rₛ) {Float64}
+        i: inclination angle (rad) {Float64} (all rings have the same inclination)
+        nr: number of radial bins {Int}
+        nϕ: number of azimuthal bins {Int}
+        I: intensity function {Function} (defaults to DiskWindIntensity)
+        v: velocity function {Function} (defaults to vCircularDisk)
+        scale: radial binning scale (:log or :linear)
+        kwargs: extra keyword arguments for I and v if they are functions (see examples)
+    returns:
+        model object {model}
+    """
     return model(rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
 end
 
 function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
+    """uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025
+    params: (similar to function above but here we pass r̄, rFac, and α)
+        r̄: mean radius of model (in terms of rₛ) {Float64}
+        rFac: radius factor {Float64} 
+        α: power-law source function scaling {Float64} 
+        i: inclination angle (rad) {Float64}
+        rot: rotation of system plane about z axis (rad) {Float64}
+        nr: number of radial bins {Int}
+        nϕ: number of azimuthal bins {Int}
+        scale: radial binning scale (:log or :linear)
+        kwargs: extra keyword arguments for model constructor (see examples)
+    returns:
+        model object {model}
+    """
     return model(r̄, rFac, α, i, nr, nϕ, scale; kwargs...)
 end
 
 function cloudModel(ϕₒ::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5,
     I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,kwargs...)
-
+    """uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014
+    params: (similar to function below but here we must explicitly pass ϕₒ, i, rot, and θₒ)
+        ϕₒ: initial azimuthal angle of cloud (rad) {Vector{Float64}}
+        i: inclination angle (rad) {Vector{Float64}} 
+        rot: rotation of system plane about z axis (rad) {Vector{Float64}}
+        θₒ: opening angle of cloud (rad) {Vector{Float64}}
+        θₒSystem: opening angle of system (rad) {Float64}
+        ξ: power-law source function scaling {Float64} 
+        rₛ: scale radius (in terms of rₛ) {Float64}
+        μ: mean radius of model (in terms of rₛ) {Float64}
+        β: shape parameter for radial distribution {Float64} 
+        F: minimum fraction of maximum radius where clouds can be placed {Float64}
+        I: intensity function {Function} (defaults to IsotropicIntensity)
+        v: velocity function {Function} (defaults to vCircularCloud)
+        kwargs: extra keyword arguments for I and v if they are functions (see examples)
+    returns:
+        model object {model}
+    """
     @assert length(ϕₒ) == length(i) == length(rot) == length(θₒ) "ϕ, i, rot, and θₒ must be the same length -- got $(length(ϕ)), $(length(i)), $(length(rot)), and $(length(θₒ))"
     rings = [drawCloud(i=i[j],θₒ=θₒ[j],rot=rot[j],ϕₒ=ϕₒ[j],μ=μ,F=F,β=β,rₛ=rₛ,θₒSystem=θₒSystem,I=I,v=v,ξ=ξ;kwargs...) for j=1:length(ϕₒ)]
     return model(rings)
@@ -483,31 +544,31 @@ end
 
 function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, 
     I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, rng::AbstractRNG=Random.GLOBAL_RNG, kwargs...)
+    """uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014
+    params: (similar to above but using multiple dispatch here we pass nClouds and generate random values for ϕₒ, rot, and θₒ while keeping i constant for the system)
+        nClouds: number of clouds {Int}
+        μ: mean radius of model (in terms of rₛ) {Float64}
+        β: shape parameter for radial distribution {Float64} 
+        F: minimum fraction of maximum radius where clouds can be placed {Float64}
+        rₛ: scale radius (in terms of rₛ) {Float64}
+        θₒ: maximum opening angle of cloud distribution (rad) {Float64}
+        γ: disk concentration parameter {Float64} 
+        ξ: power-law source function scaling {Float64} 
+        i: inclination angle (rad) {Float64}
+        I: intensity function {Function} (defaults to IsotropicIntensity)
+        v: velocity function {Function} (defaults to vCircularCloud)
+        rng: random number generator {AbstractRNG}
+        kwargs: extra keyword arguments for I and v if they are functions (see examples)
+    returns:
+        model object {model}
+    """
     ϕₒ = rand(rng,nClouds).*2π
     #θₒ = rand(nClouds).*θₒ #note: need to implement equation 13 here -- should add a system θₒ parameter to ring (or model?) struct, then each ring can have a different θ
     θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(rng,nClouds).^γ) #θₒ for each cloud, from eqn 14
-    #idea: models should have set i, θₒ, but define + operator to "add" two models together that may have rings with different i, θₒ
     rot = rand(rng,nClouds).*2π
     i = ones(nClouds).*i
     return cloudModel(ϕₒ,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
 end
-
-function cloudModel(nClouds::Int64,μ::Float64,β::Float64,F::Float64,θₒ::Float64,i::Float64,rₛ::Float64=1.0,I=IsotropicIntensity,v=vCircularCloud,rng::AbstractRNG=Random.GLOBAL_RNG)
-    γ = getGamma(μ=μ,β=β,F=F)
-    rings = Array{ring{Vector{Float64},Float64},1}(undef,nClouds)
-    for n=1:nClouds
-        rCam = getR(rₛ,γ,rng)
-        ϕCam = rand(rng)*2π
-        θₒn = rand(rng)*θₒ
-        rot = rand(rng)*2π
-        α,β = rCam*cos(ϕCam),rCam*sin(ϕCam)
-        r,ϕ = raytrace(α,β,i,rot,θₒn)
-        rings[n] = ring(r=r,i=i,rot=rot,θₒ=θₒn,v=v,I=I,ϕ=ϕ,ΔA=1.0)
-    end
-    return model(rings)
-end
-
-
 
 Base.show(io::IO, m::model) = begin 
     println(io, "model struct with $(length(m.rings)) rings:")
