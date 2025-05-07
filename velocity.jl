@@ -38,11 +38,11 @@ function vCircularRadialDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ:
     return vᵣ + vϕ
 end
 
-function vCircularCloud(;r::Float64, ϕₒ::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
+function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
     """calculate line of sight velocity for cloud in 3D space
     params:
         r: radius from central mass (in terms of rₛ) {Float64}
-        ϕₒ: starting azimuthal angle in ring plane (rad) {Float64}
+        ϕ₀: starting azimuthal angle in ring plane (rad) {Float64}
         i: inclination angle of ring plane (rad) {Float64}
         rot: rotation of system plane about z axis (rad) {Float64}
         θₒ: opening angle of point {Float64}
@@ -53,7 +53,7 @@ function vCircularCloud(;r::Float64, ϕₒ::Float64, i::Float64, rot::Float64, �
         line of sight velocity {Float64}
     """
     vₒ = vCirc(r,rₛ)
-    vXYZ = [-vₒ*sin(ϕₒ),vₒ*cos(ϕₒ),0.0] #match velocity sign conventions such that left side is coming towards observer
+    vXYZ = [-vₒ*sin(ϕ₀),vₒ*cos(ϕ₀),0.0] #match velocity sign conventions such that left side is coming towards observer
     r3D = get_r3D(i,rot,θₒ)
     vXYZ = r3D*vXYZ
     if reflect
@@ -63,7 +63,7 @@ function vCircularCloud(;r::Float64, ϕₒ::Float64, i::Float64, rot::Float64, �
 end
 
 function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ::Float64, σΘc::Float64, θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64, 
-    r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕₒ::Float64=0.0, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...) 
+    r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...) 
     """calculate line of sight velocity for cloud in 3D space with potential for elliptical orbital velocities, in/outflow, and turbulence as in Pancoast+14
     params:
         σρᵣ: radial standard deviation around radial orbits {Float64}
@@ -79,7 +79,7 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
         rot: rotation of system plane about z axis (rad) {Float64}
         θₒ: opening angle of point {Float64}
         rₛ: Schwarzschild radius {Float64} (optional, to convert to physical units, defaults to 1)
-        ϕₒ: starting azimuthal angle in ring plane (rad) {Float64}
+        ϕ₀: starting azimuthal angle in ring plane (rad) {Float64}
         reflect: whether the point is reflected across the midplane of the disk {Bool}
         _: extra kwargs, ignored
     returns:
@@ -96,7 +96,7 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
         Θ = fFlow < 0.5 ? rand(rng,Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(rng,Normal(0.0,σΘᵣ)) + θₑ
     end
     vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x and ϕ is along y at ϕ = 0 when left is rotating towards observer
-    vXYZ = [vx*cos(ϕₒ)-vy*sin(ϕₒ),vx*sin(ϕₒ)+vy*cos(ϕₒ),0.0] #rotate around z by ϕₒ, match velocity sign conventions (left = towards observer)
+    vXYZ = [vx*cos(ϕ₀)-vy*sin(ϕ₀),vx*sin(ϕ₀)+vy*cos(ϕ₀),0.0] #rotate around z by ϕ₀, match velocity sign conventions (left = towards observer)
     r3D = get_r3D(i,rot,θₒ) #transform initial coordinates to system coordinates
     vXYZ = r3D*vXYZ #rotate into system coordinates
     if reflect

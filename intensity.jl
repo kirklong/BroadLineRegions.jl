@@ -95,7 +95,7 @@ end
 
 W(ϕ::Float64,κ::Float64) = 1/2+κ*cos(ϕ)
 
-function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕₒ::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
+function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
     """calculate the intensity of the cloud at radius r from the central mass and inclined at angle i (rad) over grid of azimuthal angles ϕ (rad)
     params: 
         r: radius from central mass (in terms of rₛ) {Float64}
@@ -106,13 +106,13 @@ function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕₒ::Float64,ro
         intensity (arbitrary units) {Float64}
     """
     #I = sin(θₒ)*W(ϕ,κ)/r^2 #when θₒ tends to ~0 this gives 1/r^3 scaling like DiskWind
-    xyzSys = rotate3D(r,ϕₒ,i,rot,θₒ) #system coordinates xyz
+    xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ) #system coordinates xyz
     ϕw = acos(xyzSys[1]/r) #angle between cloud and BH line of sight
     I = W(ϕw,κ) #clouds don't have scaling -- the scaling is set by geometry itself, just whether they are on or off 
     return I
 end
 
-function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕₒ::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
+function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
     if ϕ > π || ϕ < -π
         ϕ = atan(sin(ϕ),cos(ϕ))
     end
@@ -124,7 +124,7 @@ function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕₒ::Float64,rot:
     end
     I = 0.0
     if ϕ >= ϕMin && ϕ <= ϕMax
-        I = cloudIntensity(r=r,ϕ=ϕ,θₒ=θₒ,ϕₒ=ϕₒ,rot=rot,i=i,κ=κ)
+        I = cloudIntensity(r=r,ϕ=ϕ,θₒ=θₒ,ϕ₀=ϕ₀,rot=rot,i=i,κ=κ)
         if overdense
             I *= 2.0 #x2 to replace cloud "lost" 
         end

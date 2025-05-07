@@ -93,7 +93,7 @@ end
 
 tDisk(ring::ring) = ring.η.*ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ]
 tCloud(ring::ring) = begin 
-    xyzSys = rotate3D(ring.r,ring.ϕₒ,ring.i,ring.rot,ring.θₒ,ring.reflect) 
+    xyzSys = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) 
     ring.η*(ring.r - xyzSys[1]) # time delays for clouds [rₛ]
 end
 

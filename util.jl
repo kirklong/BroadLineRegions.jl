@@ -139,11 +139,11 @@ function reflect!(xyzSys,i)
     xyzSys[3] = zf
     return xyzSys
 end
-function rotate3D(r,ϕₒ,i,rot,θₒ,reflect=false)
+function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
     """go from ring coordinates to 3D coordinates where camera is at +x 
     params:
         r: radius from central mass (in terms of rₛ) {Float64}
-        ϕₒ: starting azimuthal angle in ring plane (rad) {Float64}
+        ϕ₀: starting azimuthal angle in ring plane (rad) {Float64}
         i: inclination angle of ring plane (rad) {Float64}
         rot: rotation of system plane about z axis (rad) {Float64}
     returns: [x;y;z]
@@ -152,7 +152,7 @@ function rotate3D(r,ϕₒ,i,rot,θₒ,reflect=false)
         z: z coordinate in 3D space {Float64}
     """
     matrix = get_r3D(i,rot,θₒ)
-    xyzSys = matrix*[r*cos(ϕₒ);r*sin(ϕₒ);0] 
+    xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0] 
     if reflect
         xyzSys = BLR.reflect!(xyzSys,i)
     end
@@ -203,22 +203,22 @@ midPlaneXZ(x,i) = x*cot(i)
     for (mInd,model) in enumerate(mList)
         i = getVariable(model,:i)
         r = getVariable(model,:r)
-        ϕₒ = getVariable(model,:ϕₒ)
-        xtmp = zeros(size(ϕₒ))
-        ytmp = zeros(size(ϕₒ))
-        ztmp = zeros(size(ϕₒ))
-        if typeof(r) == Matrix{Float64} && typeof(ϕₒ) == Matrix{Float64}
+        ϕ₀ = getVariable(model,:ϕ₀)
+        xtmp = zeros(size(ϕ₀))
+        ytmp = zeros(size(ϕ₀))
+        ztmp = zeros(size(ϕ₀))
+        if typeof(r) == Matrix{Float64} && typeof(ϕ₀) == Matrix{Float64}
             for ii in 1:size(r)[1]
                 for jj in 1:size(r)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕₒ[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
                 end
             end
-        elseif typeof(r) == Vector{Float64} && typeof(ϕₒ) == Matrix{Float64}
+        elseif typeof(r) == Vector{Float64} && typeof(ϕ₀) == Matrix{Float64}
             for ii in 1:size(ϕ)[1]
                 for jj in 1:size(ϕ)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕₒ[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
                 end
             end
         else #if r is just a vector (with ϕ and i matching)
@@ -226,7 +226,7 @@ midPlaneXZ(x,i) = x*cot(i)
             θₒ = getVariable(model,:θₒ)
             reflect = Bool.(getVariable(model,:reflect))
             for ii in 1:length(r)
-                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕₒ[ii],i[ii],rot[ii],θₒ[ii],reflect[ii]) 
+                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],reflect[ii]) 
             end
         end
         boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])

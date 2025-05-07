@@ -32,7 +32,7 @@ function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,ro
         end
     end
     for ring in m.rings[.!diskFlagRing]
-        xyzCloud = rotate3D(ring.r,ring.ϕₒ,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
+        xyzCloud = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
         zDisk = midPlaneXZ(xyzCloud[1],iDisk) #z value of disk at x value of cloud
         if xyzCloud[3] < zDisk #cloud below disk -- invisible to camera
             ring.I = 0.0
@@ -100,7 +100,7 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
     ϕList = [m.rings[i].ϕ for i in 1:length(m.rings)]
     cloudRingInds = [i for i in 1:length(m.rings) if typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64]
     for i in cloudRingInds #check if r inside rMin/max, then find closest disk cell, then compare xs and flag for removal if xCloud behind xDisk
-        xyzSys = rotate3D(m.rings[i].r,m.rings[i].ϕₒ,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect) #system coordinates xyz
+        xyzSys = rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect) #system coordinates xyz
         xCloud = xyzSys[1]
         α,β = m.camera.α[αβStartInds[i]],m.camera.β[αβStartInds[i]]
         rCam = sqrt(α^2 + β^2)
@@ -108,7 +108,7 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
         if (rCam > rMinDisk) && (rCam < rMaxDisk)
             rDiskInd = argmin(abs.(rCam .- rUnique))
             ϕDiskInd = argmin(abs.(ϕCam .- ϕList[rDiskInd]))
-            xDisk = rotate3D(m.rings[rDiskInd].r[ϕDiskInd],m.rings[rDiskInd].ϕₒ[ϕDiskInd],m.rings[rDiskInd].i,m.rings[rDiskInd].rot,m.rings[rDiskInd].θₒ,m.rings[rDiskInd].reflect)[1] #system coordinates xyz
+            xDisk = rotate3D(m.rings[rDiskInd].r[ϕDiskInd],m.rings[rDiskInd].ϕ₀[ϕDiskInd],m.rings[rDiskInd].i,m.rings[rDiskInd].rot,m.rings[rDiskInd].θₒ,m.rings[rDiskInd].reflect)[1] #system coordinates xyz
             if xCloud < xDisk #cloud behind disk
                 removeFlag[i] = true
             end
@@ -270,10 +270,10 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
                 newRingsϕ = argmin(abs.(ϕ.-ϕDisk[newRingsInd])) #closest ϕ value in camera, should match order of ϕ in newRings[r].ϕ
                 disk_I = old_I[newRingsInd][newRingsϕ] #intensity of disk cell without raytracing
                 τDisk = typeof(newRings[newRingsInd].τ) == Float64 ? newRings[newRingsInd].τ : newRings[newRingsInd].τ[newRingsϕ]
-                xDisk = rotate3D(newRings[newRingsInd].r[newRingsϕ],newRings[newRingsInd].ϕₒ[newRingsϕ],newRings[newRingsInd].i,newRings[newRingsInd].rot,newRings[newRingsInd].θₒ)[1] #system coordinates xyz
-                #xCloud = rotate3D(m.rings[i].r,m.rings[i].ϕₒ,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect)[1] #system coordinates xyz
-                #xClouds = rotate3D.(m.rings[cloudInds][cloudMask].r,m.rings[cloudInds][cloudMask].ϕₒ,m.rings[cloudInds][cloudMask].i,m.rings[cloudInds][cloudMask].rot,m.rings[cloudInds][cloudMask].θₒ,m.rings[cloudInds][cloudMask].reflect) #system coordinates xyz
-                xClouds = [rotate3D(r.ϕ,r.ϕₒ,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudRingInds][cloudMaskRay]]
+                xDisk = rotate3D(newRings[newRingsInd].r[newRingsϕ],newRings[newRingsInd].ϕ₀[newRingsϕ],newRings[newRingsInd].i,newRings[newRingsInd].rot,newRings[newRingsInd].θₒ)[1] #system coordinates xyz
+                #xCloud = rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect)[1] #system coordinates xyz
+                #xClouds = rotate3D.(m.rings[cloudInds][cloudMask].r,m.rings[cloudInds][cloudMask].ϕ₀,m.rings[cloudInds][cloudMask].i,m.rings[cloudInds][cloudMask].rot,m.rings[cloudInds][cloudMask].θₒ,m.rings[cloudInds][cloudMask].reflect) #system coordinates xyz
+                xClouds = [rotate3D(r.ϕ,r.ϕ₀,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudRingInds][cloudMaskRay]]
                 
                 IList = [disk_I,[r.I for r in m.rings[cloudRingInds][cloudMaskRay]]...]
                 τList = [τDisk,[r.τ for r in m.rings[cloudRingInds][cloudMaskRay]]...]
@@ -309,7 +309,7 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
                         τ = zeros(sum(cloudMaskRay)) #initialize optical depth array for ray struct
                         x = zeros(sum(cloudMaskRay)) #initialize system x array for ray struct
                     end
-                    xClouds = [rotate3D(r.ϕ,r.ϕₒ,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudInds][cloudMaskRay]]
+                    xClouds = [rotate3D(r.ϕ,r.ϕ₀,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudInds][cloudMaskRay]]
                     IList = [r.I for r in m.rings[cloudInds][cloudMaskRay]]
                     τList = [r.τ for r in m.rings[cloudInds][cloudMaskRay]]
                     xOrder = sortperm(xClouds,rev=true)
@@ -336,7 +336,7 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
                     end
                 else #cloud alone
                     # newRings[newRingsInd].I += m.rings[i].I #copy cloud cell intensity to new rings struct
-                    # xCloud = rotate3D(m.rings[i].r,m.rings[i].ϕₒ,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect)[1] #system coordinates xyz
+                    # xCloud = rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect)[1] #system coordinates xyz
                     # rayCounts[newRingsInd] += 1 #increment ray counter
                     # raysTraced += 1
                     # if trackRays
@@ -353,7 +353,7 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
                             newRings[newRingsInd].I += m.rings[cloudRingInds][cloudMaskRay][1].I #copy cloud cell intensity to new rings struct
                         end
                         rayCounts[newRingsInd] += 1 #increment ray counter
-                        xCloud = rotate3D(m.rings[cloudRingInds][cloudMaskRay][1].r,m.rings[cloudRingInds][cloudMaskRay][1].ϕₒ,m.rings[cloudRingInds][cloudMaskRay][1].i,m.rings[cloudRingInds][cloudMaskRay][1].rot,m.rings[cloudRingInds][cloudMaskRay][1].θₒ,m.rings[cloudRingInds][cloudMaskRay][1].reflect)[1] #system coordinates xyz
+                        xCloud = rotate3D(m.rings[cloudRingInds][cloudMaskRay][1].r,m.rings[cloudRingInds][cloudMaskRay][1].ϕ₀,m.rings[cloudRingInds][cloudMaskRay][1].i,m.rings[cloudRingInds][cloudMaskRay][1].rot,m.rings[cloudRingInds][cloudMaskRay][1].θₒ,m.rings[cloudRingInds][cloudMaskRay][1].reflect)[1] #system coordinates xyz
                         raysTraced += 1
                         if trackRays
                             rays[raysTraced] = ray(r,ϕ,α,β,[m.rings[cloudRingInds][cloudMaskRay][1].τ],[xCloud],[m.rings[cloudRingInds][cloudMaskRay][1].I],3)
@@ -403,8 +403,8 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
                     x = zeros(1+sum(cloudMaskRay)) #initialize system x array for ray struct
                 end
                 disk_I = old_I[newRingsInd][newRingsϕ] #intensity of disk cell without raytracing
-                xDisk = rotate3D(newRings[newRingsInd].r[newRingsϕ],newRings[newRingsInd].ϕₒ[newRingsϕ],newRings[newRingsInd].i,newRings[newRingsInd].rot,newRings[newRingsInd].θₒ)[1] #system coordinates xyz
-                xClouds = [rotate3D(r.ϕ,r.ϕₒ,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudRingInds][cloudMaskRay]]
+                xDisk = rotate3D(newRings[newRingsInd].r[newRingsϕ],newRings[newRingsInd].ϕ₀[newRingsϕ],newRings[newRingsInd].i,newRings[newRingsInd].rot,newRings[newRingsInd].θₒ)[1] #system coordinates xyz
+                xClouds = [rotate3D(r.ϕ,r.ϕ₀,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudRingInds][cloudMaskRay]]
                 
                 IList = [disk_I,[r.I for r in m.rings[cloudRingInds][cloudMaskRay]]...]
                 τDisk = typeof(newRings[newRingsInd].τ) == Float64 ? newRings[newRingsInd].τ : newRings[newRingsInd].τ[newRingsϕ]
@@ -436,7 +436,7 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
             else
                 newRings[newRingsInd].I[newRingsϕ] += old_I[newRingsInd][newRingsϕ] #add disk cell intensity to new rings struct, no raytracing needed
                 rayCounts[newRingsInd][newRingsϕ] += 1 #increment ray counter
-                xDisk = rotate3D(newRings[newRingsInd].r[newRingsϕ],newRings[newRingsInd].ϕₒ[newRingsϕ],newRings[newRingsInd].i,newRings[newRingsInd].rot,newRings[newRingsInd].θₒ)[1] #system coordinates xyz
+                xDisk = rotate3D(newRings[newRingsInd].r[newRingsϕ],newRings[newRingsInd].ϕ₀[newRingsϕ],newRings[newRingsInd].i,newRings[newRingsInd].rot,newRings[newRingsInd].θₒ)[1] #system coordinates xyz
                 τDisk = typeof(newRings[newRingsInd].τ) == Float64 ? newRings[newRingsInd].τ : newRings[newRingsInd].τ[newRingsϕ]
                 raysTraced += 1
                 if trackRays
@@ -451,7 +451,7 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
                     τ = zeros(sum(cloudMaskRay)) #initialize optical depth array for ray struct
                     x = zeros(sum(cloudMaskRay)) #initialize system x array for ray struct
                 end
-                xClouds = [rotate3D(r.ϕ,r.ϕₒ,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudRingInds][cloudMaskRay]]
+                xClouds = [rotate3D(r.ϕ,r.ϕ₀,r.i,r.rot,r.θₒ,r.reflect)[1] for r in m.rings[cloudRingInds][cloudMaskRay]]
                 IList = [r.I for r in m.rings[cloudRingInds][cloudMaskRay]]
                 τList = [r.τ for r in m.rings[cloudRingInds][cloudMaskRay]]
                 xOrder = sortperm(xClouds,rev=true)
@@ -481,7 +481,7 @@ function raytrace!(m::model;DiskRayFrac::Union{Float64,Nothing}=nothing,nRays::U
                     newRings[newRingsInd].I += m.rings[cloudRingInds][cloudMaskRay][1].I #copy cloud cell intensity to new rings struct
                     newRings[newRingsInd].I += m.rings[cloudRingInds][cloudMaskRay][1].I #copy cloud cell intensity to new rings struct
                     rayCounts[newRingsInd] += 1 #increment ray counter
-                    xCloud = rotate3D(m.rings[cloudRingInds][cloudMaskRay][1].r,m.rings[cloudRingInds][cloudMaskRay][1].ϕₒ,m.rings[cloudRingInds][cloudMaskRay][1].i,m.rings[cloudRingInds][cloudMaskRay][1].rot,m.rings[cloudRingInds][cloudMaskRay][1].θₒ,m.rings[cloudRingInds][cloudMaskRay][1].reflect)[1] #system coordinates xyz
+                    xCloud = rotate3D(m.rings[cloudRingInds][cloudMaskRay][1].r,m.rings[cloudRingInds][cloudMaskRay][1].ϕ₀,m.rings[cloudRingInds][cloudMaskRay][1].i,m.rings[cloudRingInds][cloudMaskRay][1].rot,m.rings[cloudRingInds][cloudMaskRay][1].θₒ,m.rings[cloudRingInds][cloudMaskRay][1].reflect)[1] #system coordinates xyz
                     raysTraced += 1
                     if trackRays
                         rays[raysTraced] = ray(r,ϕ,α,β,[m.rings[cloudRingInds][cloudMaskRay][1].τ],[xCloud],[m.rings[cloudRingInds][cloudMaskRay][1].I],7)
@@ -654,8 +654,8 @@ end
 #     # xRing = @. (β*cos(rot) - α*cos(i)*sin(rot))/(cos(i)*cos(θₒPoint)+cos(rot)*sin(i)*sin(θₒPoint)) #system x
 #     # yRing = @. (α*(cos(i)*cos(θₒPoint)+sec(rot)*sin(i)*sin(θₒPoint))+β*cos(θₒPoint)*tan(rot))/(cos(i)*cos(θₒPoint)*sec(rot)+sin(i)*sin(θₒPoint)) #system y
 #     # r = @. √(xRing^2 + yRing^2)
-#     # ϕₒ = @. atan(yRing,xRing) #original ϕₒ (no rotation)
-#     # xyzSys = rotate3D.(r,ϕₒ,i,rot,θₒPoint) #system coordinates xyz
+#     # ϕ₀ = @. atan(yRing,xRing) #original ϕ₀ (no rotation)
+#     # xyzSys = rotate3D.(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
 #     # xSys = [xyzSys[i][1] for i in 1:length(xyzSys)]
 #     # ySys = [xyzSys[i][2] for i in 1:length(xyzSys)]
 #     # zSys = [xyzSys[i][3] for i in 1:length(xyzSys)]
