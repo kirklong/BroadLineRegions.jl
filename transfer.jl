@@ -8,7 +8,7 @@ function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64};)
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
     v = getVariable(m,:v)
-    d(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
+    d(ring::ring) = t(ring)
     delays = getVariable(m,d)
     Ψ = Array{Float64}(undef,length(vEdges)-1,length(tEdges)-1)
     for i in 1:length(vEdges)-1
@@ -23,7 +23,6 @@ end
 
 function getΨ(m::model,vBins::Int64,tBins::Int64)
     v = getVariable(m,:v)
-    t(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
     delays = getVariable(m,t)
     maxV =  maximum(i for i in v if !isnan(i))
     minV =  minimum(i for i in v if !isnan(i))

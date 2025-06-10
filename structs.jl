@@ -7,9 +7,9 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         r: distance from central mass (in terms of rₛ) Union{Vector{Float64},Float64
             - can be Float64 for constant r across ϕ or single point at (r,ϕ), otherwise it is a Vector{Float64} of distances corresponding to azimuthal angles ϕ
             - user can (optionally) supply a function to calculate r from other parameters (see constructor) that returns a Vector{Float64} or Float64
-        i: inclination angle (rad) {Float64}
+        i: inclination angle (rad) {Union{Float64},Vector{Float64}}
             - must be between 0 and π/2, with 0 being face-on and π/2 being edge-on
-        rot: rotation of system plane about z axis (rad) {Float64}
+        rot: rotation of system plane about z axis (rad) {Union{Float64},Vector{Float64}}
         θₒ: opening angle (rad) of ring {Float64}
             - should be between 0 and π/2
             - optional, defaults to 0
@@ -32,13 +32,13 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         ring(;r, i, rot, θₒ, v, I, ϕ, ϕ₀, kwargs...)
         r: Float64, Vector{Float64} or Function
             - if function, must return a Vector{Float64} or Float64 corresponding to ϕ
-        i: Float64
+        i: Float64 or Vector{Float64}
             - must be between 0 and π/2
-        rot: Float64
+        rot: Float64 or Vector{Float64}
             - optional (defaults to 0.0)
             - must be between 0 and 2π (or -π to π)
             - describes 3D rotation about z axis of ring plane
-        θₒ: Float64
+        θₒ: Float64 or Vector{Float64}
             - optional (defaults to 0.0)
             - must be between 0 and π/2
             - opening angle of ring (i.e. thin disk has opening angle near 0.0 and spherical shell has opening angles distributed between 0 and π/2)
@@ -55,7 +55,7 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
             - projected area of ring in image (used in calculating profiles)
             - i.e. for log-spherical ring ΔA = r^2*Δr*Δϕ, for linear-spherical ring ΔA = r*Δr*Δϕ, for cloud ΔA could be size of cloud (note here r would be the image r not the physical r)
             - defaults to 1.0 if not provided
-        reflect: Bool
+        reflect: Bool or Array{Bool,}
             - optional (defaults to false)
             - if true, cloud is reflected across disk mid-plane to front
         τ: Float64 or Vector{Float64} or Function
@@ -64,27 +64,42 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         η: Float64 or Vector{Float64} or Function
             - optional (defaults to 1.0)
             - response parameter for ring -- affects weighting in delay profile/transfer functions
+        Δr: Float64
+            - optional (defaults to 1.0)
+            - distance between camera pixels in r
+        Δϕ: Float64
+            - optional (defaults to 1.0)
+            - distance between camera pixels in ϕ
+        scale: Symbol or nothing
+            - optional (defaults to nothing)
+            - if provided, encodes whether the camera rings were drawn from log scale or not
+            - if scale = :log, then the camera rings were drawn from log scale
+            - if scale = :linear, then the camera rings were drawn from linear scale
+            - only checks for :log or :linear, providing something else is equivalent to providing nothing 
         kwargs: contain extra keyword arguments for v, I, r, and/or τ if they are functions (see examples)
     """
 
     r::Union{V,F,Function}
-    i::F
-    rot::F
-    θₒ::F
+    i::Union{V,F}
+    rot::Union{V,F}
+    θₒ::Union{V,F}
     v::Union{V,F,Function}
     I::Union{V,F,Matrix{F},Function}
     ϕ::Union{V,F}
     ϕ₀::Union{V,F}
     ΔA::Union{V,F}
-    reflect::Bool
+    reflect::Union{Bool,Array{Bool,}} #allow for multiple rings to have different reflect values
     τ::Union{V,F,Function}
     η::Union{V,F,Function}
+    Δr::Float64
+    Δϕ::Float64
+    scale::Union{Nothing,Symbol}
 
     function ring(;kwargs...) #could re-write this to use multiple dispatch? i.e. ring(;r::Float64, i::Float64, e::Float64, v::Float64, I::Float64, ϕ::Float64) etc.
         """
         constructor for ring struct -- takes in kwargs (detailed above) and returns a ring object (detailed above) while checking for errors
         """
-        r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; ΔA = 1.0; rot = 0.0; θₒ = 0.0; ϕ₀ = 0.0; reflect = false; τ = 0.0; η = 1.0
+        r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; ΔA = 1.0; rot = 0.0; θₒ = 0.0; ϕ₀ = 0.0; reflect = false; τ = 0.0; η = 1.0; Δr = 1.0; Δϕ = 1.0; scale = nothing
         try; r = kwargs[:r]; catch; error("r must be provided as kwarg"); end
         try; i = kwargs[:i]; catch; error("i must be provided as kwarg"); end
         try; v = kwargs[:v]; catch; error("v must be provided as kwarg"); end
@@ -97,7 +112,15 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         try; reflect = kwargs[:reflect]; catch; println("reflect not provided: defaulting to false"); end
         try; τ = kwargs[:τ]; catch; println("τ not provided: defaulting to 0.0"); end
         try; η = kwargs[:η]; catch; println("η not provided: defaulting to 1.0"); end
+        try; Δr = kwargs[:Δr]; catch; println("Δr not provided: defaulting to 1.0"); end
+        try; Δϕ = kwargs[:Δϕ]; catch; println("Δϕ not provided: defaulting to 1.0"); end
+        try; scale = kwargs[:scale]; catch; println("scale not provided: defaulting to nothing"); end
         kwargs = values(kwargs)
+
+        #check types of inputs
+        @assert (typeof(Δr)) == Float64 "Δr must be Float64, got $(typeof(Δr))"
+        @assert (typeof(Δϕ)) == Float64 "Δϕ must be Float64, got $(typeof(Δϕ))"
+        @assert (typeof(scale) == Symbol) || (scale == nothing) "scale must be Symbol or nothing, got $(typeof(scale))"
         
         @assert typeof(reflect) == Bool "reflect must be Bool, got $(typeof(reflect))"
         @assert typeof(i) == Float64 "i must be Float64, got $(typeof(i))"
@@ -178,12 +201,18 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
             @assert τ>=0.0 "τ must be greater than or equal to 0"
         end
 
-        new{Vector{Float64},Float64}(r,i,rot,θₒ,v,I,ϕ,ϕ₀,ΔA,reflect,τ,η)
+        new{Vector{Float64},Float64}(r,i,rot,θₒ,v,I,ϕ,ϕ₀,ΔA,reflect,τ,η,Δr,Δϕ,scale)
     end
 end
 
 Base.show(io::IO, r::ring) = begin
-    println(io, "ring struct with inclination $(round(r.i,sigdigits=3)) rad, rotation $(round(r.rot,sigdigits=3)) rad, and opening angle $(round(r.θₒ,sigdigits=3)) rad")
+    if typeof(r.i) == Float64
+        println(io, "ring struct with inclination $(round(r.i,sigdigits=3)) rad, rotation $(round(r.rot,sigdigits=3)) rad, and opening angle $(round(r.θₒ,sigdigits=3)) rad")
+    elseif typeof(r.i) == Vector{Float64} && length(unique(r.i)) == 1
+        println(io, "ring struct with inclination $(round(r.i[1],sigdigits=3)) rad, rotation $(round(r.rot[1],sigdigits=3)) rad, and opening angle $(round(r.θₒ[1],sigdigits=3)) rad")
+    else
+        println(io, "ring struct with inclinations: $(round.(r.i,sigdigits=3)) rad, rotations: $(round.(r.rot,sigdigits=3)) rad, and opening angles: $(round(r.θₒ,sigdigits=3)) rad")
+    end
     xMin = nothing; xMax = nothing
     if typeof(r.ϕ) == Float64
         if r.ϕ != r.ϕ₀
@@ -371,7 +400,7 @@ mutable struct model
     #also keep track of xyz in this new struct? call it coords and have one field be camera and the other be system
     #or just put it in each ring? probably less cluttered/better...do tomorrow
 
-    function model(rings::Vector{ring{Vector{Float64},Float64}},profiles::Union{Nothing,Dict{Symbol,profile}},camera::Union{Nothing,camera},subModelStartInds::Vector{Int})
+    function model(rings::Vector{ring},profiles::Union{Nothing,Dict{Symbol,profile}},camera::Union{Nothing,camera},subModelStartInds::Vector{Int})
         """
         constructor for model struct -- takes in rings, profiles, camera, and subModelStartInds and returns a model object (detailed above) while checking for errors
         """
@@ -380,7 +409,7 @@ mutable struct model
 
     function model(rings::Vector{ring{Vector{Float64},Float64}})
         """
-        constructor for model struct -- takes in rings and returns a model object (detailed above) while checking for errors
+        constructor for model struct -- takes in cloud rings and returns a model object (detailed above) while checking for errors
         """
         r = [ring.r for ring in rings]; ϕ₀ = [ring.ϕ₀ for ring in rings]; i = [ring.i for ring in rings]; rot = [ring.rot for ring in rings]; θₒ = [ring.θₒ for ring in rings]; reflect = [ring.reflect for ring in rings]
         α = zeros(length(r)); β = zeros(length(r))
@@ -408,10 +437,10 @@ mutable struct model
         """
         r = nothing; ΔA = nothing
         @assert rMin < rMax "rMin must be less than rMax"
-        @assert nr > 0 "nr must be greater than 0"
-        @assert nϕ > 0 "nϕ must be greater than 0"
+        @assert nr > 1 "nr must be greater than 1"
+        @assert nϕ > 1 "nϕ must be greater than 1"
 
-        ϕ = collect(range(-π,stop=π,length=nϕ)) #non-rotated frame
+        ϕ = collect(range(-π,stop=π,length=nϕ+1))[1:end-1] #camera ϕ, n+1 points to prevent duplication at ϕ = -π and ϕ = π
         Δϕ = ϕ[2] - ϕ[1]
         if scale == :log        
             logr = collect(range(log(rMin*cos(i)),stop=log(rMax),length=nr))
@@ -436,14 +465,14 @@ mutable struct model
         rt = 0.0; ϕt = 0.0; ϕ₀t = 0.0 #preallocate raytracing variables
         for ri in 1:nr
             for ϕi in 1:nϕ
-                rt, ϕt, ϕ₀t = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, r3D, xyz, matBuff, colBuff) #flip i to match convention of +z being up, relic
+                rt, ϕt, ϕ₀t = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, r3D, xyz, matBuff, colBuff) 
                 ηt = response(rt; kwargs...) #response function
                 # println("RAYTRACE: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
                 # x = β[ri,ϕi]/cos(i); y = α[ri,ϕi]; z = 0.0 #system coordinates from camera coordinates, raytraced back to disk plane
                 # rt = sqrt(x^2 + y^2 + z^2); ϕt = atan(y,x); ϕ₀t = atan(y,x) #convert to polar coordinates
                 # println("OLD WAY: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
                 # exit()
-                if rt < rMin || rt > rMax #exclude portions outside of (rMin, rMax)
+                if round(rt,sigdigits=9) < round(rMin,sigdigits=9) || round(rt,sigdigits=9) > round(rMax,sigdigits=9) #exclude portions outside of (rMin, rMax), round because of numerical errors
                     rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = NaN, NaN, NaN, NaN
                 else
                     rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = rt, ϕt, ϕ₀t, ηt
@@ -452,7 +481,7 @@ mutable struct model
         end
 
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕ₀ = [ϕ₀[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
-        rings = [ring(r = ri, i = i, v = v, I = I, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η)]
+        rings = [ring(r = ri, i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η)]
         m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),nothing),[1])
     end
 
@@ -572,12 +601,12 @@ end
 
 Base.show(io::IO, m::model) = begin 
     println(io, "model struct with $(length(m.rings)) rings:")
-    if isdefined(m, :profiles) && length(m.profiles) > 0
+    if isdefined(m, :profiles) && length(m.profiles) > 0 && !isnothing(m.profiles)
         println(io, "\t-profiles: $(keys(m.profiles))")
     else
         println(io, "\t-no profiles set")
     end
-    if isdefined(m, :camera)
+    if isdefined(m, :camera) && !isnothing(m.camera)
         println(io, "\t-$(m.camera)")
     else
         println(io, "\t-no camera set")

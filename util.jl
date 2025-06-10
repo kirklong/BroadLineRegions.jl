@@ -1,13 +1,164 @@
 #!/usr/bin/env julia
 using RecipesBase
 
-function reset!(m::model;profiles=true,img=true) #erase existing profiles/imgs
+function reset!(m::model;profiles=true,img=true)
+    """erase existing profiles/imgs
+    params:
+        m: model
+            - model object to reset
+        profiles (optional): Bool -- default true
+            - if true, reset profiles
+        img (optional): Bool -- default true
+            - if true, reset camera rays
+    """
     if profiles 
         m.profiles = Dict{Symbol,profile}()
     end
     if img
         m.camera.rays = nothing
     end
+end
+
+function removeNaN!(m::model)
+    """remove points with I = NaN from model
+    params:
+        m: model to remove points from {model}
+    returns:
+        m: model with points removed {model}
+    """
+    I = getVariable(m,:I,flatten=true)
+    NaNMask = .!isnan.(I)
+    #remove camera points with I = 0.0
+    α = m.camera.α[NaNMask]; β = m.camera.β[NaNMask]
+    m.camera = camera(α,β,nothing) #update camera with new α and β
+    #remove rings with I = 0.0
+    for i in 1:length(m.subModelStartInds)
+        endInd = i == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[i+1]-1
+        subRings = m.rings[m.subModelStartInds[i]:endInd]
+        for ring in subRings
+            NaNMask = .!isnan.(ring.I) 
+            ring.v = ring.v[NaNMask] #keep only not NaN velocities
+            ring.ϕ = ring.ϕ[NaNMask] #keep only not NaN azimuthal angles
+            ring.r = ring.r[NaNMask] #keep only not NaN radii
+            ring.ΔA = ring.ΔA[NaNMask] #keep only not NaN area elements
+            if length(ring.i) == length(ring.I)
+                ring.i = ring.i[NaNMask] #keep only not NaN inclinations
+            elseif sum(NaNMask) != 0 #some points are NaN but i is not array (yet) -- convert to array copying values in place except for where NaN
+                ring.i = fill(ring.i,length(ring.I))
+                ring.i = ring.i[NaNMask] #keep only not NaN inclinations
+            end
+            #if sum(NaNMask) == 0 no points are NaN so don't modify anything as nothing will be removed
+            if length(ring.τ) == length(ring.I)
+                ring.τ = ring.τ[NaNMask] #keep only not NaN optical depths
+            elseif sum(NaNMask) != 0 #some points are NaN but τ is not array (yet)
+                ring.τ = fill(ring.τ,length(ring.I))
+                ring.τ = ring.τ[NaNMask] #keep only not NaN optical depths
+            end
+            if length(ring.η) == length(ring.I)
+                ring.η = ring.η[NaNMask] #keep only not NaN η values
+            elseif sum(NaNMask) != 0 #some points are NaN but η is not array (yet)
+                ring.η = fill(ring.η,length(ring.I))
+                ring.η = ring.η[NaNMask] #keep only not NaN η values
+            end
+            if length(ring.ϕ₀) == length(ring.I)
+                ring.ϕ₀ = ring.ϕ₀[NaNMask] #keep only not NaN starting azimuthal angles
+            elseif sum(NaNMask) != 0 #some points are NaN but ϕ₀ is not array (yet)
+                ring.ϕ₀ = fill(ring.ϕ₀,length(ring.I))
+                ring.ϕ₀ = ring.ϕ₀[NaNMask] #keep only not NaN starting azimuthal angles
+            end
+            if length(ring.rot) == length(ring.I)
+                ring.rot = ring.rot[NaNMask] #keep only not NaN rotation angles
+            elseif sum(NaNMask) != 0 #some points are NaN but rot is not array (yet)
+                ring.rot = fill(ring.rot,length(ring.I))
+                ring.rot = ring.rot[NaNMask] #keep only not NaN rotation angles
+            end
+            if length(ring.θₒ) == length(ring.I)
+                ring.θₒ = ring.θₒ[NaNMask] #keep only not NaN opening angles
+            elseif sum(NaNMask) != 0 #some points are NaN but θₒ is not array (yet)
+                ring.θₒ = fill(ring.θₒ,length(ring.I))
+                ring.θₒ = ring.θₒ[NaNMask] #keep only not NaN opening angles
+            end
+            if length(ring.reflect) == length(ring.I)
+                ring.reflect = ring.reflect[NaNMask] #keep only not NaN reflect flags
+            elseif sum(NaNMask) != 0 #some points are NaN but reflect is not array (yet)
+                ring.reflect = fill(ring.reflect,length(ring.I))
+                ring.reflect = ring.reflect[NaNMask] #keep only not NaN reflect flags
+            end
+            ring.I = ring.I[NaNMask] #keep only not NaN intensities
+        end
+    end
+    m.rings =  filter(ring -> length(ring.I) > 0, m.rings) #filter out rings with no points left
+    oldLength = length(m.rings[1].I) #get length of first ring to use as reference
+    m.subModelStartInds = [1] #reset subModelStartInds to only include first ring
+    for (i,ring) in enumerate(m.rings[2:end])
+        if length(ring.I) != oldLength
+            m.subModelStartInds = push!(m.subModelStartInds,i+1) #if the length of the ring is not equal to the first ring, add it to the subModelStartInds
+            oldLength = length(ring.I) #update oldLength to the new length
+        end
+    end
+    return m
+end
+
+function getFlattenedCameraIndices(m::model)
+    """get flattened camera indices corresponding to rings in model
+    params:
+        m: model
+            - model object to extract camera indices from
+    returns:
+        cameraIndices: Vector{Int}
+            - vector of camera starting indices corresponding to rings in each sub model, with length equal to m.subModelStartInds
+    """
+    camStartInds = Array{Int}(undef,length(m.subModelStartInds))
+    camStartInds[1] = 1
+    for i=2:length(m.subModelStartInds)
+        nPerRing = length(m.rings[m.subModelStartInds[i-1]].ϕ) #could also use r, just need to check how many points are in each ring 
+        nRings = m.subModelStartInds[i]-m.subModelStartInds[i-1]
+        camStartInds[i] = camStartInds[i-1] + nPerRing*nRings
+    end
+    return camStartInds
+end
+
+function getRingFromFlattenedInd(m::model,flattenedInd::Int)
+    """retrieve the model ring index and subindex (if applicable) from flattened array index
+    params:
+        m: model 
+            -model object with rings 
+        flattenedInd: Int
+            -the index in the flattened array we need to work back from
+    returns: 
+        ringInd: Int
+            -the index in model.rings that the flattened index corresponds to
+        subInd: Int, optional
+            -if the ring has length > 0, the subindex that matches the flattened index passed to this function
+    """
+    #need to do it per chunk 
+    row = 0; column = 0
+    if length(m.subModelStartInds) == 1 
+        column = floor(Int,flattenedInd/length(m.rings)+1)
+        row = floor(Int,flattenedInd%length(m.rings))
+        if row == 0
+            row = length(m.rings) #when there is no remainder that is the bottom of column
+            column -= 1 #no remainder = bottom of column, but flattened/length(m.rings)+1 will give column + 1
+        end
+    else #if there are multiple submodels, do the process above but for just the specific submodel, then add the offset of all previous submodels 
+        subModelFlattenedInds = getFlattenedCameraIndices(m)
+        subInd = findfirst(flattenedInd .< subModelFlattenedInds)
+        if isnothing(subInd)
+            subInd = length(subModelFlattenedInds)
+        else
+            subInd -= 1 #findfirst returns the first index where the condition is true, so we need to subtract 1 to get the correct subindex
+        end
+        subRings = subInd == length(subModelFlattenedInds) ? m.rings[m.subModelStartInds[subInd]:end] : m.rings[m.subModelStartInds[subInd]:m.subModelStartInds[subInd+1]-1]
+        subDifference = flattenedInd - subModelFlattenedInds[subInd] + 1 #difference between flattened index and the start of the submodel, +1 for 1-based indexing
+        column = floor(Int,(subDifference)/length(subRings)+1)
+        row = floor(Int,(subDifference)%length(subRings))
+        if row == 0
+            row = length(subRings) #when there is no remainder that is the bottom of column
+            column -= 1 #no remainder = bottom of column, but flattened/length(m.rings)+1 will give column + 1
+        end
+        row += m.subModelStartInds[subInd] - 1 #add the starting index of the submodel to the ring index
+    end
+    return row, column #ringInd is row, subInd is column, for clouds/point models column should always be 1
 end
 
 """retrieve elements from model object and stack them into matrices for easy manipulation
@@ -23,15 +174,15 @@ returns:
         - matrix of extracted variable from model.rings, created by stacking the output variable for each ring
         - for example, if variable given is :I y will have shape (length(r), length(ϕ)) as at each r and ϕ there is a value of I
 """
-function getVariable(m::model,variable::String) # method for getting variable if String 
+function getVariable(m::model,variable::String;flatten=false) # method for getting variable if String 
     variable = Symbol(variable)
-    return getVariable(m,variable)
+    return getVariable(m,variable;flatten)
 end,
-function getVariable(m::model,variable::Symbol) # method for getting variable if Symbol
+function getVariable(m::model,variable::Symbol;flatten=false) # method for getting variable if Symbol
     if variable ∉ fieldnames(ring)
         throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
     end
-    isCombined = m.subModelStartInds != [1]
+    isCombined = length(m.subModelStartInds) > 1 #check if model is combined
     if isCombined
         startInds = m.subModelStartInds
         chunks = []
@@ -44,8 +195,8 @@ function getVariable(m::model,variable::Symbol) # method for getting variable if
         end
         res = Array{Float64}(undef,l) #preallocate array
         for (i,chunk) in enumerate(chunks)
-            startInd = i == 1 ? 1 : sum(length,chunks[i-1])*(i-1)+1
-            endInd = i == length(chunks) ? l : sum(length,chunk)*i
+            startInd = i == 1 ? 1 : sum(sum(length,chunks[ii]) for ii in 1:(i-1))+1
+            endInd = i == length(chunks) ? l : sum(sum(length,chunks[ii]) for ii in 1:(i))
             if typeof(chunk) == Vector{Vector{Float64}} #if chunk is 2D
                 res[startInd:endInd] = vec(stack(chunk,dims=1))
             else
@@ -54,10 +205,15 @@ function getVariable(m::model,variable::Symbol) # method for getting variable if
         end
         return res
     else
-        return stack([getfield(ring,variable) for ring in m.rings],dims=1)
+        res = stack([getfield(ring,variable) for ring in m.rings],dims=1)
+        if flatten
+            return vec(res) #flatten the matrix to a vector
+        else
+            return res #return as is
+        end
     end
 end,
-function getVariable(m::model,variable::Function) # method for getting variable if Function
+function getVariable(m::model,variable::Function;flatten=false) # method for getting variable if Function
     res = nothing
     isCombined = m.subModelStartInds != [1]
     if isCombined
@@ -86,7 +242,12 @@ function getVariable(m::model,variable::Function) # method for getting variable 
             throw(error("error in function call $(variable)(ring)"))
         end
     else
-        return stack([variable(ring) for ring in m.rings],dims=1)
+        res = stack([variable(ring) for ring in m.rings],dims=1)
+        if flatten
+            return vec(res) #flatten the matrix to a vector
+        else
+            return res #return as is
+        end
     end
 end
 
@@ -95,8 +256,11 @@ end
     model, variable = nothing, nothing
     if length(img.args) == 2
         model, variable = img.args
+    elseif length(img.args) == 1
+        model = img.args[1]
+        variable = :I #default variable is intensity
     else
-        throw(ArgumentError("expected 2 arguments (model, variable), got $(img.args)"))
+        throw(ArgumentError("expected up to 2 arguments (model, [variable]), got $(img.args)"))
     end
     model, variable = img.args
     z = vec(getVariable(model,variable))
@@ -113,6 +277,34 @@ end
     label --> false
     ()
 end
+
+function addGrid!(m,colors=nothing,nϕ=64)
+    ϕGrid = range(0,stop=2π,length=nϕ)
+    rAll = sqrt.(m.camera.α.^2 .+ m.camera.β.^2) #get radii from camera α and β
+    rUnique = unique(rAll) #get unique radii
+    if isnothing(colors)
+        colors = [i for i in 1:length(m.subModelStartInds)]
+    end
+    for (ri,r) in enumerate(rUnique)
+        i = findfirst(r .== rAll)
+        ring,col = getRingFromFlattenedInd(m,i) #get the ring index from the flattened index
+        subModelInd = findfirst(ring .< m.subModelStartInds)
+        if isnothing(subModelInd)
+            subModelInd = length(m.subModelStartInds) #if not found, then it is the last submodel
+        else
+            subModelInd -= 1 #findfirst returns the first index where the condition is true, so we need to subtract 1 to get the correct subindex
+        end
+        ΔrUp = m.rings[ring].scale == :log ? r*(exp(m.rings[ring].Δr)-1) : m.rings[ring].Δr #log scale
+        ΔrDown = m.rings[ring].scale == :log ? minimum([r,r*(1-1/exp(m.rings[ring].Δr))]) : minimum([r,m.rings[ring].Δr]) #if first ring, then use scale to calculate what "should be" the next inner ring and take minimum of that and the current radius (so don't go through zero)
+        #need to do the "ring -1" check for each subModelStartInd -- if you are the first ring of submodel don't go to the last ring of next submodel to calculate this 
+        #also analytically do it based on Δr what the inner ring would have been and then do minimum that and 0 
+        lx = (r-ΔrDown/2).* cos.(ϕGrid); ly = (r-ΔrDown/2).* sin.(ϕGrid)
+        ux = (r+ΔrUp/2).* cos.(ϕGrid); uy = (r+ΔrUp/2).* sin.(ϕGrid)
+        plot!(vcat(lx,ux),vcat(ly,uy),label="",color=colors[subModelInd],fill=true,fillalpha=0.1,linestyle=:dash,lw=2)
+        plot!(r.*cos.(ϕGrid),r.*sin.(ϕGrid),label="",color=colors[subModelInd],linestyle=:solid,lw=2)
+    end
+end
+
 
 function get_r3D(i,rot,θₒ)
     """calculate rotation matrix to transform from initial XY plane coordinates to 3D space

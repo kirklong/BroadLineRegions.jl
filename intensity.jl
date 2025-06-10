@@ -59,8 +59,8 @@ function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::U
         I = (r >= rMin && r <= rMax) ? DiskWind_I_(r, ϕ, i, f1, f2, f3, f4, α) : 0.0
     elseif typeof(r) == Vector{Float64} && typeof(ϕ) == Vector{Float64}
         I = vcat([DiskWind_I_(ri,ϕi,i,f1,f2,f3,f4,α) for (ri,ϕi) in zip(r,ϕ)]...) #one intensity value at each r,ϕ pair
-        if minimum(r) < rMin || maximum(r) > rMax
-            I = [(ri >= rMin && ri <= rMax) ? Ii : 0.0 for (ri,Ii) in zip(r,I)]
+        if round(minimum(r),sigdigits=9) <= round(rMin,sigdigits=9) || round(maximum(r),sigdigits=9) >= round(rMax,sigdigits=9)
+            I = [(round(ri,sigdigits=9) >= round(rMin,sigdigits=9) && round(ri,sigdigits=9) <= round(rMax,sigdigits=9)) ? Ii : 0.0 for (ri,Ii) in zip(r,I)]
         end
     else
         error("got unsupported types for r and ϕ: got $(typeof(r)) and $(typeof(ϕ)), expected Float64 or Vector{Float64}")
@@ -80,12 +80,12 @@ function IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector
         intensity (arbitrary units) Union{Float64,Vector{Float64},Matrix{Float64}}
     """
     if typeof(ϕ) == Float64 && typeof(r) == Float64
-        I = (r >= rMin && r <= rMax) ? rescale : 0.0
+        I = (round(r,sigdigit=9) >= round(rMin,sigdigits=9) && round(r,sigdigits=9) <= round(rMax,sigdigits=9)) ? rescale : 0.0
     else
         if typeof(r) == Float64
-            I = (r >= rMin && r <= rMax) ? rescale.*ones(length(ϕ)) : zeros(length(ϕ))
+            I = (round(r,sigdigit=9) >= round(rMin,sigdigits=9) && round(r,sigdigits=9) <= round(rMax,sigdigits=9)) ? rescale.*ones(length(ϕ)) : zeros(length(ϕ))
         elseif typeof(ϕ) == Vector{Float64}
-            I = vcat([(ri >= rMin && ri <= rMax) ? rescale : 0.0 for (ri,ϕi) in zip(r,ϕ)]...) #one intensity value at each r,ϕ pair
+            I = vcat([round(ri,sigdigits=9) >= round(rMin,sigdigits=9) && round(ri,sigdigits=9) <= round(rMax,sigdigits=9) ? rescale : 0.0 for (ri,ϕi) in zip(r,ϕ)]...) #one intensity value at each r,ϕ pair
         else
             error("got unsupported types for r and ϕ: got $(typeof(r)) and $(typeof(ϕ)), expected Float64 or Vector{Float64}")
         end
