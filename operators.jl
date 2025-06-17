@@ -13,4 +13,18 @@ Base.:+(m1::model,m2::model) = begin
     return mCombined
 end
 
-# Base.getindex(m::model,i::Int)
+Base.getindex(m::model, i::Int) = begin
+    if i > length(m.subModelStartInds)
+        error("Index out of bounds: $i for model with $(length(m.subModelStartInds)) submodels.")
+    end
+    startInd = m.subModelStartInds[i]
+    endInd = i < length(m.subModelStartInds) ? m.subModelStartInds[i+1]-1 : length(m.rings)
+    subModelRings = m.rings[startInd:endInd]
+    camStartInds = getFlattenedCameraIndices(m)
+    camStartInd = camStartInds[i]
+    camEndInd = i < length(camStartInds) ? camStartInds[i+1]-1 : length(m.camera.α)
+    subModelCamera = camera(m.camera.α[camStartInd:camEndInd],
+                            m.camera.β[camStartInd:camEndInd],
+                            m.camera.raytraced)
+    return model(subModelRings, Dict{Symbol,profile}(), subModelCamera, [1]) 
+end

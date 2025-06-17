@@ -207,18 +207,18 @@ end
 
 Base.show(io::IO, r::ring) = begin
     if typeof(r.i) == Float64
-        println(io, "ring struct with inclination $(round(r.i,sigdigits=3)) rad, rotation $(round(r.rot,sigdigits=3)) rad, and opening angle $(round(r.θₒ,sigdigits=3)) rad")
+        println(io, "ring struct with inclination $(round(r.i,sigdigits=3)) [rad], rotation $(round(r.rot,sigdigits=3)) [rad], and opening angle $(round(r.θₒ,sigdigits=3)) [rad]")
     elseif typeof(r.i) == Vector{Float64} && length(unique(r.i)) == 1
-        println(io, "ring struct with inclination $(round(r.i[1],sigdigits=3)) rad, rotation $(round(r.rot[1],sigdigits=3)) rad, and opening angle $(round(r.θₒ[1],sigdigits=3)) rad")
+        println(io, "ring struct with inclination $(round(r.i[1],sigdigits=3)) [rad], rotation $(round(r.rot[1],sigdigits=3)) [rad], and opening angle $(round(r.θₒ[1],sigdigits=3)) [rad]")
     else
-        println(io, "ring struct with inclinations: $(round.(r.i,sigdigits=3)) rad, rotations: $(round.(r.rot,sigdigits=3)) rad, and opening angles: $(round(r.θₒ,sigdigits=3)) rad")
+        println(io, "ring struct with inclinations: $(round.(r.i,sigdigits=3)) [rad], rotations: $(round.(r.rot,sigdigits=3)) [rad], and opening angles: $(round(r.θₒ,sigdigits=3)) [rad]")
     end
     xMin = nothing; xMax = nothing
     if typeof(r.ϕ) == Float64
         if r.ϕ != r.ϕ₀
-            println(io, "cloud with final azimuthal angle: $(round(r.ϕ,sigdigits=3)) rad and initial azimuthal angle: $(round(r.ϕ₀,sigdigits=3)) rad")
+            println(io, "cloud with final azimuthal angle: $(round(r.ϕ,sigdigits=3)) [rad] and initial azimuthal angle: $(round(r.ϕ₀,sigdigits=3)) [rad]")
         else
-            println(io, "cloud with final azimuthal angle: $(round(r.ϕ,sigdigits=3)) rad")
+            println(io, "cloud with final azimuthal angle: $(round(r.ϕ,sigdigits=3)) [rad]")
         end
         if r.reflect
             println("\t--cloud originally on back side of disk, reflected across disk mid-plane to front")
@@ -231,10 +231,10 @@ Base.show(io::IO, r::ring) = begin
             xMin = NaN
             xMax = NaN 
         end
-        println(io, "intensity distributed over $(length(r.ϕ)) azimuthal angles ($(round(xMin,sigdigits=3)) < ϕ < $(round(xMax,sigdigits=3)) rad)")
+        println(io, "intensity distributed over $(length(r.ϕ)) azimuthal angles ($(round(xMin,sigdigits=3)) < ϕ < $(round(xMax,sigdigits=3)) [rad])")
     end
     if typeof(r.r) == Float64
-        println(io, "cloud at radius: $(r.r) rₛ")
+        println(io, "cloud at radius: $(r.r) [rₛ]")
     else
         try 
             xMin = minimum(i for i in r.r if !isnan(i))
@@ -243,10 +243,10 @@ Base.show(io::IO, r::ring) = begin
             xMin = NaN
             xMax = NaN 
         end
-        println(io, "intensity distributed over $(length(r.r)) radii ($(round(xMin,sigdigits=3)) < r < $(round(xMax,sigdigits=3)) rₛ)")
+        println(io, "intensity distributed over $(length(r.r)) radii ($(round(xMin,sigdigits=3)) < r < $(round(xMax,sigdigits=3)) [rₛ])")
     end
     if typeof(r.v) == Float64
-        println(io, "cloud line of sight velocity: $(round(r.v,sigdigits=3)) c")
+        println(io, "cloud line of sight velocity: $(round(r.v,sigdigits=3)) [c]")
     else
         try 
             xMin = minimum(i for i in r.v if !isnan(i))
@@ -255,10 +255,10 @@ Base.show(io::IO, r::ring) = begin
             xMin = NaN
             xMax = NaN 
         end
-        println(io, "line of sight velocity: $(round(xMin,sigdigits=3)) < v < $(round(xMax,sigdigits=3)) c")
+        println(io, "line of sight velocity: $(round(xMin,sigdigits=3)) < v < $(round(xMax,sigdigits=3)) [c]")
     end
     if typeof(r.I) == Float64
-        println(io, "cloud intensity: $(round(r.I,sigdigits=3)) arbitrary units")
+        println(io, "cloud intensity: $(round(r.I,sigdigits=3)) [arbitrary]")
     else
         try
             xMin = minimum(i for i in r.I if !isnan(i))
@@ -267,7 +267,7 @@ Base.show(io::IO, r::ring) = begin
             xMin = NaN
             xMax = NaN
         end
-        println(io, "intensity: $(round(xMin,sigdigits=3)) < I < $(round(xMax,sigdigits=3)) arbitrary units")
+        println(io, "intensity: $(round(xMin,sigdigits=3)) < I < $(round(xMax,sigdigits=3)) [arbitrary]")
     end
     if typeof(r.τ) == Float64
         println(io, "cloud optical depth: $(round(r.τ,sigdigits=3))")
@@ -282,7 +282,7 @@ Base.show(io::IO, r::ring) = begin
         println(io, "τ: $(round(xMin,sigdigits=3)) < τ < $(round(xMax,sigdigits=3))")
     end
     if typeof(r.ΔA) == Float64
-        println(io, "projected area: $(round(r.ΔA,sigdigits=3)) rₛ²")
+        println(io, "projected area: $(round(r.ΔA,sigdigits=3)) [rₛ²]")
     else
         try
             xMin = minimum(i for i in r.ΔA if !isnan(i))
@@ -291,7 +291,7 @@ Base.show(io::IO, r::ring) = begin
             xMin = NaN
             xMax = NaN
         end
-        println(io, "projected area: $(round(xMin,sigdigits=3)) < ΔA < $(round(xMax,sigdigits=3)) rₛ²")
+        println(io, "projected area: $(round(xMin,sigdigits=3)) < ΔA < $(round(xMax,sigdigits=3)) [rₛ²]")
     end
     if typeof(r.η) == Float64
         println(io, "η: $(round(r.η,sigdigits=3))")
@@ -339,8 +339,7 @@ end
 
 Base.show(io::IO, c::camera) = begin
     pix = length(c.α)
-    println(io, "camera with $pix pixels and range: $(round(minimum(c.α),sigdigits=3)) < α < $(round(maximum(c.α),sigdigits=3)) and $(round(minimum(c.β),sigdigits=3)) < β < $(round(maximum(c.β),sigdigits=3))")
-    println(io, "raytraced? $(c.raytraced)")
+    println(io, "camera (raytraced = $(c.raytraced)) with $pix pixels and range: $(round(minimum(c.α),sigdigits=3)) < α < $(round(maximum(c.α),sigdigits=3)) and $(round(minimum(c.β),sigdigits=3)) < β < $(round(maximum(c.β),sigdigits=3)) [rₛ]")
 end 
 
 meshgrid(x,y) = (reshape(repeat(x,outer=length(y)),length(x),length(y)), reshape(repeat(y,inner=length(x)),length(x),length(y)))
