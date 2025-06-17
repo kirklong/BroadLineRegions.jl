@@ -8,7 +8,8 @@ Base.:+(m1::model,m2::model) = begin
     mCombined.profiles = Dict{Symbol,profile}()
     α1 = m1.camera.α; α2 = m2.camera.α
     β1 = m1.camera.β; β2 = m2.camera.β
-    mCombined.camera = camera(vcat(α1,α2),vcat(β1,β2),nothing)
+    raytraced = m1.camera.raytraced || m2.camera.raytraced
+    mCombined.camera = camera(vcat(α1,α2),vcat(β1,β2),raytraced)
     return mCombined
 end
 

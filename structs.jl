@@ -325,52 +325,22 @@ Base.show(io::IO, p::profile) = begin
     println(io, "$(p.name) profile struct with $(length(p.binCenters)) bins")
 end
 
-struct ray
-    """ray struct to hold raytraced data
-    attributes:
-        rCam: distance from image center (in terms of rₛ) {Float64}
-        ϕCam: azimuthal angle of ray at camera (rad) {Float64}
-        α: x value at camera {Float64}
-        β: y value at camera {Float64}
-        τ: optical depths seen by ray {Vector{Float64}} -- this is the value after ray has passed through each given point
-        x: x values of strikes along ray {Vector{Float64}}
-        I: intensity values accumulated along ray {Vector{Float64}}
-        zone: zone of ray {Int}
-    """
-    rCam::Float64
-    ϕCam::Float64
-    α::Float64
-    β::Float64
-    τ::Vector{Float64}
-    x::Vector{Float64}
-    I::Vector{Float64}
-    zone::Int
-end
-Base.show(io::IO, r::ray) = begin
-    println(io, "ray struct with distance from image center $(round(r.rCam,sigdigits=3)) rₛ and azimuthal angle $(round(r.ϕCam,sigdigits=3)) rad")
-end
-
 mutable struct camera #need to modify to include "imgs" of each quantity -- most importantly v and I after raytracing
     """camera coordinates struct
     attributes:
         α: x values Union{Vector{Float64}, Matrix{Float64}} 
         β: y values Union{Vector{Float64}, Matrix{Float64}
-        rays: ray traced rays Union{Nothing,Vector{Float64},Matrix{Float64}}
-            - optional, if provided, will be used to generate images
+        raytraced: whether the camera has been raytraced {Bool}
     """
     α::Union{Vector{Float64},Matrix{Float64}}
     β::Union{Vector{Float64},Matrix{Float64}}
-    rays::Union{Nothing,Vector{ray}}
+    raytraced::Bool
 end
 
 Base.show(io::IO, c::camera) = begin
     pix = length(c.α)
     println(io, "camera with $pix pixels and range: $(round(minimum(c.α),sigdigits=3)) < α < $(round(maximum(c.α),sigdigits=3)) and $(round(minimum(c.β),sigdigits=3)) < β < $(round(maximum(c.β),sigdigits=3))")
-    if !isnothing(c.rays)
-        println(io, "containing $(length(c.rays)) rays")
-    else
-        println(io, "no rays (call raytrace! to generate)")
-    end
+    println(io, "raytraced? $(c.raytraced)")
 end 
 
 meshgrid(x,y) = (reshape(repeat(x,outer=length(y)),length(x),length(y)), reshape(repeat(y,inner=length(x)),length(x),length(y)))
@@ -416,7 +386,7 @@ mutable struct model
         for (i,(ri,ϕi,ii,roti,θₒi,reflecti)) in enumerate(zip(r,ϕ₀,i,rot,θₒ,reflect))
             α[i], β[i] = photograph(ri,ϕi,ii,roti,θₒi,reflecti)  #get camera coordinates from physical 
         end
-        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),nothing),[1])
+        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
     end
 
     function model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
@@ -482,7 +452,7 @@ mutable struct model
 
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕ₀ = [ϕ₀[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
         rings = [ring(r = ri, i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η)]
-        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),nothing),[1])
+        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
     end
 
     function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)

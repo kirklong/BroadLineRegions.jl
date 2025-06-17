@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 using RecipesBase
 
-function reset!(m::model;profiles=true,img=true)
+function reset!(m::model;profiles=true,img=false)
     """erase existing profiles/imgs
     params:
         m: model
@@ -9,13 +9,13 @@ function reset!(m::model;profiles=true,img=true)
         profiles (optional): Bool -- default true
             - if true, reset profiles
         img (optional): Bool -- default true
-            - if true, reset camera rays
+            - if true, reset raytracing boolean (does not change existing model but allows model to be raytraced again after combining other new models)
     """
     if profiles 
         m.profiles = Dict{Symbol,profile}()
     end
     if img
-        m.camera.rays = nothing
+        m.camera.raytraced = false
     end
 end
 
@@ -30,12 +30,23 @@ function removeNaN!(m::model)
     NaNMask = .!isnan.(I)
     #remove camera points with I = 0.0
     α = m.camera.α[NaNMask]; β = m.camera.β[NaNMask]
-    m.camera = camera(α,β,nothing) #update camera with new α and β
+    m.camera = camera(α,β,m.camera.raytraced) #update camera with new α and β
     #remove rings with I = 0.0
+    ringMask = Array{Bool}(undef,length(m.rings))
     for i in 1:length(m.subModelStartInds)
         endInd = i == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[i+1]-1
         subRings = m.rings[m.subModelStartInds[i]:endInd]
-        for ring in subRings
+        #first go through subrings and remove NaN clouds (typeof(I) == Float64)
+        for (j,ring) in enumerate(subRings)
+            if typeof(ring.I) == Float64 && isnan(ring.I)
+                ringMask[m.subModelStartInds[i]+j-1] = false #if I is cloud and NaN, don't keep this ring
+            else
+                ringMask[m.subModelStartInds[i]+j-1] = true #if I is not NaN and type of ring not cloud, keep this ring
+            end
+        end
+        subRingMask = ringMask[m.subModelStartInds[i]:endInd] #get mask for subrings
+        subRings = subRings[subRingMask] #filter out cloud rings with NaN I
+        for ring in subRings #remove NaN points from continous rings
             NaNMask = .!isnan.(ring.I) 
             ring.v = ring.v[NaNMask] #keep only not NaN velocities
             ring.ϕ = ring.ϕ[NaNMask] #keep only not NaN azimuthal angles
@@ -87,6 +98,7 @@ function removeNaN!(m::model)
             ring.I = ring.I[NaNMask] #keep only not NaN intensities
         end
     end
+    m.rings = m.rings[ringMask] #filter out cloud NaN rings
     m.rings =  filter(ring -> length(ring.I) > 0, m.rings) #filter out rings with no points left
     oldLength = length(m.rings[1].I) #get length of first ring to use as reference
     m.subModelStartInds = [1] #reset subModelStartInds to only include first ring
@@ -281,6 +293,7 @@ end
 function addGrid!(m,colors=nothing,nϕ=64)
     ϕGrid = range(0,stop=2π,length=nϕ)
     rAll = sqrt.(m.camera.α.^2 .+ m.camera.β.^2) #get radii from camera α and β
+    ϕAll = atan(m.camera.β,m.camera.α) #to-do: draw grid cells based on phi as well not just r 
     rUnique = unique(rAll) #get unique radii
     if isnothing(colors)
         colors = [i for i in 1:length(m.subModelStartInds)]
@@ -296,9 +309,12 @@ function addGrid!(m,colors=nothing,nϕ=64)
         end
         ΔrUp = m.rings[ring].scale == :log ? r*(exp(m.rings[ring].Δr)-1) : m.rings[ring].Δr #log scale
         ΔrDown = m.rings[ring].scale == :log ? minimum([r,r*(1-1/exp(m.rings[ring].Δr))]) : minimum([r,m.rings[ring].Δr]) #if first ring, then use scale to calculate what "should be" the next inner ring and take minimum of that and the current radius (so don't go through zero)
+        # Δϕ = m.rings[ring].Δϕ
+        # ϕ = 
         #need to do the "ring -1" check for each subModelStartInd -- if you are the first ring of submodel don't go to the last ring of next submodel to calculate this 
         #also analytically do it based on Δr what the inner ring would have been and then do minimum that and 0 
         lx = (r-ΔrDown/2).* cos.(ϕGrid); ly = (r-ΔrDown/2).* sin.(ϕGrid)
+        cellx = vcat(lx,[lx[end],lx[end]])
         ux = (r+ΔrUp/2).* cos.(ϕGrid); uy = (r+ΔrUp/2).* sin.(ϕGrid)
         plot!(vcat(lx,ux),vcat(ly,uy),label="",color=colors[subModelInd],fill=true,fillalpha=0.1,linestyle=:dash,lw=2)
         plot!(r.*cos.(ϕGrid),r.*sin.(ϕGrid),label="",color=colors[subModelInd],linestyle=:solid,lw=2)
