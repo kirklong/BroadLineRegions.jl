@@ -263,13 +263,27 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
     end
 end
 
+"""BLR.image(m::model,variable::Union{String,Symbol,Function},kwargs...)
+Generate an image of the model where the color of each point is determined by the variable provided.
+params:
+    m: model
+        - model object to extract variable from
+    variable (optional): Union{String, Symbol, Function}
+        - variable to extract from model (if String will be converted to Symbol)
+        - must be a valid attribute of model.rings (e.g. :I, :v, :r, :e, :i, :ϕ) or a function that can be applied to model.rings
+            - example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+        - if not provided, defaults to :I (intensity)
+    kwargs...: keyword arguments for Plots.plot
+returns:
+    p: Plots.plot
+"""
 @userplot Image #note that then to call this method use lowercase, i.e. image(m,"I") -- PROBLEM: this doesn't actually loop through each x and y point -- need to collapse them into 1D arrays? 
 @recipe function f(img::Image)
     model, variable = nothing, nothing
     if length(img.args) == 2
         model, variable = img.args
     elseif length(img.args) == 1
-        model = img.args[1]
+        model = img.args
         variable = :I #default variable is intensity
     else
         throw(ArgumentError("expected up to 2 arguments (model, [variable]), got $(img.args)"))
@@ -291,6 +305,18 @@ end
 end
 
 function addGrid!(m,colors=nothing,nϕ=64)
+    """add a grid to the model image plot -- mostly a debugging tool to visualize grid cells of overlapping models
+    params:
+        m: model
+            - model object to add grid to
+        colors (optional): Vector{Colorant} or nothing
+            - if provided, will use these colors for each submodel, otherwise will use default colors
+        nϕ (optional): Int -- default 64
+            - number of azimuthal angles to use for the grid
+    returns:
+        p: Plots.plot
+            - plot with grid added
+    """
     ϕGrid = range(0,stop=2π,length=nϕ)
     rAll = sqrt.(m.camera.α.^2 .+ m.camera.β.^2) #get radii from camera α and β
     ϕAll = atan(m.camera.β,m.camera.α) #to-do: draw grid cells based on phi as well not just r 
@@ -339,6 +365,13 @@ function get_r3D(i,rot,θₒ)
     return matrix
 end
 function reflect!(xyzSys,i)
+    """reflect coordinates in 3D space across the ring plane
+    params:
+        xyzSys: [x;y;z] coordinates in 3D space {Vector{Float64}}
+        i: inclination angle of ring plane (rad) {Float64}
+    returns:
+        xyzSys: [x';y';z'] coordinates in 3D space after reflection {Vector{Float64}}
+    """
     midSlope = cot(i)
     den = 1+midSlope^2
     xf = (xyzSys[1]-midSlope^2*xyzSys[1]+2*midSlope*xyzSys[3])/den
@@ -369,6 +402,23 @@ end
 
 midPlaneXZ(x,i) = x*cot(i)
 
+"""Plot3d(m::model, variable::Union{String,Symbol,Function}=nothing, annotatedCamera::Bool=true,kwargs...)
+Generate a 3D plot of the model geometry, optionally colored by a variable.
+params:
+    m: model
+        - model object to plot
+    variable (optional): Union{String, Symbol, Function}
+        - variable to color the points by (if String will be converted to Symbol)
+        - must be a valid attribute of model.rings (e.g. :I, :v, :r, :e, :i, :ϕ) or a function that can be applied to model.rings
+            - example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+        - if not provided, defaults to nothing (no coloring)
+    annotatedCamera (optional): Bool -- default true
+        - if true, will annotate the camera position and orientation in the plot
+    kwargs...: keyword arguments for Plots.plot
+returns:
+    p: Plots.plot
+        - 3D plot of the model geometry, optionally colored by the variable provided
+"""
 @userplot Plot3d #note that then to call this method use lowercase, i.e. plot3d(m,"I") -- WIP need to make more general for combined Models -- do in 2 steps if isCombined? just call twice
 @recipe function f(p::Plot3d)
     xlabel --> "x [rₛ]"
@@ -398,7 +448,9 @@ midPlaneXZ(x,i) = x*cot(i)
         throw(ArgumentError("expected 1, 2, or 3 arguments, got $(length(p.args))"))
     end
     variable = (isa(variable,Function) || isnothing(variable)) ? variable : Symbol(variable)
-    isCombined, startInds, diskFlags = detectCombinedModel(model)
+    isCombined = length(model.subModelStartInds) > 1 #check if model is combined
+    startInds = model.subModelStartInds
+    diskFlags = [typeof(model.rings[i].I) != Float64 for i in startInds] 
     mList = [deepcopy(model) for i=1:length(startInds)]
     if isCombined
         for (i,m) in enumerate(mList)
