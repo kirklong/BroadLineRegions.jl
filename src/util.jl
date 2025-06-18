@@ -184,7 +184,7 @@ function getRingFromFlattenedInd(m::model,flattenedInd::Int)
 end
 
 """
-    getVariable(m::model, variable::Union{String,Symbol,Function}; flatten=false) -> Array{Float64}
+    getVariable(m::model, variable::Union{String,Symbol,Function}; flatten=false)
 
 Retrieve elements from model object and stack them into matrices for easy manipulation.
 
@@ -204,7 +204,7 @@ Retrieve elements from model object and stack them into matrices for easy manipu
 function getVariable(m::model,variable::String;flatten=false) # method for getting variable if String 
     variable = Symbol(variable)
     return getVariable(m,variable;flatten)
-end,
+end
 
 """
     getVariable(m::model, variable::Symbol; flatten=false) -> Array{Float64}
@@ -245,7 +245,7 @@ function getVariable(m::model,variable::Symbol;flatten=false) # method for getti
             return res #return as is
         end
     end
-end,
+end
 
 """
     getVariable(m::model, variable::Function; flatten=false) -> Array{Float64}
