@@ -1,36 +1,60 @@
 #!/usr/bin/env julia
 using LinearAlgebra
 
-function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64)
-    """calculate where ray traced back from camera coordinates r_c, ϕ_c intersects the system (assumes circular geometry)
-    params:
-        α: image x coordinate (in terms of rₛ) {Float64}
-        β: image y coordinate (rad) {Float64}
-        i: inclination angle of system (rad) {Float64}
-        rot: rotation of current point about z axis (rad) {Float64}
-        θₒPoint: opening angle of current point {Float64}
-    returns:
-        r: radius of system ring plane at intersection {Float64}
-        ϕ: azimuthal angle of system ring plane at intersection {Float64}
-    """
+"""
+    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64)
 
-    ###NOTE: THIS IS STUPID
-    #for real raytracing, fix y and z (α and β) and step through x, checking if that matches a system point or not until you go "through" the system. 
-    #use rotation matrix at each step to invert to original coordinates? or just check from converted coordinates 
+Calculate where ray traced back from camera coordinates `α` and `β` intersects the system (assumes circular geometry).
+
+# Arguments
+- `α::Float64`: image x coordinate (in terms of rₛ)
+- `β::Float64`: image y coordinate (in terms of rₛ)
+- `i::Float64`: inclination angle of system (rad)
+- `rot::Float64`: how the point was rotated about z axis (rad)
+- `θₒPoint::Float64`: opening angle of current point
+
+# Returns
+- `r::Float64`: distance from central mass (in terms of rₛ)
+- `ϕ::Float64`: azimuthal angle of system ring plane at intersection
+- `ϕ₀::Float64`: original azimuthal angle in ring plane (no rotation)
+
+# Note
+This function is *coordinate* raytracing only. To raytrace models and combine intensities, see `raytrace!`. 
+"""
+function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64)
     xRing = (β*cos(rot) - α*cos(i)*sin(rot))/(cos(i)*cos(θₒPoint)+cos(rot)*sin(i)*sin(θₒPoint)) #system x
     yRing = (α*(cos(i)*cos(θₒPoint)+sec(rot)*sin(i)*sin(θₒPoint))+β*cos(θₒPoint)*tan(rot))/(cos(i)*cos(θₒPoint)*sec(rot)+sin(i)*sin(θₒPoint)) #system y
     r = √(xRing^2 + yRing^2)
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
     xyzSys = rotate3D(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
     ϕ = atan(xyzSys[2],-xyzSys[1]) #ϕ after rotation, measured from +x in disk plane, -x because of how rotation matrix was implemented and desire to have ϕ=0 at +x
-    #rMat = getϕ_rMat(i,θₒSystem) #rotation matrix
-    #xyzXY = rMat*xyzSys #rotate system plane into XY plane
-    #ϕ = atan(xyzXY[2],xyzXY[1]) #ϕ after rotation, measured from +x in disk plane
     return r, ϕ, ϕ₀
 end
 
+"""
+    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, colBuff::Vector{Float64})
 
-#NOTE FOR RAYTRACING: i don't think I need to do this -- just take atan(y,x) of the system coordinates because camera is at +x in 3D space
+Performant version of `raytrace` function -- calculate where ray traced back from camera coordinates `α`, `β` intersects the system (assumes circular geometry).
+
+# Arguments
+- `α::Float64`: image x coordinate (in terms of rₛ)
+- `β::Float64`: image y coordinate (in terms of rₛ)
+- `i::Float64`: inclination angle of system (rad)
+- `rot::Float64`: rotation of current point about z axis (rad)
+- `θₒPoint::Float64`: opening angle of current point
+- `r3D::Matrix{Float64}`: matrix that rotates system plane into XY plane
+- `xyz::Vector{Float64}`: preallocated xyz vector (but not precalculated)
+- `matBuff::Matrix{Float64}`: preallocated buffer matrix for storing result of 3x3 matrix multiplication
+- `colBuff::Vector{Float64}`: preallocated buffer vector for storing final matrix multiplication result
+
+# Returns
+- `r::Float64`: distance from central mass (in terms of rₛ)
+- `ϕ::Float64`: azimuthal angle of system ring plane at intersection
+- `ϕ₀::Float64`: original azimuthal angle in ring plane
+
+# Note
+This function is *coordinate* raytracing only. To raytrace models and combine intensities, see `raytrace!`. 
+"""
 function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, colBuff::Vector{Float64})
     """performant version of raytrace function -- calculate where ray traced back from camera coordinates r_c, ϕ_c intersects the system (assumes circular geometry)
     params:
@@ -55,48 +79,62 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     r = √(xRing^2 + yRing^2)
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
     xyz[1] = xRing; xyz[2] = yRing; xyz[3] = 0.0
-    # xyz[1] = r*cos(ϕ₀); xyz[2] = r*sin(ϕ₀); xyz[3] = 0.0
-    # mul!(matBuff,ϕ_rMat,r3D)
-    # mul!(colBuff,matBuff,xyz) #rotate system plane into XY plane
     mul!(colBuff,r3D,xyz)
     undo_tilt = [sini 0.0 cosi; 0.0 1.0 0.0; -cosi 0.0 sini]
     mul!(xyz,undo_tilt,colBuff)
     ϕ = atan(xyz[2],-xyz[1]) #ϕ after rotation and being "puffed up", measured from +x in disk plane -- this is fine even for puffed up clouds but note ϕ is measured wrt to disk midplane then. -x because of how rotation matrix was implemented...
-    #really this whole thing is stupid and should be removed this is not raytracing
     return r, ϕ, ϕ₀
 end
 
+"""
+    photograph(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
+
+Calculate the image coordinates from system coordinates r, ϕ + inclination angle i.
+
+# Arguments
+- `r::Float64`: radius from central mass (in terms of rₛ)
+- `ϕ₀::Float64`: unrotated azimuthal angle in ring plane (rad)
+- `i::Float64`: inclination angle of ring plane (rad)
+- `rot::Float64`: rotation of system plane about z axis (rad)
+- `θₒ::Float64`: ring opening angle
+- `reflect::Bool=false`: whether the point is reflected across the midplane of the disk
+
+# Returns
+- `α::Float64`: image x coordinate (in terms of rₛ)
+- `β::Float64`: image y coordinate (in terms of rₛ)
+
+# Note
+This function is *coordinate* photography only. To visualize models, see `Image`.`
+"""
 function photograph(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
-    """calculate the image coordinates from system coordinates r, ϕ + inclination angle i
-    params:
-        r: radius from central mass (in terms of rₛ) {Float64}
-        ϕ₀: unrotated azimuthal angle in ring plane (rad) {Float64}
-        i: inclination angle of ring plane (rad) {Float64}
-        rot: rotation of system plane about z axis (rad) {Float64}
-        θₒ: ring opening angle {Float64}
-        reflect: whether the point is reflected across the midplane of the disk {Bool}
-    returns:
-        α: image x coordinate (in terms of rₛ) {Float64}
-        β: image y coordinate {Float64}
-    """
     xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ,reflect)
     α = xyzSys[2] #camera is at +x, so α is y
     β = xyzSys[3] #and β is z
     return α, β
 end
 
+"""
+    zeroDiskObscuredClouds!(m::model; diskCloudIntensityRatio::Float64=1.0, rotate3D::Function=rotate3D)
+
+Zero out the intensities of clouds that are obscured by the disk.
+
+Performs simple raytracing for an optically thick obscuring disk. The function
+modifies the input model by setting the intensity of obscured cloud points to zero
+and adjusting the disk intensity according to the specified ratio.
+
+# Arguments
+- `m::model`: Model to zero out disk obscured clouds. Should be a combined model consisting of a disk component and a cloud component. 
+- `diskCloudIntensityRatio::Float64=1.0`: Ratio of disk to cloud intensity, used to scale 
+  the disk intensities after zeroing out clouds
+- `rotate3D::Function=rotate3D`: Function to rotate coordinates in 3D space
+
+# Returns
+- `m::model`: Model with disk obscured clouds zeroed out
+
+# See also 
+- `removeDiskObscuredClouds!`: Function to remove disk obscured clouds instead of zeroing them out
+"""
 function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,rotate3D::Function=rotate3D)
-    """
-    zero out the intensities of clouds that are obscured by the disk -- simple raytracing for optically thick obscuring disk
-    params:
-        m: model to zero out disk obscured clouds {model}
-        diskCloudIntensityRatio (optional): ratio of disk to cloud intensity, used to scale the disk intensities after zeroing out clouds {Float64}
-            - default is 1.0, meaning disk intensities are not changed relative to cloud intensities
-        rotate3D (optional): function to rotate coordinates in 3D space {Function}
-            - default is rotate3D function defined above
-    returns:
-        m: model with disk obscured clouds zeroed out {model}
-    """
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
     startInds = m.subModelStartInds #start indices of submodels
     if !isCombined
@@ -144,16 +182,27 @@ function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,ro
     return m
 end
 
+"""
+    removeDiskObscuredClouds!(m::model, rotate3D::Function=rotate3D)
+
+Remove clouds that are obscured by the disk.
+
+Performs simple raytracing for an optically thick obscuring disk. The function
+modifies the input model by removing cloud points that are obscured by the disk.
+Note that this is a mutating operation and the input model will be modified in place.
+
+# Arguments
+- `m::model`: Model to remove disk obscured clouds. Should be a combined model consisting 
+  of a disk component and a cloud component.
+- `rotate3D::Function=rotate3D`: Function to rotate coordinates in 3D space
+
+# Returns
+- `m::model`: Model with disk obscured clouds removed
+
+# See also 
+- `zeroDiskObscuredClouds!`: Function to zero out disk obscured clouds instead of removing them
+"""
 function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
-    """
-    remove clouds that are obscured by the disk -- simple raytracing for optically thick obscuring disk
-    params:
-        m: model to remove disk obscured clouds {model}
-        rotate3D (optional): function to rotate coordinates in 3D space {Function}
-            - default is rotate3D function defined above
-    returns:
-        m: model with disk obscured clouds removed {model}
-    """
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
     startInds = m.subModelStartInds #start indices of submodels
     if !isCombined
@@ -234,24 +283,31 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
     return m
 end
 
+"""
+    raytrace!(m::model; IRatios::Union{Float64,Array{Float64,}}=1.0, τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
+
+Perform raytracing for a model, combining overlapping components along line of sight.
+
+This function should be called after combining all relevant models (i.e. `mCombined = m1 + m2 + m3...`).
+It performs raytracing in discrete steps (no absorption, only adding intensity in chunks along 
+the line of sight until maximum optical depth `τ` is reached) and generates a new model object 
+with extraneous points removed. Note that this function will mutate the input model objects.
+
+# Arguments
+- `m::model`: Model to raytrace
+- `IRatios::Union{Float64,Array{Float64,}}=1.0`: Intensity ratios for each submodel
+  - If `Float64`, applies to all submodels equally
+  - If array, applies to each submodel individually (must match number of submodels)
+  - Used when combining models with different intensity functions if they aren't properly normalized
+- `τCutOff::Float64=1.0`: Maximum optical depth to raytrace to (stops when `τ > τCutOff`)
+- `raytraceFreeClouds::Bool=false`: Whether to raytrace free clouds (cloud-cloud raytracing)
+  - If `false`, clouds are only raytraced if they overlap with a continuous model
+  - If `true`, clouds will be checked for overlap with other clouds and raytraced accordingly
+
+# Returns
+- `m::model`: Model with raytraced points
+"""
 function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff::Float64=1.0,raytraceFreeClouds=false)
-    """perform (simple) raytracing for a model
-    This function should be called after combining all relevant models (i.e. mCombined = m1 + m2 + m3...)
-    It will "raytrace" in discrete steps (no absorption, only adding intensity in chunks along the line of sight until maximum τ is reached) and generate a new model object with extraneous points removed and in doing so will mutate the input model objects 
-    params:
-        m: model to raytrace {model}
-        IRatios (optional): intensity ratios for each submodel {Float64, Array{Float64,}}
-            - if Float64, then applies to all submodels equally (i.e. default of 1.0 means no change in relative intensities)
-            - if Array{Float64,}, then applies to each submodel individually, must be same length as number of submodels
-            - should be used when combining models with different intensity functions if they are not properly normalized (i.e. set them as ratio of total intensities in submodels etc.)
-        τCutOff (optional): maximum optical depth to raytrace to {Float64}
-            - default is 1.0, meaning raytracing will stop when τ > 1
-        raytraceFreeClouds (optional): whether to raytrace free clouds (i.e. cloud - cloud raytracing) {Bool}
-            - default is false, meaning clouds are only raytraced if they overlap with a continuous model (i.e. disk) and otherwise their intensities are unaltered even if they overlap 
-            - if true, clouds will be checked for overlap with other clouds and raytraced accordingly
-    returns:
-        m: model with raytraced points {model}
-    """
     if m.subModelStartInds == [1]
         @warn "raytrace! called on a model with no submodels -- maybe you already raytraced? Returning unaltered model."
         return m

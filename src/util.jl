@@ -1,16 +1,17 @@
 #!/usr/bin/env julia
 using RecipesBase
 
+"""
+    reset!(m::model; profiles=true, img=false)
+
+Erase existing profiles/imgs.
+
+# Parameters
+- `m::model`: Model object to reset
+- `profiles::Bool=true`: If true, reset profiles
+- `img::Bool=false`: If true, reset raytracing boolean (does not change existing model but allows model to be raytraced again after combining other new models)
+"""
 function reset!(m::model;profiles=true,img=false)
-    """erase existing profiles/imgs
-    params:
-        m: model
-            - model object to reset
-        profiles (optional): Bool -- default true
-            - if true, reset profiles
-        img (optional): Bool -- default true
-            - if true, reset raytracing boolean (does not change existing model but allows model to be raytraced again after combining other new models)
-    """
     if profiles 
         m.profiles = Dict{Symbol,profile}()
     end
@@ -19,13 +20,18 @@ function reset!(m::model;profiles=true,img=false)
     end
 end
 
+"""
+    removeNaN!(m::model) -> model
+
+Remove points with `I = NaN` from model.
+
+# Parameters
+- `m::model`: Model to remove points from
+
+# Returns
+- `m::model`: Model with NaN points removed
+"""
 function removeNaN!(m::model)
-    """remove points with I = NaN from model
-    params:
-        m: model to remove points from {model}
-    returns:
-        m: model with points removed {model}
-    """
     I = getVariable(m,:I,flatten=true)
     NaNMask = .!isnan.(I)
     #remove camera points with I = 0.0
@@ -111,15 +117,18 @@ function removeNaN!(m::model)
     return m
 end
 
+"""
+    getFlattenedCameraIndices(m::model) -> Vector{Int}
+
+Get flattened camera indices corresponding to rings in model.
+
+# Arguments
+- `m::model`: Model object to extract camera indices from
+
+# Returns
+- `camStartInds::Vector{Int}`: Vector of camera starting indices with length equal to `m.subModelStartInds`
+"""
 function getFlattenedCameraIndices(m::model)
-    """get flattened camera indices corresponding to rings in model
-    params:
-        m: model
-            - model object to extract camera indices from
-    returns:
-        cameraIndices: Vector{Int}
-            - vector of camera starting indices corresponding to rings in each sub model, with length equal to m.subModelStartInds
-    """
     camStartInds = Array{Int}(undef,length(m.subModelStartInds))
     camStartInds[1] = 1
     for i=2:length(m.subModelStartInds)
@@ -130,19 +139,20 @@ function getFlattenedCameraIndices(m::model)
     return camStartInds
 end
 
+"""
+    getRingFromFlattenedInd(m::model, flattenedInd::Int) -> Tuple{Int, Int}
+
+Retrieve the model ring index and subindex (if applicable) from flattened array index.
+
+# Arguments
+- `m::model`: Model object with rings 
+- `flattenedInd::Int`: The index in the flattened array we need to work back from
+
+# Returns
+- `row::Int`: The ring index in `model.rings` that the flattened index corresponds to
+- `column::Int`: The subindex that matches the flattened index passed to this function.
+"""
 function getRingFromFlattenedInd(m::model,flattenedInd::Int)
-    """retrieve the model ring index and subindex (if applicable) from flattened array index
-    params:
-        m: model 
-            -model object with rings 
-        flattenedInd: Int
-            -the index in the flattened array we need to work back from
-    returns: 
-        ringInd: Int
-            -the index in model.rings that the flattened index corresponds to
-        subInd: Int, optional
-            -if the ring has length > 0, the subindex that matches the flattened index passed to this function
-    """
     #need to do it per chunk 
     row = 0; column = 0
     if length(m.subModelStartInds) == 1 
@@ -173,23 +183,34 @@ function getRingFromFlattenedInd(m::model,flattenedInd::Int)
     return row, column #ringInd is row, subInd is column, for clouds/point models column should always be 1
 end
 
-"""retrieve elements from model object and stack them into matrices for easy manipulation
-params:
-    m: model
-        - model object to extract variables from
-    variable: Union{String, Symbol, Function}
-        - variable to extract from model (if String will be converted to Symbol)
-        - must be a valid attribute of model.rings (e.g. :I, :v, :r, :e, :i, :ϕ) or a function that can be applied to model.rings
-            - example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
-returns:
-    y: Matrix{Float64}
-        - matrix of extracted variable from model.rings, created by stacking the output variable for each ring
-        - for example, if variable given is :I y will have shape (length(r), length(ϕ)) as at each r and ϕ there is a value of I
+"""
+    getVariable(m::model, variable::Union{String,Symbol,Function}; flatten=false) -> Array{Float64}
+
+Retrieve elements from model object and stack them into matrices for easy manipulation.
+
+# Arguments
+- `m::model`: Model object to extract variables from
+- `variable::Union{String,Symbol,Function}`: Variable to extract from model
+  - If `String`, will be converted to `Symbol`
+  - Must be a valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
+  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+- `flatten::Bool=false`: If true, flatten the result to a vector
+
+# Returns
+- `Array{Float64,}`: Matrix or vector of extracted variable from `model.rings`, created by stacking the output variable for each ring
+  - For example, if variable given is `:I`, result will have shape `(length(r), length(ϕ))` as at each `r` and `ϕ` there is a value of `I`
+  - If `flatten=true`, result will be a flattened vector
 """
 function getVariable(m::model,variable::String;flatten=false) # method for getting variable if String 
     variable = Symbol(variable)
     return getVariable(m,variable;flatten)
 end,
+
+"""
+    getVariable(m::model, variable::Symbol; flatten=false) -> Array{Float64}
+
+Retrieve model variable when specified as a `Symbol`. See main docstring for details.
+"""
 function getVariable(m::model,variable::Symbol;flatten=false) # method for getting variable if Symbol
     if variable ∉ fieldnames(ring)
         throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
@@ -225,6 +246,12 @@ function getVariable(m::model,variable::Symbol;flatten=false) # method for getti
         end
     end
 end,
+
+"""
+    getVariable(m::model, variable::Function; flatten=false) -> Array{Float64}
+
+Retrieve model variable when specified as a `Function`. See main docstring for details.
+"""
 function getVariable(m::model,variable::Function;flatten=false) # method for getting variable if Function
     res = nothing
     isCombined = m.subModelStartInds != [1]
@@ -263,19 +290,23 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
     end
 end
 
-"""BLR.image(m::model,variable::Union{String,Symbol,Function},kwargs...)
+"""
+    BLR.image(m::model, variable::Union{String,Symbol,Function}, kwargs...)
+
 Generate an image of the model where the color of each point is determined by the variable provided.
-params:
-    m: model
-        - model object to extract variable from
-    variable (optional): Union{String, Symbol, Function}
-        - variable to extract from model (if String will be converted to Symbol)
-        - must be a valid attribute of model.rings (e.g. :I, :v, :r, :e, :i, :ϕ) or a function that can be applied to model.rings
-            - example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
-        - if not provided, defaults to :I (intensity)
-    kwargs...: keyword arguments for Plots.plot
-returns:
-    p: Plots.plot
+
+# Arguments
+- `m::model`: Model object to extract variable from
+- `variable::Union{String,Symbol,Function}`: Variable to extract from model
+  - If `String`, will be converted to `Symbol`
+  - Must be a valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
+  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+
+# Keywords
+- Additional keyword arguments are passed to `Plots.plot`
+
+# Returns
+- `p::Plots.plot`: Plot object representing the generated image
 """
 @userplot Image #note that then to call this method use lowercase, i.e. image(m,"I") -- PROBLEM: this doesn't actually loop through each x and y point -- need to collapse them into 1D arrays? 
 @recipe function f(img::Image)
@@ -304,19 +335,20 @@ returns:
     ()
 end
 
+"""
+    addGrid!(m::model, colors=nothing, nϕ::Int=64)
+
+Add a grid to the model image plot - mostly a debugging tool to visualize grid cells of overlapping models.
+
+# Arguments
+- `m::model`: Model object to add grid to
+- `colors=nothing`: Vector of colors for each submodel (if `nothing`, uses default colors)
+- `nϕ::Int=64`: Number of azimuthal angles to use for the grid
+
+# Returns
+- `::Plots.plot`: Plot with grid added
+"""
 function addGrid!(m,colors=nothing,nϕ=64)
-    """add a grid to the model image plot -- mostly a debugging tool to visualize grid cells of overlapping models
-    params:
-        m: model
-            - model object to add grid to
-        colors (optional): Vector{Colorant} or nothing
-            - if provided, will use these colors for each submodel, otherwise will use default colors
-        nϕ (optional): Int -- default 64
-            - number of azimuthal angles to use for the grid
-    returns:
-        p: Plots.plot
-            - plot with grid added
-    """
     ϕGrid = range(0,stop=2π,length=nϕ)
     rAll = sqrt.(m.camera.α.^2 .+ m.camera.β.^2) #get radii from camera α and β
     ϕAll = atan(m.camera.β,m.camera.α) #to-do: draw grid cells based on phi as well not just r 
@@ -348,15 +380,20 @@ function addGrid!(m,colors=nothing,nϕ=64)
 end
 
 
+"""
+    get_r3D(i::Float64, rot::Float64, θₒ::Float64) -> Matrix{Float64}
+
+Calculate rotation matrix to transform from initial XY plane coordinates to 3D space.
+
+# Parameters
+- `i::Float64`: Inclination angle of ring (rad)
+- `rot::Float64`: Rotation of ring plane about z axis (rad)
+- `θₒ::Float64`: Opening angle of point (rad)
+
+# Returns
+- `matrix::Matrix{Float64}`: 3×3 rotation matrix
+"""
 function get_r3D(i,rot,θₒ)
-    """calculate rotation matrix to transform from initial XY plane coordinates to 3D space
-    params:
-        i: inclination angle of ring (rad) {Float64}
-        rot: rotation of ring plane about z axis (rad) {Float64}
-        θₒ: opening angle of point {Float64}
-    returns:
-        matrix: 3x3 rotation matrix {Matrix{Float64}}
-    """
     matrix = [
         (cos(rot)*cos(θₒ)*sin(i)-cos(i)*sin(θₒ)) sin(i)*sin(rot) (-cos(i)*cos(θₒ)-cos(rot)*sin(i)*sin(θₒ));
         -cos(θₒ)*sin(rot) cos(rot) sin(rot)*sin(θₒ);
@@ -364,14 +401,19 @@ function get_r3D(i,rot,θₒ)
     ]
     return matrix
 end
+"""
+    reflect!(xyzSys::Vector{Float64}, i::Float64) -> Vector{Float64}
+
+Reflect coordinates in 3D space across the ring plane.
+
+# Parameters
+- `xyzSys::Vector{Float64}`: `[x;y;z]` coordinates in 3D space
+- `i::Float64}`: Inclination angle of ring plane (rad)
+
+# Returns
+- `xyzSys::Vector{Float64}`: `[x';y';z']` coordinates in 3D space after reflection
+"""
 function reflect!(xyzSys,i)
-    """reflect coordinates in 3D space across the ring plane
-    params:
-        xyzSys: [x;y;z] coordinates in 3D space {Vector{Float64}}
-        i: inclination angle of ring plane (rad) {Float64}
-    returns:
-        xyzSys: [x';y';z'] coordinates in 3D space after reflection {Vector{Float64}}
-    """
     midSlope = cot(i)
     den = 1+midSlope^2
     xf = (xyzSys[1]-midSlope^2*xyzSys[1]+2*midSlope*xyzSys[3])/den
@@ -380,18 +422,23 @@ function reflect!(xyzSys,i)
     xyzSys[3] = zf
     return xyzSys
 end
+"""
+    rotate3D(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false) -> Tuple{Float64, Float64, Float64}
+
+Transform from ring coordinates to 3D coordinates where camera is at +x.
+
+# Parameters
+- `r::Float64`: Radius from central mass (in terms of rₛ)
+- `ϕ₀::Float64`: Starting azimuthal angle in ring plane (rad)
+- `i::Float64`: Inclination angle of ring plane (rad)
+- `rot::Float64`: Rotation of system plane about z axis (rad)
+- `θₒ::Float64`: Opening angle of point (rad)
+- `reflect::Bool=false`: Whether to reflect across the ring plane
+
+# Returns
+- `Tuple{Float64, Float64, Float64}`: `(x, y, z)` coordinates in 3D space
+"""
 function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
-    """go from ring coordinates to 3D coordinates where camera is at +x 
-    params:
-        r: radius from central mass (in terms of rₛ) {Float64}
-        ϕ₀: starting azimuthal angle in ring plane (rad) {Float64}
-        i: inclination angle of ring plane (rad) {Float64}
-        rot: rotation of system plane about z axis (rad) {Float64}
-    returns: [x;y;z]
-        x: x coordinate in 3D space {Float64}
-        y: y coordinate in 3D space {Float64}
-        z: z coordinate in 3D space {Float64}
-    """
     matrix = get_r3D(i,rot,θₒ)
     xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0] 
     if reflect
@@ -402,22 +449,23 @@ end
 
 midPlaneXZ(x,i) = x*cot(i)
 
-"""Plot3d(m::model, variable::Union{String,Symbol,Function}=nothing, annotatedCamera::Bool=true,kwargs...)
+"""
+    plot3d(m::model, [variable], [annotatedCamera], [kwargs...])
+
 Generate a 3D plot of the model geometry, optionally colored by a variable.
-params:
-    m: model
-        - model object to plot
-    variable (optional): Union{String, Symbol, Function}
-        - variable to color the points by (if String will be converted to Symbol)
-        - must be a valid attribute of model.rings (e.g. :I, :v, :r, :e, :i, :ϕ) or a function that can be applied to model.rings
-            - example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
-        - if not provided, defaults to nothing (no coloring)
-    annotatedCamera (optional): Bool -- default true
-        - if true, will annotate the camera position and orientation in the plot
-    kwargs...: keyword arguments for Plots.plot
-returns:
-    p: Plots.plot
-        - 3D plot of the model geometry, optionally colored by the variable provided
+
+## Parameters
+- `m::model`: Model object to plot
+- `variable::Union{String,Symbol,Function}=nothing`: Variable to color the points by
+  - If `String`, will be converted to `Symbol`
+  - Must be a valid attribute of `model.rings` (e.g., `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
+  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+  - If not provided, defaults to `nothing` (no coloring)
+- `annotatedCamera::Bool=true`: Whether to annotate the camera position and orientation in the plot
+- `kwargs...`: Additional keyword arguments passed to `Plots.plot`
+
+## Returns
+- `p::Plots.plot`: 3D plot of the model geometry, optionally colored by the variable provided
 """
 @userplot Plot3d #note that then to call this method use lowercase, i.e. plot3d(m,"I") -- WIP need to make more general for combined Models -- do in 2 steps if isCombined? just call twice
 @recipe function f(p::Plot3d)
@@ -581,6 +629,16 @@ returns:
     end
 end
 
+"""
+    profile(m::model, [variable], [kwargs...])
+
+Plot all profiles set in the model, normalized to the maximum value of each profile.
+
+# Arguments
+- `model`: A model object containing profile data.
+- `variable`: Optional. A symbol or string (or list of symbols/strings) specifying which profile to plot. If not provided, all profiles set in model will be plotted.
+- `kwargs...`: Additional keyword arguments passed to `Plots.plot`
+"""
 @userplot Profile 
 @recipe function f(p::Profile)
     m, variable = nothing, nothing
@@ -621,16 +679,3 @@ end
         end
     end
 end
-
-
-
-# function image(m::model,variable::Union{String,Symbol,Function}; plot=true, kwargs...)
-#     y = getVariable(m,variable)
-#     if plot
-
-#         p = f(m,y;kwargs...)
-#         return (y,p)
-#     else
-#         return y
-#     end
-# end

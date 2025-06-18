@@ -1,10 +1,20 @@
 #!/usr/bin/env julia
+"""
+    response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
+
+Calculate response function for use in reverberation mapping calculations.
+"""
 function response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
     η = ηₒ + η₁*(r/rNorm)^αRM
     return η
 end
 
-function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64};)
+"""
+    getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
+
+Calculate the 2D transfer function Ψ for a model `m` over specified velocity and time bins, whose edges are given by `vEdges` and `tEdges`.
+"""
+function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
     v = getVariable(m,:v)
@@ -21,6 +31,12 @@ function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64};)
     return Ψ
 end
 
+"""
+    getΨ(m::model,vBins::Int64,tBins::Int64)
+
+Calculate the 2D transfer function Ψ for a model `m` over specified number of velocity bins `vBins` and time bins `tBins`.
+The velocity and time edges are automatically calculated based on the minimum and maximum values for velocity and delays in the model.
+"""
 function getΨ(m::model,vBins::Int64,tBins::Int64)
     v = getVariable(m,:v)
     delays = getVariable(m,t)
@@ -35,6 +51,12 @@ function getΨ(m::model,vBins::Int64,tBins::Int64)
     return vCenters,tCenters,getΨ(m,vEdges,tEdges)
 end
 
+"""
+    getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
+
+Calculate the 1D transfer function Ψ(t) for a model `m` over specified time edges `tEdges`.
+The `overflow` parameter determines whether to include contributions from delays outside the specified edges in the edge bins.
+"""
 function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
@@ -57,6 +79,12 @@ function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
     return Ψt
 end
 
+"""
+    getΨt(m::model,tBins::Int64,maxT::Float64=Inf,overflow::Bool=false)
+
+Calculate the 1D transfer function Ψ(t) for a model `m` over specified number of time bins `tBins`.
+The `maxT` parameter specifies the maximum time delay to consider, and `overflow` determines whether to include contributions from delays outside the specified edges in the edge bins.
+"""
 function getΨt(m::model,tBins::Int64,maxT::Float64=Inf,overflow::Bool=false)
     t(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
     delays = getVariable(m,t)

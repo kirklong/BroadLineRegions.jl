@@ -1,84 +1,82 @@
 #!/usr/bin/env julia
 using Random
 
-mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10% performance gain) but have to make only Array fields allowed so that the fields themselves can be mutated (Float64 cannot be changed after initialization, needed for raytracing)
-    """structure to hold parameters of model ring
-    attributes:
-        r: distance from central mass (in terms of rₛ) Union{Vector{Float64},Float64
-            - can be Float64 for constant r across ϕ or single point at (r,ϕ), otherwise it is a Vector{Float64} of distances corresponding to azimuthal angles ϕ
-            - user can (optionally) supply a function to calculate r from other parameters (see constructor) that returns a Vector{Float64} or Float64
-        i: inclination angle (rad) {Union{Float64},Vector{Float64}}
-            - must be between 0 and π/2, with 0 being face-on and π/2 being edge-on
-        rot: rotation of system plane about z axis (rad) {Union{Float64},Vector{Float64}}
-        θₒ: opening angle (rad) of ring {Float64}
-            - should be between 0 and π/2
-            - optional, defaults to 0
-        v: line of sight velocity {Union{Vector{Float64},Float64}}
-            - Float64 for a single angle, otherwise a Vector{Float64} of velocities corresponding to azimuthal angles ϕ
-            - user can (optionally) supply a function to calculate v from other parameters (see constructor) that returns a Vector{Float64}
-        I: intensity {Union{Vector{Float64},Float64,Matrix{Float64}}
-            - Float64 for a single angle, otherwise a Vector{Float64} of intensities corresponding to azimuthal angles ϕ
-            - user can (optionally) supply a function to calculate I from other parameters (see constructor) that returns a Vector{Float64}
-        ϕ: azimuthal angle (rad) {Union{Vector{Float64},Float64}}
-            - Float64 for a single point, otherwise a Vector{Float64} of azimuthal angles
-        ϕ₀ (optional): azimuthal angle of system before rotation (rad) {Union{Vector{Float64},Float64}}
-            - Float64 for a single point, otherwise a Vector{Float64} of azimuthal angles
-            - defaults to 0.0 if not provided or if rot is 0.0 (if no rotation ϕ = ϕ₀)
-        ΔA: projected area of ring in image (used in calculating profiles) {Union{Vector{Float64},Float64}}
-            - Float64 for a single point, otherwise a Vector{Float64} of projected areas corresponding to azimuthal angles ϕ
-            - defaults to 1.0 if not provided
-    
-    constructor:
-        ring(;r, i, rot, θₒ, v, I, ϕ, ϕ₀, kwargs...)
-        r: Float64, Vector{Float64} or Function
-            - if function, must return a Vector{Float64} or Float64 corresponding to ϕ
-        i: Float64 or Vector{Float64}
-            - must be between 0 and π/2
-        rot: Float64 or Vector{Float64}
-            - optional (defaults to 0.0)
-            - must be between 0 and 2π (or -π to π)
-            - describes 3D rotation about z axis of ring plane
-        θₒ: Float64 or Vector{Float64}
-            - optional (defaults to 0.0)
-            - must be between 0 and π/2
-            - opening angle of ring (i.e. thin disk has opening angle near 0.0 and spherical shell has opening angles distributed between 0 and π/2)
-        v: Float64, Vector{Float64} or Function
-            - if function, must return a Vector{Float64} corresponding to ϕ
-        I: Float64, Vector{Float64}, Matrix{Float64}, or Function
-            - if function, must return a Vector{Float64} corresponding to ϕ for each r (if r is a Vector{Float64} must return a Matrix{Float64} of intensities for each r)
-        ϕ: Float64 or Vector{Float64}
-            - must be between 0 and 2π
-            - if Float64, r, v, and I must be Float64 (or functions that return Float64)
-        ϕ₀: Float64 or Vector{Float64}
-            - optional (defaults to 0.0)
-        ΔA: Float64 or Vector{Float64}
-            - projected area of ring in image (used in calculating profiles)
-            - i.e. for log-spherical ring ΔA = r^2*Δr*Δϕ, for linear-spherical ring ΔA = r*Δr*Δϕ, for cloud ΔA could be size of cloud (note here r would be the image r not the physical r)
-            - defaults to 1.0 if not provided
-        reflect: Bool or Array{Bool,}
-            - optional (defaults to false)
-            - if true, cloud is reflected across disk mid-plane to front
-        τ: Float64 or Vector{Float64} or Function
-            - optional (defaults to 0.0)
-            - optical depth(s) of ring -- after passing through this ring, the total optical depth is increased by τ
-        η: Float64 or Vector{Float64} or Function
-            - optional (defaults to 1.0)
-            - response parameter for ring -- affects weighting in delay profile/transfer functions
-        Δr: Float64
-            - optional (defaults to 1.0)
-            - distance between camera pixels in r
-        Δϕ: Float64
-            - optional (defaults to 1.0)
-            - distance between camera pixels in ϕ
-        scale: Symbol or nothing
-            - optional (defaults to nothing)
-            - if provided, encodes whether the camera rings were drawn from log scale or not
-            - if scale = :log, then the camera rings were drawn from log scale
-            - if scale = :linear, then the camera rings were drawn from linear scale
-            - only checks for :log or :linear, providing something else is equivalent to providing nothing 
-        kwargs: contain extra keyword arguments for v, I, r, and/or τ if they are functions (see examples)
-    """
+"""
+    ring{V,F} <: AbstractRing{V,F}
 
+A mutable structure to hold parameters of each model ring, where the "ring" is a circle in the camera plane observing the BLR.
+
+# Fields
+
+- `r`: Distance from central mass (in terms of $r_s$)
+  - `Union{Vector{Float64}, Float64, Function}`
+  - Can be a single value for constant radius, or vector corresponding to azimuthal angles
+  - Can be a function returning `Vector{Float64}` or `Float64`
+
+- `i`: Inclination angle in radians
+  - `Union{Vector{Float64}, Float64}`
+  - Must be between 0 and $\pi/2$, with 0 being face-on and $\pi/2$ being edge-on
+
+- `rot`: Rotation of system plane about z-axis in radians
+  - `Union{Vector{Float64}, Float64}`
+
+- `θₒ`: Opening angle of ring in radians
+  - `Union{Vector{Float64}, Float64}`
+  - Should be between 0 and $\pi/2$
+
+- `v`: Line of sight velocity
+  - `Union{Vector{Float64}, Float64, Function}`
+  - Can be a function that calculates velocity from other parameters
+
+- `I`: Intensity
+  - `Union{Vector{Float64}, Float64, Matrix{Float64}, Function}`
+  - Can be a function that calculates intensity from other parameters
+
+- `ϕ`: Azimuthal angle in radians
+  - `Union{Vector{Float64}, Float64}`
+
+- `ϕ₀`: Initial azimuthal angle before rotation in radians
+  - `Union{Vector{Float64}, Float64}`
+  - Defaults to 0.0 if not provided or if `rot` is 0.0
+
+- `ΔA`: Projected area of each ring element in image
+  - `Union{Vector{Float64}, Float64}`
+  - Used in calculating profiles
+
+- `reflect`: Whether cloud is reflected across disk mid-plane
+  - `Union{Bool, Array{Bool,}}`
+
+- `τ`: Optical depth
+  - `Union{Vector{Float64}, Float64, Function}`
+
+- `η`: Response parameter for reverberation
+  - `Union{Vector{Float64}, Float64, Function}`
+
+- `Δr`: Distance between camera pixels in r
+  - `Float64`
+
+- `Δϕ`: Distance between camera pixels in ϕ
+  - `Float64`
+
+- `scale`: Encoding for camera ring scaling
+  - `Union{Nothing, Symbol}`
+  - `:log` or `:linear` scale
+
+# Constructor
+
+```julia
+ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false, τ=0.0, η=1.0, Δr=1.0, Δϕ=1.0, scale=nothing, kwargs...)
+```
+
+Required parameters:
+- `r`, `i`, `v`, `I`, `ϕ`
+
+Optional parameters with defaults:
+- `rot=0.0`, `θₒ=0.0`, `ϕ₀=0.0`, `ΔA=1.0`, `reflect=false`, `τ=0.0`, `η=1.0`, `Δr=1.0`, `Δϕ=1.0`, `scale=nothing`
+
+Additional keyword arguments are passed to the `r`, `v`, `I`, and `τ` functions if they are provided as functions.
+"""
+mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10% performance gain) but have to make only Array fields allowed so that the fields themselves can be mutated (Float64 cannot be changed after initialization, needed for raytracing)
     r::Union{V,F,Function}
     i::Union{V,F}
     rot::Union{V,F}
@@ -307,14 +305,18 @@ Base.show(io::IO, r::ring) = begin
     end
 end
 
+"""
+    profile
+
+A struct to hold binned data, usually bound to model struct with `profiles.jl#setProfile!`.
+
+# Fields
+- `name::Symbol`: Name of profile
+- `binCenters::Vector{Float64}`: Bin centers 
+- `binEdges::Vector{Float64}`: Bin edges
+- `binSums::Vector{Float64}`: Sum of values in each bin (crude integral over bin)
+"""
 @kwdef struct profile
-    """profile struct to hold binned data, usually set to model struct with profiles.jl#setProfile
-    attributes:
-        name: name of profile {Symbol}
-        centers: bin centers {Vector{Float64}}
-        edges: bin edges {Vector{Float64}}
-        sums: sum of values in each bin {Vector{Float64}}
-    """
     name::Symbol
     binCenters::Vector{Float64}
     binEdges::Vector{Float64}
@@ -325,13 +327,17 @@ Base.show(io::IO, p::profile) = begin
     println(io, "$(p.name) profile struct with $(length(p.binCenters)) bins")
 end
 
-mutable struct camera #need to modify to include "imgs" of each quantity -- most importantly v and I after raytracing
-    """camera coordinates struct
-    attributes:
-        α: x values Union{Vector{Float64}, Matrix{Float64}} 
-        β: y values Union{Vector{Float64}, Matrix{Float64}
-        raytraced: whether the camera has been raytraced {Bool}
-    """
+"""
+    camera
+
+Camera coordinates struct.
+
+# Fields
+- `α::Union{Vector{Float64}, Matrix{Float64}}`: x values in the camera plane
+- `β::Union{Vector{Float64}, Matrix{Float64}}`: y values in the camera plane
+- `raytraced::Bool`: whether the camera has been used to raytrace the model
+"""
+mutable struct camera
     α::Union{Vector{Float64},Matrix{Float64}}
     β::Union{Vector{Float64},Matrix{Float64}}
     raytraced::Bool
@@ -344,23 +350,39 @@ end
 
 meshgrid(x,y) = (reshape(repeat(x,outer=length(y)),length(x),length(y)), reshape(repeat(y,inner=length(x)),length(x),length(y)))
 
+"""
+    model
+
+A mutable structure to hold many rings and their parameters that model the BLR.
+
+# Fields
+
+- `rings::Vector{ring}`: List of ring objects, see `ring` struct
+- `profiles::Union{Nothing,Dict{Symbol,profile}}`: Dictionary of profiles (see `profile` struct) with keys as symbols; optional, usually initialized to empty dictionary and filled in with `setProfile!`
+- `camera::Union{Nothing,camera}`: Camera coordinates (α,β) corresponding to each ring used to generate images and in raytracing, see `camera` struct
+- `subModelStartInds::Vector{Int}`: Indices of start of each submodel in list of rings; used to separate out submodels for raytracing or for the recovery of individual models after being combined
+
+# Constructors
+```julia
+model(rings::Vector{ring}, profiles::Union{Nothing,Dict{Symbol,profile}}, camera::Union{Nothing,camera}, subModelStartInds::Vector{Int}) 
+```
+- the most flexible constructor, takes in user supplied vector of `ring` objects, optional dictionary of profiles, optional camera coordinates, and vector of indices for submodels
+```julia
+model(rings::Vector{ring{Vector{Float64},Float64}})
+```
+- cloud model constructor, takes in a vector of ring objects that are each points in space and returns a model object with camera coordinates calculated from the physical parameters of each ring
+```julia
+model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
+```
+- disk-wind model constructor, takes in minimum and maximum radius, inclination angle, number of radial and azimuthal bins, intensity and velocity functions, and scale for radial binning; returns a model object with rings generated from these parameters
+```julia
+model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
+```
+- disk-wind model constructor, takes in average radius, radius scaling factor, power law for source function, inclination angle, number of radial and azimuthal bins, and scale for radial binning; returns a model object with rings generated from these parameters
+"""
 mutable struct model
     #make immutable to see if improves performance cost?
     #add image as keyword arg to constructors -- only initialize if true to save on performance
-    
-    """structure to hold many rings and their parameters
-    attributes:
-        rings: Vector{ring}
-            - list of ring objects
-        profiles: Union{Nothing,Dict{Symbol,profile}}
-            - dictionary of profiles (see profile struct) with keys as symbols
-            - optional, usually initialized to empty dictionary and filled in with setProfile!
-        camera: Union{Nothing,camera}
-            - camera coordinates (α,β) corresponding to each ring used to generate images and in raytracing
-        subModelStartInds: Vector{Int}
-            - indices of start of each submodel in list of rings
-            - used to separate out submodels for raytracing or for the recovery of individual models after being combined
-    """
     rings::Vector{ring}
     profiles::Union{Nothing,Dict{Symbol,profile}}
     camera::Union{Nothing,camera}
@@ -479,95 +501,128 @@ mutable struct model
     end
 end
 
+"""
+    DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
+
+Uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025.
+
+# Parameters
+- `rMin::Float64`: Minimum radius of model (in terms of $r_s$)
+- `rMax::Float64`: Maximum radius of model (in terms of $r_s$)
+- `i::Float64`: Inclination angle in radians (all rings have the same inclination)
+- `nr::Int=128`: Number of radial bins
+- `nϕ::Int=256`: Number of azimuthal bins
+- `I::Function=DiskWindIntensity`: Intensity function
+- `v::Function=vCircularDisk`: Velocity function
+- `scale::Symbol=:log`: Radial binning scale (`:log` or `:linear`)
+- `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
+
+# Returns
+- `model` object
+
+# Note
+Similar to other DiskWind model constructor but must explicitly pass `rMin` and `rMax`.
+"""
 function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
-    """uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025
-    params: (similar to function below but must explicitly pass rMin and rMax)
-        rMin: minimum radius of model (in terms of rₛ) {Float64}
-        rMax: maximum radius of model (in terms of rₛ) {Float64}
-        i: inclination angle (rad) {Float64} (all rings have the same inclination)
-        nr: number of radial bins {Int}
-        nϕ: number of azimuthal bins {Int}
-        I: intensity function {Function} (defaults to DiskWindIntensity)
-        v: velocity function {Function} (defaults to vCircularDisk)
-        scale: radial binning scale (:log or :linear)
-        kwargs: extra keyword arguments for I and v if they are functions (see examples)
-    returns:
-        model object {model}
-    """
     return model(rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
 end
 
+"""
+    DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
+
+Uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025.
+
+# Parameters
+- `r̄::Float64`: Mean radius of model (in terms of $r_s$)
+- `rFac::Float64`: Radius factor
+- `α::Float64`: Power-law source function scaling
+- `i::Float64`: Inclination angle in radians
+- `rot::Float64=0.0`: Rotation of system plane about z-axis in radians
+- `nr::Int=128`: Number of radial bins
+- `nϕ::Int=256`: Number of azimuthal bins
+- `scale::Symbol=:log`: Radial binning scale (`:log` or `:linear`)
+- `kwargs...`: Extra keyword arguments for model constructor (see examples)
+
+# Returns
+- `model` object
+
+# Note
+Similar to another DiskWind model constructor but here we pass `r̄`, `rFac`, and `α`.
+"""
 function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
-    """uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025
-    params: (similar to function above but here we pass r̄, rFac, and α)
-        r̄: mean radius of model (in terms of rₛ) {Float64}
-        rFac: radius factor {Float64} 
-        α: power-law source function scaling {Float64} 
-        i: inclination angle (rad) {Float64}
-        rot: rotation of system plane about z axis (rad) {Float64}
-        nr: number of radial bins {Int}
-        nϕ: number of azimuthal bins {Int}
-        scale: radial binning scale (:log or :linear)
-        kwargs: extra keyword arguments for model constructor (see examples)
-    returns:
-        model object {model}
-    """
     return model(r̄, rFac, α, i, nr, nϕ, scale; kwargs...)
 end
 
+"""
+    cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5, I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, kwargs...)
+
+Uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014.
+
+# Parameters
+- `ϕ₀::Vector{Float64}`: Initial azimuthal angle of cloud (rad) 
+- `i::Vector{Float64}`: Inclination angle (rad) 
+- `rot::Vector{Float64}`: Random rotation of cloud about z axis (rad) 
+- `θₒ::Vector{Float64}`: Opening angle of cloud (rad) 
+- `θₒSystem::Float64`: Maximum opening angle of the system (rad) 
+- `ξ::Float64`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side) 
+
+# Optional Parameters
+- `rₛ::Float64=1.0`: Scale radius (in terms of $r_s$)
+- `μ::Float64=500.`: Mean radius of model (in terms of $r_s$)
+- `β::Float64=1.0`: Shape parameter for radial distribution
+- `F::Float64=0.5`: Beginning radius in units of μ where clouds can be placed. 
+- `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function
+- `v::Union{Function,Float64}=vCircularCloud`: Velocity function
+- `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
+
+# Returns
+- `model` object
+
+# Note
+Similar to other `cloudModel` method but here you must explicitly pass `ϕ₀`, `i`, `rot`, and `θₒ`.
+"""
 function cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5,
     I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,kwargs...)
-    """uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014
-    params: (similar to function below but here we must explicitly pass ϕ₀, i, rot, and θₒ)
-        ϕ₀: initial azimuthal angle of cloud (rad) {Vector{Float64}}
-        i: inclination angle (rad) {Vector{Float64}} 
-        rot: rotation of system plane about z axis (rad) {Vector{Float64}}
-        θₒ: opening angle of cloud (rad) {Vector{Float64}}
-        θₒSystem: opening angle of system (rad) {Float64}
-        ξ: power-law source function scaling {Float64} 
-        rₛ: scale radius (in terms of rₛ) {Float64}
-        μ: mean radius of model (in terms of rₛ) {Float64}
-        β: shape parameter for radial distribution {Float64} 
-        F: minimum fraction of maximum radius where clouds can be placed {Float64}
-        I: intensity function {Function} (defaults to IsotropicIntensity)
-        v: velocity function {Function} (defaults to vCircularCloud)
-        kwargs: extra keyword arguments for I and v if they are functions (see examples)
-    returns:
-        model object {model}
-    """
     @assert length(ϕ₀) == length(i) == length(rot) == length(θₒ) "ϕ, i, rot, and θₒ must be the same length -- got $(length(ϕ)), $(length(i)), $(length(rot)), and $(length(θₒ))"
     rings = [drawCloud(i=i[j],θₒ=θₒ[j],rot=rot[j],ϕ₀=ϕ₀[j],μ=μ,F=F,β=β,rₛ=rₛ,θₒSystem=θₒSystem,I=I,v=v,ξ=ξ;kwargs...) for j=1:length(ϕ₀)]
     return model(rings)
 end
 
+"""
+    cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, rng::AbstractRNG=Random.GLOBAL_RNG, kwargs...)
+
+Uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014.
+
+# Parameters
+- `nClouds::Int64`: Number of clouds
+- `μ::Float64=500.`: Mean radius of model (in terms of $r_s$)
+- `β::Float64=1.0`: Shape parameter for radial distribution
+- `F::Float64=0.5`: Minimum fraction of maximum radius where clouds can be placed
+- `rₛ::Float64=1.0`: Scale radius (in terms of $r_s$)
+- `θₒ::Float64=π/2`: Maximum opening angle of cloud distribution (rad)
+- `γ::Float64=1.0`: Disk concentration parameter
+- `ξ::Float64=1.0`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side) 
+- `i::Float64=0.0`: Inclination angle of system (rad)
+- `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function
+- `v::Union{Function,Float64}=vCircularCloud`: Velocity function
+- `rng::AbstractRNG=Random.GLOBAL_RNG`: Random number generator
+- `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
+
+# Returns
+- `model` object
+
+# Note
+Similar to other `cloudModel` method but here random values are generated for `ϕ₀`, `rot`, and `θₒ` ,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
+while keeping `i` constant for the system.
+"""
 function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, 
     I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, rng::AbstractRNG=Random.GLOBAL_RNG, kwargs...)
-    """uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014
-    params: (similar to above but using multiple dispatch here we pass nClouds and generate random values for ϕ₀, rot, and θₒ while keeping i constant for the system)
-        nClouds: number of clouds {Int}
-        μ: mean radius of model (in terms of rₛ) {Float64}
-        β: shape parameter for radial distribution {Float64} 
-        F: minimum fraction of maximum radius where clouds can be placed {Float64}
-        rₛ: scale radius (in terms of rₛ) {Float64}
-        θₒ: maximum opening angle of cloud distribution (rad) {Float64}
-        γ: disk concentration parameter {Float64} 
-        ξ: power-law source function scaling {Float64} 
-        i: inclination angle (rad) {Float64}
-        I: intensity function {Function} (defaults to IsotropicIntensity)
-        v: velocity function {Function} (defaults to vCircularCloud)
-        rng: random number generator {AbstractRNG}
-        kwargs: extra keyword arguments for I and v if they are functions (see examples)
-    returns:
-        model object {model}
-    """
     ϕ₀ = rand(rng,nClouds).*2π
-    #θₒ = rand(nClouds).*θₒ #note: need to implement equation 13 here -- should add a system θₒ parameter to ring (or model?) struct, then each ring can have a different θ
     θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(rng,nClouds).^γ) #θₒ for each cloud, from eqn 14
     rot = rand(rng,nClouds).*2π
     i = ones(nClouds).*i
     return cloudModel(ϕ₀,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
 end
-
 Base.show(io::IO, m::model) = begin 
     println(io, "model struct with $(length(m.rings)) rings:")
     if isdefined(m, :profiles) && length(m.profiles) > 0 && !isnothing(m.profiles)
