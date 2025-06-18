@@ -8,7 +8,7 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
 
 # Fields
 
-- `r`: Distance from central mass (in terms of $r_s$)
+- `r`: Distance from central mass (in terms of ``r_s``)
   - `Union{Vector{Float64}, Float64, Function}`
   - Can be a single value for constant radius, or vector corresponding to azimuthal angles
   - Can be a function returning `Vector{Float64}` or `Float64`
@@ -507,8 +507,8 @@ end
 Uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025.
 
 # Parameters
-- `rMin::Float64`: Minimum radius of model (in terms of $r_s$)
-- `rMax::Float64`: Maximum radius of model (in terms of $r_s$)
+- `rMin::Float64`: Minimum radius of model (in terms of ``r_s``)
+- `rMax::Float64`: Maximum radius of model (in terms of ``r_s``)
 - `i::Float64`: Inclination angle in radians (all rings have the same inclination)
 - `nr::Int=128`: Number of radial bins
 - `nϕ::Int=256`: Number of azimuthal bins
@@ -533,7 +533,7 @@ end
 Uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025.
 
 # Parameters
-- `r̄::Float64`: Mean radius of model (in terms of $r_s$)
+- `r̄::Float64`: Mean radius of model (in terms of ``r_s``)
 - `rFac::Float64`: Radius factor
 - `α::Float64`: Power-law source function scaling
 - `i::Float64`: Inclination angle in radians
@@ -567,8 +567,8 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `ξ::Float64`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side) 
 
 # Optional Parameters
-- `rₛ::Float64=1.0`: Scale radius (in terms of $r_s$)
-- `μ::Float64=500.`: Mean radius of model (in terms of $r_s$)
+- `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``)
+- `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``)
 - `β::Float64=1.0`: Shape parameter for radial distribution
 - `F::Float64=0.5`: Beginning radius in units of μ where clouds can be placed. 
 - `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function
@@ -595,10 +595,10 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 
 # Parameters
 - `nClouds::Int64`: Number of clouds
-- `μ::Float64=500.`: Mean radius of model (in terms of $r_s$)
+- `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``)
 - `β::Float64=1.0`: Shape parameter for radial distribution
 - `F::Float64=0.5`: Minimum fraction of maximum radius where clouds can be placed
-- `rₛ::Float64=1.0`: Scale radius (in terms of $r_s$)
+- `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``)
 - `θₒ::Float64=π/2`: Maximum opening angle of cloud distribution (rad)
 - `γ::Float64=1.0`: Disk concentration parameter
 - `ξ::Float64=1.0`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side) 

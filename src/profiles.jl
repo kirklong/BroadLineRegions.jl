@@ -120,7 +120,7 @@ end
 """
     tDisk(ring::ring; kwargs...)
 
-Calculate time delays for a point in a disk as $ t = \eta r \left(1 + \cos(\phi) \sin(i)\right)$.
+Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)``.
 """
 t(ring::ring) = ring.η.*ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
 
@@ -138,7 +138,7 @@ for specified baselines, model orientation, and BLR angular size.
 - `U::Vector{Float64}`: U component of complex visibility in [Mλ]
 - `V::Vector{Float64}`: V component of complex visibility in [Mλ]
 - `PA::Float64`: On-sky position angle of the model in radians
-- `BLRAng::Float64`: Characteristic size of the BLR model in radians (conversion from $r_s$ to radians)
+- `BLRAng::Float64`: Characteristic size of the BLR model in radians (conversion from ``r_s`` to radians)
 - `returnAvg::Bool=false`: If `true`, returns the average phase across all baselines
 - `offAxisInds::Union{Nothing,Vector{Int}}=nothing`: If provided, only calculates phase for baselines at specified indices
 
