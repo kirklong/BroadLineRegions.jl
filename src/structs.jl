@@ -15,14 +15,14 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
 
 - `i`: Inclination angle in radians
   - `Union{Vector{Float64}, Float64}`
-  - Must be between 0 and $\pi/2$, with 0 being face-on and $\pi/2$ being edge-on
+  - Must be between 0 and ``\\pi/2``, with 0 being face-on and ``\\pi/2`` being edge-on
 
 - `rot`: Rotation of system plane about z-axis in radians
   - `Union{Vector{Float64}, Float64}`
 
 - `θₒ`: Opening angle of ring in radians
   - `Union{Vector{Float64}, Float64}`
-  - Should be between 0 and $\pi/2$
+  - Should be between 0 and ``\\pi/2``
 
 - `v`: Line of sight velocity
   - `Union{Vector{Float64}, Float64, Function}`
