@@ -4,10 +4,10 @@ name: CI
 on:
   pull_request:
     branches:
-      - master
+      - main
   push:
     branches:
-      - master
+      - main
     tags: '*'
 jobs:
   test:
@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - 'min' # the minimum Julia version that your package supports
+          - '1.10' # the minimum Julia version that your package supports
           - '1'   # will automatically expand to the latest stable 1.x release of Julia.
           # NOTE: CI on nightly is not enabled by default, uncomment if you need it. Cf the discussion at
           # https://discourse.julialang.org/t/why-do-packages-run-continuous-integration-tests-on-julia-nightly/101208/3
@@ -51,21 +51,3 @@ jobs:
           # NOTE: you need to add the token to Github secrets, see
           # https://docs.codecov.com/docs/adding-the-codecov-token
           token: ${{ secrets.CODECOV_TOKEN }}
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: 'lts'
-      - run: |
-          julia --project=docs -e '
-            import Pkg; Pkg.add("Documenter")
-            using Pkg
-            Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.instantiate()'
-      - run: julia --project=docs docs/make.jl
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
