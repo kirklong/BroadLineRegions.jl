@@ -2,7 +2,7 @@
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia
 ## Installation 
-## Julia
+### Julia
 ```julia
 using Pkg
 Pkg.add("BLR.jl")
@@ -12,7 +12,7 @@ Or install from the GitHub repo directly:
 using Pkg
 Pkg.add("https://github.com/kirklong/BLR.jl")
 ```
-## Python
+### Python
 To access `BLR.jl` from within your Python installation, first you must install [`JuliaCall`](https://juliapy.github.io/PythonCall.jl/stable/juliacall/)
 After successfully installing `JuliaCall` you can add `BLR.jl` to your new Julia installation in Python with: 
 ```python
@@ -68,4 +68,4 @@ lorem ipsum
 ```
 
 ## Contributing
-If you would like to contribute to the package, please open a pull request on the GitHub. For bug reports and feature requests, please open an issue on the GitHub. 
+If you would like to contribute to the package, please open a pull request on the [GitHub](). For bug reports and feature requests, please open an issue on the GitHub. 

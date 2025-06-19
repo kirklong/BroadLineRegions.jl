@@ -19,6 +19,9 @@
 <!-- Aqua badge, see test/runtests.jl -->
 <!-- [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl) -->
 
+<!-- docs badge -->
+![Static Badge](https://img.shields.io/badge/docs-dodgerblue?link=https%3A%2F%2Fwww.kirklong.space%2FBLR.jl)
+
 **Under heavy construction**: check back soon for full docs and examples...
 
 An open-source Julia package for modeling the BLR in AGN.
