@@ -9,7 +9,6 @@ makedocs(
     modules = [BLR],
     pages = [
         "Home" => "index.md",
-        "Installation" => "installation.md",
         "Usage and Examples" => "usage_examples.md",
         "API" => "api.md",]
 )
