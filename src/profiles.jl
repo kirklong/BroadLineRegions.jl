@@ -23,7 +23,7 @@ Bin the x and y variables into a histogram, where each bin is the sum of the y v
   - `binCenters`: Bin centers for the x variable
   - `result`: Binned sums of the y variable
 """
-function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false, centered::Bool=false, minX::Union{Float64,Nothing}=nothing, maxX::Union{Float64,Nothing}=nothing)
+function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false, centered::Bool=true, minX::Union{Float64,Nothing}=nothing, maxX::Union{Float64,Nothing}=nothing)
     binEdges = nothing 
     if typeof(bins) == Int
         if isnothing(minX)
