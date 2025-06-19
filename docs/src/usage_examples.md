@@ -39,11 +39,11 @@ We can do a quick visualization with the built-in [`profile`](@ref BLR.profile!)
 ```julia
 BLR.profile(mCM96) #plot all profiles stored in model object, here we only have set :line so only :line will be plotted
 ```
-Which should return a plot like this:
+Which should return a plot like this (left panel, right panel is Figure 2 in CM96):
 
-![result of BLR.profile](LPCM96_quick.png)
+![result of BLR.profile](LPCM96_quickComparison.png)
 
-Note that the y-axis units are arbitrary and the x-axis is in units of velocity [``c``], not ``\lambda`` as published in Fig 2 of [CM96](https://articles.adsabs.harvard.edu/pdf/1996ApJ...466..704C), but the shape clearly matches their result that the line profile for such a model should be single-peaked. We could reproduce their plot exactly by rescaling our flux and converting from velocity-space to wavelength space, but we will leave that as an exercise for the motivated reader...
+Note that the y-axis units are arbitrary and the x-axis is in units of velocity [``c``], not ``\lambda`` as published in Fig 2 of [CM96](https://articles.adsabs.harvard.edu/pdf/1996ApJ...466..704C), but the shape clearly matches their result that the line profile for such a model should be single-peaked. This is also showing only the full model line profile (thei solid line), not the data or other models. We could reproduce their plot exactly by rescaling our flux and converting from velocity-space to wavelength space as well as plotting the data and a model line profile with azimuthally isotropic emission, but we will leave that as an exercise for the motivated reader...
 
 ### Generating the transfer function 
 
@@ -94,11 +94,11 @@ heatmap(reverse(vEdges).*3e10/1e8,tEdges.*rsDay,ΨDiscrete',
     tickdirection=:out,widen=false,size=(500,500))
 ```
 
-Which should return something like this:
+Which should return something like this (left plot, right plot is Fig 4. in CM96):
 
-![2D Ψ map](CM96_Ψ_quick.png)
+![2D Ψ map](CM96_Psi_quickComparison.png)
 
-While our binning is a little coarser than in CM96, this is clearly a pretty good match for a quick and dirty calculation. 
+While our binning is a little off/coarser than in CM96, this is clearly a pretty good match for a quick and dirty calculation. 
 
 A few final notes: 
 1. In the plotting function we reversed the velocity bins. This is because in CM96 they defined their disk as rotating in the opposite direction as our model defines things (they use ``\cos\phi`` for the projected velocity calculation instead of ``\sin\phi``), so to compare directly to them we need to flip the direction our disk rotates by default. 
