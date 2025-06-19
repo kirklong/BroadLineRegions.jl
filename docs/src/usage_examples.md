@@ -101,8 +101,7 @@ While our binning is a little coarser than in CM96, this is clearly a pretty goo
 A few final notes: 
 1. In the plotting function we reversed the velocity bins. This is because in CM96 they defined their disk as rotating in the opposite direction as our model defines things (they use ``\\cos\\phi`` for the projected velocity calculation), so to compare directly to them we need to flip the direction our disk rotates by default. 
 2. Also note that when plotting we use `ΨDiscrete'` because heatmap expects the shape of the image variable to be flipped from how `BLR.jl` calculates it (the shape of `Ψ` when returned is (number of velocity bins, number of t bins)). 
-
-
+3. If you wanted to generate just the 1D response function shown in CM96 figure 5, we could do that too with something like: `tCenters, Ψt = BLR.getΨt(mCM96,101,10/rsDay)`. 
 
 ## Reproducing a sample cloud model from Pancoas+ 2014 results (show geometry + line and delay profiles)
 

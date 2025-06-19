@@ -60,8 +60,7 @@ The `overflow` parameter determines whether to include contributions from delays
 function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
-    d(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
-    delays = getVariable(m,d)
+    delays = getVariable(m,t)
     Ψt = Array{Float64}(undef,length(tEdges)-1)
     for j in 1:length(tEdges)-1
         mask = (delays .>= tEdges[j]) .& (delays .< tEdges[j+1])
@@ -86,7 +85,6 @@ Calculate the 1D transfer function Ψ(t) for a model `m` over specified number o
 The `maxT` parameter specifies the maximum time delay to consider, and `overflow` determines whether to include contributions from delays outside the specified edges in the edge bins.
 """
 function getΨt(m::model,tBins::Int64,maxT::Float64=Inf,overflow::Bool=false)
-    t(ring::ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring) : tDisk(ring)
     delays = getVariable(m,t)
     if isinf(maxT)
         maxT =  maximum(i for i in delays if !isnan(i))
