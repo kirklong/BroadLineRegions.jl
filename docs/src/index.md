@@ -68,4 +68,4 @@ lorem ipsum
 ```
 
 ## Contributing
-If you would like to contribute to the package, please open a pull request on the [GitHub](). For bug reports and feature requests, please open an issue on the GitHub. 
+If you would like to contribute to the package, please open a pull request on the [GitHub](https://github.com/kirklong/BLR.jl). For bug reports and feature requests, please open an issue on the GitHub. 

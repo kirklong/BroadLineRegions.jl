@@ -34,7 +34,7 @@ p = BLR.getProfile(mCM96,:line,bins=101) #get the line profile using 101 bins in
 BLR.setProfile!(mCM96,p) #store the line profile in our model structure
 ```
 
-We can do a quick visualization with the built-in [`profile`](@docs) tool:
+We can do a quick visualization with the built-in [`profile`](@ref BLR.profile!) macro:
 
 ```julia
 BLR.profile(mCM96) #plot all profiles stored in model object, here we only have set :line so only :line will be plotted
