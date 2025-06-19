@@ -4,7 +4,7 @@ This guide explores a few more complicated tasks one might wish to use this code
 
 ```@contents
 Pages = ["usage_examples.md"]
-Depth = 2
+Depth = 2:3
 ```
 
 ## Reproducing the line profile and transfer function shown in [CM96](https://ui.adsabs.harvard.edu/abs/1996ApJ...466..704C/abstract)
@@ -105,7 +105,7 @@ A few final notes:
 2. Also note that when plotting we use `ΨDiscrete'` because heatmap expects the shape of the image variable to be flipped from how `BLR.jl` calculates it (the shape of `Ψ` when returned is (number of velocity bins, number of t bins)). 
 3. If you wanted to generate just the 1D response function shown in CM96 figure 5, we could do that too with something like: `tCenters, Ψt = BLR.getΨt(mCM96,101,10/rsDay)`. 
 
-## Reproducing a sample cloud model from Pancoas+ 2014 results (show geometry + line and delay profiles)
+## Reproducing a sample cloud model from Pancoast+ 2014 results (show geometry + line and delay profiles)
 
 ## Reproducing the line and phase profiles shown in Long+2023 
 
