@@ -57,7 +57,9 @@ img = BLR.image(m,:I) #make an image of the model intensity, can pass any other 
 geometry = BLR.plot3d(m) #visualize the geometry of the system in a 3d plot, can also color points according to any parameter
 ```
 
-Full documentation of every function and its possibilities is available in the [API](API.md) section.
+For more detailed examples, see the [Usage and Examples](usage_examples.md) page.
+
+Full documentation is available in the [API](API.md) section.
 
 ## Referencing
 If you find this code useful in your work, please cite it as:
