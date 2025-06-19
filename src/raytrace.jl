@@ -32,7 +32,9 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
 end
 
 """
-    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, colBuff::Vector{Float64})
+    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, 
+            r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, 
+            colBuff::Vector{Float64})
 
 Performant version of `raytrace` function -- calculate where ray traced back from camera coordinates `α`, `β` intersects the system (assumes circular geometry).
 
@@ -284,7 +286,8 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
 end
 
 """
-    raytrace!(m::model; IRatios::Union{Float64,Array{Float64,}}=1.0, τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
+    raytrace!(m::model; IRatios::Union{Float64,Array{Float64,}}=1.0, 
+            τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
 
 Perform raytracing for a model, combining overlapping components along line of sight.
 

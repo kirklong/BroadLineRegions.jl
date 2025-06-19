@@ -65,7 +65,8 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
 # Constructor
 
 ```julia
-ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false, τ=0.0, η=1.0, Δr=1.0, Δϕ=1.0, scale=nothing, kwargs...)
+ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false, 
+    τ=0.0, η=1.0, Δr=1.0, Δϕ=1.0, scale=nothing, kwargs...)
 ```
 
 Required parameters:
@@ -502,7 +503,8 @@ mutable struct model
 end
 
 """
-    DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
+    DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, 
+            I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
 
 Uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025.
 
@@ -528,7 +530,8 @@ function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, n�
 end
 
 """
-    DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
+    DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, 
+            nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
 
 Uses the model constructor to create a DiskWind model of the BLR as detailed in Long+2023 and Long+2025.
 
@@ -554,7 +557,9 @@ function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot
 end
 
 """
-    cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5, I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, kwargs...)
+    cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, 
+            θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5, 
+            I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, kwargs...)
 
 Uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014.
 
@@ -565,8 +570,6 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `θₒ::Vector{Float64}`: Opening angle of cloud (rad) 
 - `θₒSystem::Float64`: Maximum opening angle of the system (rad) 
 - `ξ::Float64`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side) 
-
-# Optional Parameters
 - `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``)
 - `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``)
 - `β::Float64=1.0`: Shape parameter for radial distribution

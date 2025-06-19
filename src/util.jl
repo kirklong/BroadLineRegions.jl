@@ -21,7 +21,7 @@ function reset!(m::model;profiles=true,img=false)
 end
 
 """
-    removeNaN!(m::model) -> model
+    removeNaN!(m::model) 
 
 Remove points with `I = NaN` from model.
 
@@ -118,7 +118,7 @@ function removeNaN!(m::model)
 end
 
 """
-    getFlattenedCameraIndices(m::model) -> Vector{Int}
+    getFlattenedCameraIndices(m::model)
 
 Get flattened camera indices corresponding to rings in model.
 
@@ -207,7 +207,7 @@ function getVariable(m::model,variable::String;flatten=false) # method for getti
 end
 
 """
-    getVariable(m::model, variable::Symbol; flatten=false) -> Array{Float64}
+    getVariable(m::model, variable::Symbol; flatten=false) 
 
 Retrieve model variable when specified as a `Symbol`. See main docstring for details.
 """
@@ -248,7 +248,7 @@ function getVariable(m::model,variable::Symbol;flatten=false) # method for getti
 end
 
 """
-    getVariable(m::model, variable::Function; flatten=false) -> Array{Float64}
+    getVariable(m::model, variable::Function; flatten=false)
 
 Retrieve model variable when specified as a `Function`. See main docstring for details.
 """
@@ -288,6 +288,26 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
             return res #return as is
         end
     end
+end
+"""
+    get_rMinMaxDiskWind(r̄::Float64, rFac::Float64, α::Float64)
+
+Calculate the minimum and maximum radius of model given the (intensity weighted) mean radius r̄, 
+the radius factor rFac, and the power-law index α following Long+ 2023.
+
+# Parameters
+- `r̄::Float64`: mean radius of model (in terms of rₛ)
+- `rFac::Float64`: radius scaling factor 
+- `α::Float64`: power-law index of the source function ``S(r) \\propto r^{-\\alpha}`` (cannot be 1/2 or 3/2 as this divides by zero)
+
+# Returns
+- `rMin::Float64`: minimum radius of model (in terms of rₛ)
+- `rMax::Float64`: maximum radius of model (in terms of rₛ)
+"""
+function get_rMinMaxDiskWind(r̄::Float64,rFac::Float64,α::Float64) 
+    rMin = r̄*(3-2*α)/(1-2*α)*(rFac^(1/2-α)-1)/(rFac^(3/2-α)-1)
+    rMax = rMin*rFac
+    return rMin, rMax
 end
 
 """

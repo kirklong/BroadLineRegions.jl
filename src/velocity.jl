@@ -10,7 +10,8 @@ Defaults to `rₛ=1.0` for unitless calculations.
 vCirc(r::Float64, rₛ::Float64=1.0) = √(rₛ/(2*r))
 
 """
-    vCircularDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, θₒ::Union{Vector{Float64},Float64}, rₛ=1.0, _...)
+    vCircularDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, 
+            θₒ::Union{Vector{Float64},Float64}, rₛ=1.0, _...)
 
 Calculate line of sight velocity for circular orbit at radius `r` from central mass and inclined at angle `i` (rad) over grid of azimuthal angles `ϕ` (rad).
 """
@@ -19,7 +20,8 @@ function vCircularDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union
 end
 
 """
-    vCircularRadialDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, vᵣFrac::Union{Vector{Float64},Float64}=0.0, inflow::Union{Vector{Bool},Bool}=true, rₛ=1.0, _...)
+    vCircularRadialDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, 
+            vᵣFrac::Union{Vector{Float64},Float64}=0.0, inflow::Union{Vector{Bool},Bool}=true, rₛ=1.0, _...)
 
 Calculate line of sight velocity for circular orbit at radius `r` from central mass and inclined at angle `i` (rad) over grid of azimuthal angles `ϕ` (rad) with radial inflow/outflow.
 """
@@ -61,7 +63,10 @@ function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, �
 end
 
 """
-    vCloudTurbulentEllipticalFlow(;σρᵣ::Float64, σρc::Float64, σΘᵣ::Float64, σΘc::Float64, θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64, r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...)
+    vCloudTurbulentEllipticalFlow(;σρᵣ::Float64, σρc::Float64, σΘᵣ::Float64, σΘc::Float64, 
+            θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64, r::Float64, 
+            i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, 
+            reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...)
 
 Calculate line of sight velocity for cloud in 3D space with potential for elliptical orbital velocities, in/outflow, and turbulence as in Pancoast+14.
 

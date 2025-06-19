@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 """
-    binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins=100, overflow=false, centered=false, minX=nothing, maxX=nothing)
+    binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins=100, 
+            overflow=false, centered=false, minX=nothing, maxX=nothing)
 
 Bin the x and y variables into a histogram, where each bin is the sum of the y values for the corresponding x values.
 
@@ -66,8 +67,10 @@ function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vect
 end
 
 """
-    binModel(bins::Union{Int,Vector{Float64}}=100; m::model, yVariable::Union{String,Symbol,Function}, xVariable::Union{String,Symbol,Function}=:v, kwargs...)
-    binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariable::Union{String,Symbol,Function}, xVariable::Union{String,Symbol,Function}=:v, kwargs...)
+    binModel(bins::Union{Int,Vector{Float64}}=100; m::model, yVariable::Union{String,Symbol,Function}, 
+            xVariable::Union{String,Symbol,Function}=:v, kwargs...)
+    binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariable::Union{String,Symbol,Function}, 
+            xVariable::Union{String,Symbol,Function}=:v, kwargs...)
 
 Bin the model into a histogram, where each bin is the integrated value of the yVariable as a function of the xVariable.
 
@@ -127,11 +130,7 @@ t(ring::ring) = ring.η.*ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays
 """
     phase(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)
 
-Calculate differential phase for a model ring.
-
-# Description
-Computes the differential phase signal that would be measured by an interferometer 
-for specified baselines, model orientation, and BLR angular size.
+Calculate differential phase signal for a model based on specified baselines, model orientation, and BLR angular size.
 
 # Arguments
 - `m::model`: Model object to calculate phase for

@@ -1,5 +1,9 @@
 #!/usr/bin/env julia
+"""
+    Base.:+(m1::model, m2::model) combines two models by concatenating their rings and camera parameters.
 
+Create a new model with the combined rings and camera parameters, and updates the subModelStartInds accordingly.
+"""
 Base.:+(m1::model,m2::model) = begin
     r1 = m1.rings; r2 = m2.rings
     mCombined = deepcopy(m1)
@@ -13,6 +17,11 @@ Base.:+(m1::model,m2::model) = begin
     return mCombined
 end
 
+"""
+    Base.getindex(m::model, i::Int)
+
+Retrieves the i-th submodel from the model `m`.
+"""
 Base.getindex(m::model, i::Int) = begin
     if i > length(m.subModelStartInds)
         error("Index out of bounds: $i for model with $(length(m.subModelStartInds)) submodels.")

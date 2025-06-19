@@ -265,15 +265,6 @@ function getHSTData(LCfile,spectra_dir,line="CIV",cont="1367",tStop=75.;wrap=tru
     end
 end
 
-# function getHSTDataWrap(input)
-#     LCfile,spectra_dir,line,cont,tStop = input
-#     if typeof(tStop) != Float64
-#         tStop = tryparse(Float64,tStop)
-#     end
-#     line_t,lineLC,LCerror,cont_t,contLC,λ,model_flux,LPerror = getHSTData(LCfile,spectra_dir,line,cont,tStop)
-#     return numpy[].array([line_t,lineLC,LCerror,cont_t,contLC,λ,model_flux,LPerror],dtype="object")
-# end
-
 ############################# ANALYSIS FUNCTIONS / PLOTTING #############################
 #do polynomial interpolation of LC data to fill in between timestamps, specify N points between each tBinned
 function getSpline(x::Array{Float64,1},y::Array{Float64,1})

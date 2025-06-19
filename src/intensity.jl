@@ -1,4 +1,22 @@
 #!/usr/bin/env julia
+"""
+    DiskWind_I_(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64) 
+
+Calculates the intensity of the disk wind at radius r from the central mass and inclined at angle i (rad) over grid of azimuthal angles ϕ (rad)
+    Follows the prescription given in Long+ 2023 and 2025, similar to Chiang and Murray 1996 and 1997, assumes optically thick line emission limit
+
+# Arguments:
+- r::Vector{Float64} - radius from central mass (in terms of rₛ)
+- ϕ::Vector{Float64} - list of azimuthal angles (rad)
+- i::Float64 - inclination angle (rad)
+- f1::Float64 - strength of radial velocity gradient dvᵣ/dr
+- f2::Float64 - strength of Keplerian shear dvϕ/dr
+- f3::Float64 - strength of velocity gradient dvθ/dr
+- f4::Float64 - strength of velocity gradient dvθ/dθ (or isotropic emission)
+- α::Float64 - power-law index of the source function S(r) ∝ r^(-α)
+# Returns:
+- intensity (arbitrary units) as a Vector{Float64}
+"""
 DiskWind_I_(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64) = begin #this is a performance hit
     sinϕ = sin.(ϕ); cosϕ = cos.(ϕ); sini = sin(i); cosi = cos(i)
     pre = @. sqrt(1 /(2 * r^3))
@@ -9,6 +27,11 @@ DiskWind_I_(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2
     I = @. r^(-α) * abs(dvl_dl)
     I
 end
+"""
+    DiskWind_I_(r::Float64, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64) 
+
+Same as `DiskWind_I_(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64)` but for a single radius `r` and a vector of azimuthal angles `ϕ`.
+"""
 DiskWind_I_(r::Float64, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64) = begin #this is a performance hit
     sinϕ = sin.(ϕ); cosϕ = cos.(ϕ); sini = sin(i); cosi = cos(i)
     pre = sqrt(1 /(2 * r^3))
@@ -19,6 +42,11 @@ DiskWind_I_(r::Float64, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float6
     I = @. r^(-α) * abs(dvl_dl)
     I
 end
+"""
+    DiskWind_I_(r::Vector{Float64}, ϕ::Float64, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64)
+
+Same as `DiskWind_I_(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64)` but for a vector of radii `r` and a single azimuthal angle `ϕ`.
+"""
 DiskWind_I_(r::Vector{Float64}, ϕ::Float64, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64) = begin #this is a performance hit
     sinϕ = sin(ϕ); cosϕ = cos(ϕ); sini = sin(i); cosi = cos(i)
     pre = @. sqrt(1 /(2 * r^3))
@@ -29,6 +57,11 @@ DiskWind_I_(r::Vector{Float64}, ϕ::Float64, i::Float64, f1::Float64, f2::Float6
     I = @. r^(-α) * abs(dvl_dl)
     I
 end
+"""
+    DiskWind_I_(r::Float64, ϕ::Float64, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64)
+
+Same as `DiskWind_I_(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64)` but for a single radius `r` and a single azimuthal angle `ϕ`.
+"""
 DiskWind_I_(r::Float64, ϕ::Float64, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64) = begin #this is a performance hit
     sinϕ = sin(ϕ); cosϕ = cos(ϕ); sini = sin(i); cosi = cos(i)
     pre = sqrt(1 /(2 * r^3))
@@ -39,6 +72,27 @@ DiskWind_I_(r::Float64, ϕ::Float64, i::Float64, f1::Float64, f2::Float64, f3::F
     I = r^(-α) * abs(dvl_dl)
     I
 end
+"""
+    DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64}, 
+            f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
+
+Calculates the intensity from a disk-wind model of the BLR following the prescription given in Long+ 2023 and 2025, similar to Chiang and Murray 1996 and 1997, assumes optically thick line emission limit (Sobolev).
+
+# Arguments:
+- r::Union{Vector{Float64},Float64} - radius from central mass (in terms of rₛ)
+- i::Float64 - inclination angle (rad)
+- ϕ::Union{Vector{Float64},Float64} - list of azimuthal angles (rad)
+- f1::Float64 - strength of radial velocity gradient ``\\mathrm{d}v_{r}/\\mathrm{d}r``
+- f2::Float64 - strength of Keplerian shear velocity gradient ``\\mathrm{d}v_{\\phi}/\\mathrm{d}r``
+- f3::Float64 - strength of radial lifting velocity gradient ``\\mathrm{d}v_{\\theta}/\\mathrm{d}r``
+- f4::Float64 - strength of vertical lifting velocity gradient ``\\mathrm{d}v_{\\theta}/\\mathrm{d}\\theta`` (equivalent to isotropic emission)
+- α::Float64 - power-law index of the source function ``S(r) \\propto r^{-\\alpha}``
+- rMin::Float64 - minimum radius to consider (default: 0.0)
+- rMax::Float64 - maximum radius to consider (default: Inf)
+
+# Returns:
+- intensity (arbitrary units) as a Vector{Float64}
+"""
 function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64}, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
     """calculate the intensity of the disk wind at radius r from the central mass and inclined at angle i (rad) over grid of azimuthal angles ϕ (rad)
         Follows the prescription given in Long+ 2023 and 2024, similar to Chiang and Murray 1996, assumes optically thick line emission limit
@@ -68,7 +122,12 @@ function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::U
     return I
 end
 
+"""
+    IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, 
+            rescale::Float64=1.0, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
 
+Returns a constant intensity value at all radii and azimuthal angles, rescaled by `rescale` factor.
+"""
 function IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, rescale::Float64=1.0, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
     """calculate the intensity of the isotropic emission over grid of azimuthal angles ϕ (rad) or at one azimuthal angle
     params: 
@@ -95,23 +154,37 @@ end
 
 W(ϕ::Float64,κ::Float64) = 1/2+κ*cos(ϕ)
 
+"""
+    cloudIntensity(;r::Float64, ϕ::Float64, θₒ::Float64, ϕ₀::Float64, rot::Float64, i::Float64, κ::Float64=0.0, _...)
+
+Calculate the intensity of the cloud at radius `r` from the central mass and inclined at angle `i` (rad) over grid of azimuthal angles `ϕ` (rad) following Pancoast+ 2011 and 2014.
+
+# Arguments
+- `r::Float64`: radius from central mass (in terms of r₍ₛ₎)
+- `ϕ::Float64`: azimuthal angle (rad)
+- `θₒ::Float64`: opening angle of cloud
+- `ϕ₀::Float64`: initial azimuthal angle
+- `rot::Float64`: rotation angle
+- `i::Float64`: inclination angle
+- `κ::Float64`: anisotropy parameter
+
+# Returns
+- Intensity (arbitrary units) as a `Float64`
+"""
 function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
-    """calculate the intensity of the cloud at radius r from the central mass and inclined at angle i (rad) over grid of azimuthal angles ϕ (rad)
-    params: 
-        r: radius from central mass (in terms of rₛ) {Float64}
-        ϕ: azimuthal angle (rad) {Float64}
-        θₒ: opening angle of cloud {Float64}
-        κ: anisotropy parameter {Float64}
-    returns:
-        intensity (arbitrary units) {Float64}
-    """
-    #I = sin(θₒ)*W(ϕ,κ)/r^2 #when θₒ tends to ~0 this gives 1/r^3 scaling like DiskWind
     xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ) #system coordinates xyz
     ϕw = acos(xyzSys[1]/r) #angle between cloud and BH line of sight
     I = W(ϕw,κ) #clouds don't have scaling -- the scaling is set by geometry itself, just whether they are on or off 
     return I
 end
 
+"""
+    IϕCloudMask(;r::Float64, ϕ::Float64, θₒ::Float64, ϕ₀::Float64, rot::Float64, i::Float64, κ::Float64=0.0, 
+            ϕMin::Float64, ϕMax::Float64, overdense::Bool=false, _...)
+
+Calculates the intensity using `cloudIntensity` but with an extra layer of masking based on azimuthal angle `ϕ` and the specified range `[ϕMin, ϕMax]`. If `ϕ` is outside this range, the intensity is set to 0.0.
+If overdense is `true`, the intensity is multiplied by 2.0 to account for the "lost" cloud and thus preserve total intensity in the model.
+"""
 function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
     if ϕ > π || ϕ < -π
         ϕ = atan(sin(ϕ),cos(ϕ))
@@ -132,6 +205,12 @@ function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot:
     return I 
 end
 
+"""
+    IϕDiskWindMask(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, i::Float64, 
+            f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, ϕMin::Float64, ϕMax::Float64, _...)
+
+Calculates the intensity using `DiskWindIntensity` but with an extra layer of masking based on azimuthal angle `ϕ` and the specified range `[ϕMin, ϕMax]`. If `ϕ` is outside this range, the intensity is set to 0.0.
+"""
 function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Float64},Float64},i::Float64,f1::Float64,f2::Float64,f3::Float64,f4::Float64,α::Float64,ϕMin::Float64,ϕMax::Float64, _...)
     I = nothing
     if typeof(ϕ) == Float64
