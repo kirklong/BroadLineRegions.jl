@@ -40,6 +40,7 @@ We can do a quick visualization with the built-in [`profile`](@ref BLR.profile!)
 BLR.profile(mCM96) #plot all profiles stored in model object, here we only have set :line so only :line will be plotted
 ```
 Which should return a plot like this:
+
 ![result of BLR.profile](LPCM96_quick.png)
 
 Note that the y-axis units are arbitrary and the x-axis is in units of velocity [``c``], not ``\lambda`` as published in Fig 2 of [CM96](https://articles.adsabs.harvard.edu/pdf/1996ApJ...466..704C), but the shape clearly matches their result that the line profile for such a model should be single-peaked. We could reproduce their plot exactly by rescaling our flux and converting from velocity-space to wavelength space, but we will leave that as an exercise for the motivated reader...
@@ -94,6 +95,7 @@ heatmap(reverse(vEdges).*3e10/1e8,tEdges.*rsDay,ΨDiscrete',
 ```
 
 Which should return something like this:
+
 ![2D Ψ map](CM96_Ψ_quick.png)
 
 While our binning is a little coarser than in CM96, this is clearly a pretty good match for a quick and dirty calculation. 
