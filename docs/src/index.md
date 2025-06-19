@@ -1,6 +1,6 @@
 # BLR.jl
 
-*A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia*
+A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia
 ## Installation 
 ## Julia
 ```julia
