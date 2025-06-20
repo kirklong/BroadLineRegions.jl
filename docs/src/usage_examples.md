@@ -111,7 +111,7 @@ We can also generate "cloud"/thick-disk models of the BLR similar to [Pancoast+2
 
 | parameter               | model 1     | model 2     |     
 |:-----------------------:|:-----------:|:-----------:|
-|``\r_{\rm{mean}}`` [days]|4.0          |4.0          |
+|``r_{\rm{mean}}`` [days] |4.0          |4.0          |
 |``F``                    |0.25         |0.25         |
 |``\beta``                |1.0          |0.8          |
 |``\theta_o`` [deg]       |40           |30           |
@@ -160,7 +160,7 @@ Which should produce something like the right column of plots in the comparison 
 
 ![2D cloud Ψ maps](P14_Psi_quickComparison.png)
 
-Note that again we are trying to roughly match the color scale by eye, but the general shape and morphology looks good. Also note that again we had to flip the left/right sides of the system because of the way the default velocity function/``\phi`` grid is setup in our model (`BLR.jl` defaults to the left side rotating towards you while [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) has the left side rotating away). 
+Note that again we are just trying to roughly match the color scale by eye, but the general shape and morphology looks good. Also note that again we had to flip the left/right sides of the system because of the way the default velocity function/``\phi`` grid is setup in our model (`BLR.jl` defaults to the left side rotating towards you while [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) has the left side rotating away). 
 
 We can also quickly visualize the geometry of the system from any angle (i.e. to compare to the rightmost panel of Fig. 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract)) using the built-in [`plot3d`](@ref BLR.plot3d) macro:
 
