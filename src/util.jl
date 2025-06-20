@@ -443,7 +443,7 @@ function reflect!(xyzSys,i)
     return xyzSys
 end
 """
-    rotate3D(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false) -> Tuple{Float64, Float64, Float64}
+    rotate3D(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
 
 Transform from ring coordinates to 3D coordinates where camera is at +x.
 
@@ -539,22 +539,21 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             for ii in 1:size(r)[1]
                 for jj in 1:size(r)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,false) 
                 end
             end
         elseif typeof(r) == Vector{Float64} && typeof(ϕ₀) == Matrix{Float64}
             for ii in 1:size(ϕ)[1]
                 for jj in 1:size(ϕ)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,false) 
                 end
             end
         else #if r is just a vector (with ϕ and i matching)
             rot = getVariable(model,:rot)
             θₒ = getVariable(model,:θₒ)
-            reflect = Bool.(getVariable(model,:reflect))
             for ii in 1:length(r)
-                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],reflect[ii]) 
+                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],false) 
             end
         end
         boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])

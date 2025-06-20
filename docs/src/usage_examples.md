@@ -11,7 +11,7 @@ Depth = 2:3
 
 CM96 showed that disk-wind models of the BLR could produce single-peaked line profiles, and as part of their results they generated a hypothetical 2D transfer function for a disk-wind BLR as applied to NGC 5548. We can reproduce such a map with just a few lines of code using `BLR.jl`.
 
-First, let's define the model: 
+First, let's define the model using [`DiskWindModel`](@ref BLR.DiskWindModel): 
 ```julia
 mCM96 = BLR.DiskWindModel(3000.,100.,1.,75/180*π,
         nr=5096,nϕ=1024,scale=:log,f1=1.0,f2=1.0,f3=0.0,f4=0.0,
@@ -22,7 +22,7 @@ We use the parameters from CM96 for ``\bar{r} = 3000\rm{r_s}``, ``r_{\rm{fac}} =
 
 To have a well sampled model grid we pick `nr=5096` and `nϕ=1024` with `scale=:log`, which will result in the returned model object having 5096 "rings" in our circular camera aperture with each ring holding 1024 grid cells evenly divided in ``\\phi`` space. 
 
-While this is the default, for the sake of this demonstration we also set `I=BLR.DiskWindIntensity` to explicitly tell the model to use the intensity formulation first proposed in CM96 (and using the "f" parameter language introduced in Long+2023). We also tell the model to calculate the velocities according to the built in function `BLR.vCircularDisk`, which simply calculates the projected line of sight velocity as ``v = \sqrt{\frac{\rm{r_s}}{2r}}\sin i \sin\phi``. 
+While this is the default, for the sake of this demonstration we also set [`I=BLR.DiskWindIntensity`](@ref BLR.DiskWindIntensity) to explicitly tell the model to use the intensity formulation first proposed in CM96 (and using the "f" parameter language introduced in Long+2023). We also tell the model to calculate the velocities according to the built in function [`BLR.vCircularDisk`](@ref BLR.vCircularDisk), which simply calculates the projected line of sight velocity as ``v = \sqrt{\frac{\rm{r_s}}{2r}}\sin i \sin\phi``. 
 
 Finally, while not required, we set `τ = 5.0` as we want our disk to be optically thick and `reflect = false` as we do not want to move any points from the back to the front. 
 
@@ -105,7 +105,76 @@ A few final notes:
 2. Also note that when plotting we use `ΨDiscrete'` because heatmap expects the shape of the image variable to be flipped from how `BLR.jl` calculates it (the shape of `Ψ` when returned is (number of velocity bins, number of t bins)). 
 3. If you wanted to generate just the 1D response function shown in CM96 figure 5, we could do that too with something like: `tCenters, Ψt = BLR.getΨt(mCM96,101,10/rsDay)`. 
 
-## Reproducing a sample cloud model from Pancoast+ 2014 results (show geometry + line and delay profiles)
+## Reproducing a sample cloud model from [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) results (show geometry + line and delay profiles)
+
+We can also generate "cloud"/thick-disk models of the BLR similar to [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) easily with `BLR.jl`. In this section we will reproduce part of Figure 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract), which shows five different model BLRs and their 1D transfer functions with the following parameters: 
+
+| parameter               | model 1     | model 2     |     
+|:-----------------------:|:-----------:|:-----------:|
+|``\r_{\rm{mean}}`` [days]|4.0          |4.0          |
+|``F``                    |0.25         |0.25         |
+|``\beta``                |1.0          |0.8          |
+|``\theta_o`` [deg]       |40           |30           |
+|``i`` [deg]              |20           |20           |
+|``\kappa``               |-0.4         |-0.4         |
+|``\gamma``               |5.0          |5.0          |
+|``\xi``                  |0.3          |0.1          |
+|``f_{\rm{ellipse}}``     |0.0          |1.0          |
+|``f_{\rm{flow}}``        |0.0          |-            |
+|``\theta_e`` [deg]       |0.0          |-            |
+|``\sigma_{\rm{turb}}``   |0.0          |0.0          |
+
+First, we initialize model structs for both of these cases:
+```julia
+M = 10^(6.5)*2e30 #kg, from Pancoast+2014
+rs = 2*6.67e-11*M/9e16 #2GM/c^2, m
+rsDay = rs/3e8/3600/24 #days^C #days -- model expects μ in units of rₛ
+nClouds = 100_000 #small number of clouds just for demonstration
+mP1 = BLR.cloudModel(nClouds,μ=4/rsDay,F=0.25,β=1.0,θₒ=40/180*π,i=20/180*π,
+        κ=-0.4,γ=5.0,ξ=0.3,fEllipse=0.0,fFlow=0.0,θₑ=0.0,σₜ=0.0,
+        σρc=0.0,σΘᵣ=0.0,σΘc=0.0,σρᵣ=0.0,
+        I=BLR.cloudIntensity,v=BLR.vCloudTurbulentEllipticalFlow,τ=0.0)
+mP2 = BLR.cloudModel(nClouds,μ=4/rsDay,F=0.25,β=0.8,θₒ=30/180*π,i=20/180*π,
+        κ=-0.4,γ=5.0,ξ=0.1,fEllipse=1.0,σₜ=0.0,
+        fFlow=0.0,θₑ=0.0,σρc=0.0,σΘᵣ=0.0,σΘc=0.0,σρᵣ=0.0,
+        I=BLR.cloudIntensity,v=BLR.vCloudTurbulentEllipticalFlow,τ=0.0)
+```
+Where the first argument passed to [`cloudModel`](@ref BLR.cloudModel) is the number of clouds to generate (here we use a relatively small number just for demonstration purposes), and the keyword arguments supplied mostly correspond to the values in the table above and are fully described in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract). The extra keyword arguments set to 0 but not in the table are options not used in this calculation, and the final line specifies that we would like the intensity calculated with the [`cloudIntensity`](@ref BLR.cloudIntensity) function, the velocities calculated with [`vCloudTurbulentEllipticalFlow`](@ref BLR.vCloudTurbulentEllipticalFlow), and that the optical depth of the cloud is 0.
+
+To compare to Figure 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) we can again generate transfer functions for both models:
+
+```julia
+vEdges = collect(range(-0.015,stop=0.015,length=51)) #Δλ/λ ~ v/c
+tEdges = collect(range(0.0,stop=20.0/rsDay,length=51))
+Ψ1 = BLR.getΨ(mP1,vEdges,tEdges)
+Ψ2 = BLR.getΨ(mP2,vEdges,tEdges)
+p1 = heatmap(reverse(vEdges.*3e5),tEdges.*rsDay,(Ψ1'./maximum(Ψ1)),ylims=(0,20),cbar=false,
+    xlabel="Δv (km/s)",ylabel="Lag (days)",minorticks=true,tickdirection=:out,
+    widen=false,size=(500,500),guidefontsize=18,tickfontsize=16)
+p2 = heatmap(reverse(vEdges.*3e5),tEdges.*rsDay,(Ψ2'./maximum(Ψ2)),ylims=(0,20),cbar=false,
+    xlabel="Δv (km/s)",ylabel="Lag (days)",minorticks=true,tickdirection=:out,
+    widen=false,size=(500,500),guidefontsize=18,tickfontsize=16)
+```
+
+Which should produce something like the right column of plots in the comparison below (top plot = `p1` and bottom = `p2`):
+
+![2D cloud Ψ maps](P14_Psi_quickComparison.png)
+
+Note that again we are trying to roughly match the color scale by eye, but the general shape and morphology looks good. Also note that again we had to flip the left/right sides of the system because of the way the default velocity function/``\phi`` grid is setup in our model (`BLR.jl` defaults to the left side rotating towards you while [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) has the left side rotating away). 
+
+We can also quickly visualize the geometry of the system from any angle (i.e. to compare to the rightmost panel of Fig. 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract)) using the built-in [`plot3d`](@ref BLR.plot3d) macro:
+
+```julia
+BLR.plot3d(mP1,:I,cam=(10,10)) #visualize the system with points colored by their intensity with a camera at 10 deg azimuth and altitude
+```
+
+Iterating this over a wide variety of camera angles one can produce fun 3D visualizations of the BLR models like the gifs below:
+
+| model 1                           | model 2                           |
+|:---------------------------------:|:---------------------------------:|
+|![gif of model 1 geometry](mP1.gif)|![gif of model 2 geometry](mP2.gif)|
+
+Comparing to the stills in Figure 4 of [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) again shows good agreement (although note that here we are using more clouds than they did). 
 
 ## Reproducing the line and phase profiles shown in Long+2023 
 

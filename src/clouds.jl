@@ -78,13 +78,12 @@ A model `ring` struct representing the properties of the cloud.
 """
 function drawCloud(;μ::Float64=500.,β::Float64=1.0,F::Float64=0.5,ϕ₀::Float64=0.0,i::Float64=π/4,rot::Float64=0.0,rₛ::Float64=1.0,θₒ::Float64=0.0,θₒSystem::Float64=0.0,
     I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,ξ::Float64=1.0,rng::AbstractRNG=Random.GLOBAL_RNG,kwargs...)
-    #assuming e = 0.0, vCircular, IsotropicIntensity for now
     # γ = getGamma(μ=μ,β=β,F=F)
     # r = getR(rₛ,γ)
     g = getG(β)
     r = getR(rₛ,μ,β,F,g,rng)
     xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ) #system coordinates xyz, #flip i to match convention of +z being up, relic
-    reflect = (xyzSys[3] > midPlaneXZ(xyzSys[1],i)) && (rand(rng) > ξ) #reflect particles from back of disk across disk midplane to front, leaving ξ fraction of particles in back
+    reflect = (xyzSys[3] < midPlaneXZ(xyzSys[1],i)) && (rand(rng) > ξ) #reflect particles from back of disk across disk midplane to front, leaving ξ fraction of particles in back
     if reflect
         xyzSys = reflect!(xyzSys,i)
     end

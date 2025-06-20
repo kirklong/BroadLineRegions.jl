@@ -173,7 +173,7 @@ Calculate the intensity of the cloud at radius `r` from the central mass and inc
 """
 function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
     xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ) #system coordinates xyz
-    ϕw = acos(xyzSys[1]/r) #angle between cloud and BH line of sight
+    ϕw = atan(xyzSys[2],xyzSys[1]) #angle between cloud and BH line of sight
     I = W(ϕw,κ) #clouds don't have scaling -- the scaling is set by geometry itself, just whether they are on or off 
     return I
 end
