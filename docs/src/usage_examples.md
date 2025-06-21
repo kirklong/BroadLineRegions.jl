@@ -101,9 +101,8 @@ Which should return something like this (left plot, right plot is Fig 4. in CM96
 While our binning is a little off/coarser than in CM96, this is clearly a pretty good match for a quick and dirty calculation. 
 
 A few final notes: 
-1. In the plotting function we reversed the velocity bins. This is because in CM96 they defined their disk as rotating in the opposite direction as our model defines things (they use ``\cos\phi`` for the projected velocity calculation instead of ``\sin\phi``), so to compare directly to them we need to flip the direction our disk rotates by default. 
-2. Also note that when plotting we use `ΨDiscrete'` because heatmap expects the shape of the image variable to be flipped from how `BLR.jl` calculates it (the shape of `Ψ` when returned is (number of velocity bins, number of t bins)). 
-3. If you wanted to generate just the 1D response function shown in CM96 figure 5, we could do that too with something like: `tCenters, Ψt = BLR.getΨt(mCM96,101,10/rsDay)`. 
+1. Note that when plotting we use `ΨDiscrete'` because heatmap expects the shape of the image variable to be flipped from how `BLR.jl` calculates it (the shape of `Ψ` when returned is (number of velocity bins, number of t bins)). 
+2. If you wanted to generate just the 1D response function as shown in CM96 Figure 5, `BLR.jl` has syntax for that too: `tCenters, Ψt = BLR.getΨt(mCM96,101,10/rsDay)`. 
 
 ## Reproducing sample cloud model results from [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract)
 
@@ -148,10 +147,10 @@ vEdges = collect(range(-0.015,stop=0.015,length=51)) #Δλ/λ ~ v/c
 tEdges = collect(range(0.0,stop=20.0/rsDay,length=51))
 Ψ1 = BLR.getΨ(mP1,vEdges,tEdges)
 Ψ2 = BLR.getΨ(mP2,vEdges,tEdges)
-p1 = heatmap(reverse(vEdges.*3e5),tEdges.*rsDay,(Ψ1'./maximum(Ψ1)),ylims=(0,20),cbar=false,
+p1 = heatmap(vEdges.*3e5,tEdges.*rsDay,(Ψ1'./maximum(Ψ1)),ylims=(0,20),cbar=false,
     xlabel="Δv (km/s)",ylabel="Lag (days)",minorticks=true,tickdirection=:out,
     widen=false,size=(500,500),guidefontsize=18,tickfontsize=16)
-p2 = heatmap(reverse(vEdges.*3e5),tEdges.*rsDay,(Ψ2'./maximum(Ψ2)),ylims=(0,20),cbar=false,
+p2 = heatmap(vEdges.*3e5,tEdges.*rsDay,(Ψ2'./maximum(Ψ2)),ylims=(0,20),cbar=false,
     xlabel="Δv (km/s)",ylabel="Lag (days)",minorticks=true,tickdirection=:out,
     widen=false,size=(500,500),guidefontsize=18,tickfontsize=16)
 ```
@@ -160,7 +159,7 @@ Which should produce something like the right column of plots in the comparison 
 
 ![2D cloud Ψ maps](P14_Psi_quickComparison.png)
 
-Note that again we are just trying to roughly match the color scale by eye, but the general shape and morphology looks good. Also note that again we had to flip the left/right sides of the system because of the way the default velocity function/``\phi`` grid is setup in our model (`BLR.jl` defaults to the left side rotating towards you while [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) has the left side rotating away). 
+Note that again we are just trying to roughly match the color scale by eye, but the general shape and morphology looks good.
 
 We can also quickly visualize the geometry of the system from any angle (i.e. to compare to the rightmost panel of Fig. 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract)) using the built-in [`plot3d`](@ref BLR.plot3d) macro:
 
@@ -174,7 +173,7 @@ Iterating this over a wide variety of camera angles one can produce fun 3D visua
 |:---------------------------------:|:---------------------------------:|
 |![gif of model 1 geometry](mP1.gif)|![gif of model 2 geometry](mP2.gif)|
 
-Comparing to the stills in Figure 4 of [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) again shows good agreement (although note that here we are using more clouds than they did). 
+Comparing to the stills in Figure 4 of [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) again shows good agreement (note that in generating this animation the number of clouds was set to be just 2,000 to better show the structure/agreement with Pancoast+2014). 
 
 ## Reproducing the line and phase profiles shown in Long+2023 
 

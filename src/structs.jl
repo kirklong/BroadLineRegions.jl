@@ -124,7 +124,6 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         @assert typeof(reflect) == Bool "reflect must be Bool, got $(typeof(reflect))"
         @assert typeof(i) == Float64 "i must be Float64, got $(typeof(i))"
         @assert (i >= -π/2) && (i <= π/2) "i must be between -π/2 and π/2, got $i"
-        i = -i #flip i to match convention of bottom of disk being tilted "towards" observer, relic of how rotation matrix was implemented.
         @assert (typeof(rot) == Float64) "rot must be Float64, got $(typeof(rot))"
         @assert (typeof(θₒ) == Float64) "θₒ must be Float64, got $(typeof(θₒ))"
         @assert (θₒ >= 0) && (θₒ <= π/2) "θₒ must be between 0 and π/2, got $θₒ"

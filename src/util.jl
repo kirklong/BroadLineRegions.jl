@@ -414,6 +414,7 @@ Calculate rotation matrix to transform from initial XY plane coordinates to 3D s
 - `matrix::Matrix{Float64}`: 3×3 rotation matrix
 """
 function get_r3D(i,rot,θₒ)
+    i = -i #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
     matrix = [
         (cos(rot)*cos(θₒ)*sin(i)-cos(i)*sin(θₒ)) sin(i)*sin(rot) (-cos(i)*cos(θₒ)-cos(rot)*sin(i)*sin(θₒ));
         -cos(θₒ)*sin(rot) cos(rot) sin(rot)*sin(θₒ);
@@ -434,6 +435,7 @@ Reflect coordinates in 3D space across the ring plane.
 - `xyzSys::Vector{Float64}`: `[x';y';z']` coordinates in 3D space after reflection
 """
 function reflect!(xyzSys,i)
+    i = -i #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
     midSlope = cot(i)
     den = 1+midSlope^2
     xf = (xyzSys[1]-midSlope^2*xyzSys[1]+2*midSlope*xyzSys[3])/den
@@ -467,7 +469,7 @@ function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
     return xyzSys
 end
 
-midPlaneXZ(x,i) = x*cot(i)
+midPlaneXZ(x,i) = x*cot(-i) #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
 
 """
     plot3d(m::model, [variable], [annotatedCamera], [kwargs...])
@@ -539,32 +541,32 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             for ii in 1:size(r)[1]
                 for jj in 1:size(r)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,false) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
                 end
             end
         elseif typeof(r) == Vector{Float64} && typeof(ϕ₀) == Matrix{Float64}
             for ii in 1:size(ϕ)[1]
                 for jj in 1:size(ϕ)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,false) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
                 end
             end
         else #if r is just a vector (with ϕ and i matching)
             rot = getVariable(model,:rot)
             θₒ = getVariable(model,:θₒ)
+            reflect = getVariable(model,:reflect)
             for ii in 1:length(r)
-                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],false) 
+                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],reflect[ii]) 
             end
         end
         boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])
         boxSizeGlobal = max(boxSize,boxSizeGlobal)
-        # nanMask = isnan.(vec(getVariable(model,:I)))
         @series begin
             subplot := 1
             seriestype := :scatter
             palette --> :magma
             mz = (isnothing(variable) ? nothing : vec(getVariable(model,variable)))
-            nanMask = isnan.(mz)
+            nanMask = isnothing(variable) ? ones(Bool,length(xtmp)) : isnan.(mz)
             marker_z := mz[.!nanMask]
             markeralpha --> (diskFlags[mInd] ? 0.9 : 0.1)
             markerstrokewidth --> 0.0
