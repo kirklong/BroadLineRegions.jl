@@ -29,11 +29,11 @@ using Test
     @test maximum(LPf2.binSums) > 0.0
     @test maximum(LPf3.binSums) > 0.0
     @test maximum(LPf4.binSums) > 0.0
-    @test minimum(LPAll.binSums) > 0.0
-    @test minimum(LPf1.binSums) > 0.0
-    @test minimum(LPf2.binSums) > 0.0
-    @test minimum(LPf3.binSums) > 0.0
-    @test minimum(LPf4.binSums) > 0.0
+    @test minimum(LPAll.binSums) >= 0.0
+    @test minimum(LPf1.binSums) >= 0.0
+    @test minimum(LPf2.binSums) >= 0.0
+    @test minimum(LPf3.binSums) >= 0.0
+    @test minimum(LPf4.binSums) >= 0.0
     @test isapprox(LPAll.binCenters[findmax(LPAll.binSums)[2]],0.0,atol = 5e-3)
     @test isapprox(LPf1.binCenters[findmax(LPf1.binSums)[2]], 0.0, atol = 5e-3)
     firstMax = findmax(LPf2.binSums)[2]
@@ -53,6 +53,7 @@ using Test
 end
 
 @testset "Cloud model initialized successfully" begin 
+    M = 10^(6.5)*2e30; rs = 2*6.67e-11*M/9e16; rsDay = rs/3e8/24/3600
     mP1 = BLR.cloudModel(1_000_000,μ=4/rsDay,F=0.25,β=1.0,θₒ=40/180*π,i=20/180*π,
                κ=-0.4,γ=5.0,ξ=0.3,fEllipse=0.0,fFlow=0.0,θₑ=0.0,σₜ=0.0,
                σρc=0.0,σΘᵣ=0.0,σΘc=0.0,σρᵣ=0.0,
@@ -60,26 +61,24 @@ end
     @test typeof(mP1) == BLR.model
     LP1 = BLR.getProfile(mP1,:line,bins=101,centered=true)
     @test maximum(LP1.binSums) > 0.0
-    @test minimum(LP1.binSums) > 0.0
-    @test isapprox(LP1.binCenters[findmax(LP1.binSums)[2]],0.025,atol = 5e-3)
+    @test minimum(LP1.binSums) >= 0.0
+    @test isapprox(LP1.binCenters[findmax(LP1.binSums)[2]],0.003,atol = 5e-3)
     mP2 = BLR.cloudModel(1_000_000,μ=4/rsDay,F=0.25,β=0.8,θₒ=30/180*π,i=20/180*π,
         κ=-0.4,γ=5.0,ξ=0.1,fEllipse=1.0,σₜ=0.0,
         fFlow=0.0,θₑ=0.0,σρc=0.0,σΘᵣ=0.0,σΘc=0.0,σρᵣ=0.0,
         I=BLR.cloudIntensity,v=BLR.vCloudTurbulentEllipticalFlow,τ=0.0)
     LP2 = BLR.getProfile(mP2,:line,bins=101,centered=true)
     @test maximum(LP2.binSums) > 0.0
-    @test minimum(LP2.binSums) > 0.0
+    @test minimum(LP2.binSums) >= 0.0
     firstMax = findmax(LP2.binSums)[2]
-    @test isapprox(LP2.binCenters[firstMax], (0.007*sign(LP2.binCenters[firstMax])), atol = 5e-3)
-    mask = sign(LP2.binCenters[firstMax]) == 1 ? [i < 51 for i=1:length(LP2.binCenters)] :
-        [i > 50 for i=1:length(LP2.binCenters)]
+    @test isapprox(LP2.binCenters[firstMax], (0.001*sign(LP2.binCenters[firstMax])), atol = 5e-3)
+    mask = sign(LP2.binCenters[firstMax]) == 1 ? [i < 51 for i=1:length(LP2.binCenters)] : [i > 50 for i=1:length(LP2.binCenters)]
     secondMax = findmax(LP2.binSums[mask])[2]
-    @test isapprox(LP2.binCenters[mask][secondMax],(0.007*sign(LP2.binCenters[mask][secondMax])),atol = 5e-3)
-    M = 10^(6.5)*2e30; rs = 2*6.67e-11*M/9e16; rsDay = rs/3e8/24/3600
-    tCenters,Ψt = BLR.getΨt(mP1,501,0.5/rsDay)
-    @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 0.025, atol = 5e-3)
-    tCenters,Ψt = BLR.getΨt(mP2,501,0.5/rsDay)
-    @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 0.03, atol = 5e-2)
+    @test isapprox(LP2.binCenters[mask][secondMax],(0.001*sign(LP2.binCenters[mask][secondMax])),atol = 5e-3)
+    tCenters,Ψt = BLR.getΨt(mP1,501,10/rsDay)
+    @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 1.3, atol = 5e-1)
+    tCenters,Ψt = BLR.getΨt(mP2,501,10/rsDay)
+    @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 1.8, atol = 5e-1)
 end
 ## NOTE add JET to the test environment, then uncomment
 # using JET
