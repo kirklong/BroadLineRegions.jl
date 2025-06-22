@@ -1,6 +1,6 @@
 # BroadLineRegions.jl
 
-A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia.
+A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia. 
 ## Installation 
 ### Julia
 ```julia
@@ -65,9 +65,9 @@ using BLR: DiskWindModel, cloudModel
 mDisk = DiskWindModel(parms...) #instead of BLR.DiskWindModel
 ```
 
-For more detailed examples, see the [Usage and Examples](@ref) page.
+For more detailed examples, see the [Usage and Examples](https://www.kirklong.space/BroadLineRegions.jl/dev/usage_examples/) page.
 
-Full documentation is available in the [API](@ref) section.
+Full documentation is available in the [API](https://www.kirklong.space/BroadLineRegions.jl/dev/api/) section.
 
 ## Referencing
 If you find this code useful in your work, please cite it as:
@@ -76,4 +76,4 @@ lorem ipsum
 ```
 
 ## Contributing
-If you would like to contribute to the package, please open a pull request on the [GitHub](https://github.com/kirklong/BroadLineRegions.jl). For bug reports and feature requests, please open an issue on the GitHub. 
+If you would like to contribute to the package, please open a pull request. For bug reports and feature requests, please open an issue. 
