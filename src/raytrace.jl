@@ -291,7 +291,7 @@ end
 
 Perform raytracing for a model, combining overlapping components along line of sight.
 
-!!!warning "Slow"
+!!! warning "Slow"
     This function not very performant and can take a long time to combine large models.
     Consider using [`removeDiskObscuredClouds!`](@ref BLR.removeDiskObscuredClouds!) for
     simple disk obscuration removal if you do not need full raytracing.

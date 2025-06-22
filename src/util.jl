@@ -470,7 +470,9 @@ function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
 end
 
 midPlaneXZ(x,i) = x*cot(-i) #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
-
+function geometry(ring) #for 3d visualzation of model geometry
+    return length(ring.ϕ) == 1 ? 1.0 : ones(length(ring.ϕ)) #if no variable is given, just return 1.0 for each point
+end
 """
     plot3d(m::model, [variable], [annotatedCamera], [kwargs...])
 
@@ -505,6 +507,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
         end
     elseif length(p.args) == 1
         model = p.args[1]
+        variable = BLR.geometry #if no variable is given, just return 1.0 for each point
     elseif length(p.args) == 3
         model, tmp1, tmp2 = p.args
         if typeof(tmp1) == Bool
@@ -517,7 +520,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
     else
         throw(ArgumentError("expected 1, 2, or 3 arguments, got $(length(p.args))"))
     end
-    variable = (isa(variable,Function) || isnothing(variable)) ? variable : Symbol(variable)
+    variable = isa(variable,Function) ? variable : Symbol(variable)
     isCombined = length(model.subModelStartInds) > 1 #check if model is combined
     startInds = model.subModelStartInds
     diskFlags = [typeof(model.rings[i].I) != Float64 for i in startInds] 
@@ -528,7 +531,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             m.rings = m.rings[s:e]
         end
     end
-    title --> (isnothing(variable) ? "System geometry visualization" : "System geometry + $variable (color) visualization")
+    title --> (variable == geometry ? "System geometry visualization" : "System geometry + $variable (color) visualization")
     boxSizeGlobal = 0.0
     for (mInd,model) in enumerate(mList)
         i = getVariable(model,:i)
@@ -565,8 +568,8 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             subplot := 1
             seriestype := :scatter
             palette --> :magma
-            mz = (isnothing(variable) ? nothing : vec(getVariable(model,variable)))
-            nanMask = isnothing(variable) ? ones(Bool,length(xtmp)) : isnan.(mz)
+            mz = vec(getVariable(model,variable))
+            nanMask = isnan.(mz)
             marker_z := mz[.!nanMask]
             markeralpha --> (diskFlags[mInd] ? 0.9 : 0.1)
             markerstrokewidth --> 0.0
@@ -594,6 +597,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
     xlims --> (-boxSize,boxSize)
     zlims --> (-boxSize,boxSize)
     foreground_color_legend --> nothing
+    colorbar --> variable == BLR.geometry
     if annotatedCamera
         r = sqrt(maximum(model.camera.α.^2 .+ model.camera.β.^2))
         @series begin
