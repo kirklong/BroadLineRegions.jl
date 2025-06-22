@@ -474,7 +474,7 @@ function geometry(ring) #for 3d visualzation of model geometry
     return length(ring.ϕ) == 1 ? 1.0 : ones(length(ring.ϕ)) #if no variable is given, just return 1.0 for each point
 end
 """
-    plot3d(m::model, [variable], [annotatedCamera], [kwargs...])
+    plot3d(m::model, [variable], [annotate], [kwargs...])
 
 Generate a 3D plot of the model geometry, optionally colored by a variable.
 
@@ -485,7 +485,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
   - Must be a valid attribute of `model.rings` (e.g., `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
   - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
   - If not provided, defaults to `nothing` (no coloring)
-- `annotatedCamera::Bool=true`: Whether to annotate the camera position and orientation in the plot
+- `annotate::Bool=true`: Whether to annotate the camera position and model orientation in the plot
 - `kwargs...`: Additional keyword arguments passed to `Plots.plot`
 
 ## Returns
@@ -497,11 +497,11 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
     ylabel --> "y [rₛ]"
     zlabel --> "z [rₛ]"
     aspect_ratio --> :equal
-    model, variable, annotatedCamera = nothing, nothing, true
+    model, variable, annotate = nothing, nothing, true
     if length(p.args) == 2
         model, tmp = p.args
         if typeof(tmp) == Bool
-            annotatedCamera = tmp
+            annotate = tmp
         else
             variable = tmp
         end
@@ -511,11 +511,11 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
     elseif length(p.args) == 3
         model, tmp1, tmp2 = p.args
         if typeof(tmp1) == Bool
-            annotatedCamera = tmp1
+            annotate = tmp1
             variable = tmp2
         else
             variable = tmp1
-            annotatedCamera = tmp2
+            annotate = tmp2
         end
     else
         throw(ArgumentError("expected 1, 2, or 3 arguments, got $(length(p.args))"))
@@ -574,16 +574,18 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             z := vec(ztmp)[.!nanMask]
             ()
         end
-        @series begin
-            subplot := 1
-            x := [-boxSize,boxSize]./1.1
-            y := [0.0,0.0]
-            z := [midPlaneXZ(-boxSize/1.1,i[1]),midPlaneXZ(boxSize/1.1,i[1])]
-            seriestype := :path
-            cList = [:crimson,:darkorange]
-            color --> (mInd <= 2 ? cList[mInd] : mInd)
-            label --> (length(mList) == 1 ? "midplane" : "midplane $mInd ($(diskFlags[mInd] ? "disk" : "cloud"))")
-            ()
+        if annotate
+            @series begin
+                subplot := 1
+                x := [-boxSize,boxSize]./1.1
+                y := [0.0,0.0]
+                z := [midPlaneXZ(-boxSize/1.1,i[1]),midPlaneXZ(boxSize/1.1,i[1])]
+                seriestype := :path
+                cList = [:crimson,:darkorange]
+                color --> (mInd <= 2 ? cList[mInd] : mInd)
+                label --> (length(mList) == 1 ? "midplane" : "midplane $mInd ($(diskFlags[mInd] ? "disk" : "cloud"))")
+                ()
+            end
         end
     end
     boxSize = boxSizeGlobal
@@ -592,7 +594,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
     zlims --> (-boxSize,boxSize)
     foreground_color_legend --> nothing
     colorbar --> variable == BLR.geometry
-    if annotatedCamera
+    if annotate
         r = sqrt(maximum(model.camera.α.^2 .+ model.camera.β.^2))
         @series begin
             subplot := 1
