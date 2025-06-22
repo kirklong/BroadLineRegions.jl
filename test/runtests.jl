@@ -1,4 +1,4 @@
-using BLR
+using BroadLineRegions
 using Test
 
 # write tests here

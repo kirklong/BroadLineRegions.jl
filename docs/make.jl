@@ -4,9 +4,9 @@ using BLR
 using Documenter 
 
 makedocs(
-    sitename = "BLR.jl",
+    sitename = "BroadLineRegions.jl",
     authors = "Kirk Long",
-    modules = [BLR],
+    modules = [BroadLineRegions],
     pages = [
         "Home" => "index.md",
         "Usage and Examples" => "usage_examples.md",
@@ -14,5 +14,5 @@ makedocs(
 )
 
 deploydocs(
-    repo = "github.com/kirklong/BLR.jl",
+    repo = "github.com/kirklong/BroadLineRegions.jl",
 )
