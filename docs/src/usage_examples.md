@@ -331,8 +331,8 @@ Each [`ring`](@ref BLR.ring) represents a "ring" on a "camera" observing the BLR
 
 For example, say we were looking top down at an imaginary BLR whose bespoke structure happened to spell out the friendly message "don't panic" with random intensities and rotating out of the page. We could implement this custom BLR like:
 ```julia
-# Generate an 8x62 matrix with 1s for letter pixels and 0s for background
-function fortytwo() #Displaying "don't panic" instead
+# Generate a matrix with 1s for letter pixels and 0s for background
+function fortytwo() #Full disclosure: Claude helped write this one...
     mat = zeros(Int, 8, 53)
     
     # d
@@ -499,7 +499,7 @@ If you are annoyed with the output statements after things, suppress them by pla
 ```julia
 mCombined; #suppresses output
 ```
-
+Other functions: 
 ```@docs
 BLR.getVariable
 ```
