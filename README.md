@@ -1,4 +1,11 @@
 # BroadLineRegions.jl
+![lifecycle](https://img.shields.io/badge/lifecycle-experimental-orange.svg)<!--
+![lifecycle](https://img.shields.io/badge/lifecycle-maturing-blue.svg)
+![lifecycle](https://img.shields.io/badge/lifecycle-stable-green.svg)
+![lifecycle](https://img.shields.io/badge/lifecycle-retired-orange.svg)
+![lifecycle](https://img.shields.io/badge/lifecycle-archived-red.svg)
+![lifecycle](https://img.shields.io/badge/lifecycle-dormant-blue.svg) -->
+[![view - Documentation](https://img.shields.io/badge/view-Documentation-blue?style=for-the-badge)]([/docs/](https://www.kirklong.space/BroadLineRegions.jl/dev/) "Go to project documentation")
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia. 
 ## Installation 
