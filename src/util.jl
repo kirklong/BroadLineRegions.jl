@@ -4,7 +4,7 @@ using RecipesBase
 """
     reset!(m::model; profiles=true, img=false)
 
-Erase existing profiles/imgs.
+Erase existing profiles/raytrace status.
 
 # Parameters
 - `m::model`: Model object to reset

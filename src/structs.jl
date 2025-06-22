@@ -98,16 +98,16 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         """
         constructor for ring struct -- takes in kwargs (detailed above) and returns a ring object (detailed above) while checking for errors
         """
-        r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; ΔA = 1.0; rot = 0.0; θₒ = 0.0; ϕ₀ = 0.0; reflect = false; τ = 0.0; η = 1.0; Δr = 1.0; Δϕ = 1.0; scale = nothing
+        r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; ΔA = nothing; rot = 0.0; θₒ = 0.0; ϕ₀ = nothing; reflect = false; τ = 0.0; η = 1.0; Δr = 1.0; Δϕ = 1.0; scale = nothing
         try; r = kwargs[:r]; catch; error("r must be provided as kwarg"); end
         try; i = kwargs[:i]; catch; error("i must be provided as kwarg"); end
         try; v = kwargs[:v]; catch; error("v must be provided as kwarg"); end
         try; I = kwargs[:I]; catch; error("I must be provided as kwarg"); end
         try; ϕ = kwargs[:ϕ]; catch; error("ϕ must be provided as kwarg"); end
-        try; ΔA = kwargs[:ΔA]; catch; error("ΔA not provided, defaulting to 1.0"); end
+        try; ΔA = kwargs[:ΔA]; catch; error("ΔA must be provided as kwarg"); end
         try; rot = kwargs[:rot]; catch; println("rot not provided: defaulting to 0.0"); end
         try; θₒ = kwargs[:θₒ]; catch; println("θₒ not provided: defaulting to 0.0"); end
-        try; ϕ₀ = kwargs[:ϕ₀]; catch; println("ϕ₀ not provided: defaulting to 0.0"); end
+        try; ϕ₀ = kwargs[:ϕ₀]; catch; println("ϕ₀ not provided: defaulting to ϕ"); end
         try; reflect = kwargs[:reflect]; catch; println("reflect not provided: defaulting to false"); end
         try; τ = kwargs[:τ]; catch; println("τ not provided: defaulting to 0.0"); end
         try; η = kwargs[:η]; catch; println("η not provided: defaulting to 1.0"); end
@@ -148,6 +148,9 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         end
         
         @assert (typeof(ϕ) == Vector{Float64}) || (typeof(ϕ) == Float64) "ϕ must be Float64 or Vector{Float64}, got $(typeof(ϕ))"
+        if isnothing(ϕ₀)
+            ϕ₀ = deepcopy(ϕ)  #default to ϕ₀ = ϕ if not provided
+        end
         @assert (typeof(ϕ₀) == Vector{Float64}) || (typeof(ϕ₀) == Float64) "ϕ₀ must be Float64 or Vector{Float64}, got $(typeof(ϕ₀))"
 
         @assert (typeof(v) == Vector{Float64}) || (typeof(v) == Float64) || (isa(v,Function)) "v must be Float64, Vector{Float64} or Function, got $(typeof(v))"

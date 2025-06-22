@@ -27,7 +27,7 @@ Calculate line of sight velocity for circular orbit at radius `r` from central m
 """
 function vCircularRadialDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, vᵣFrac::Union{Vector{Float64},Float64}=0.0, inflow::Union{Vector{Bool},Bool}=true, rₛ=1.0, _...) 
     vsini = @. vCirc(r,$rₛ)*$sin(i)
-    inflow = @. inflow ? 1.0 : -1.0
+    inflow = @. inflow ? -1.0 : 1.0 #at ϕ = 0 if inflow send material away from observer (-x)
     vᵣ = @. vsini*cos(ϕ)*vᵣFrac*inflow
     vϕ = @. vsini*sin(ϕ)*(1-vᵣFrac)
     return vᵣ + vϕ

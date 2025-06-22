@@ -75,7 +75,7 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
         ϕ: azimuthal angle of system ring plane at intersection {Float64}
         ϕ₀: original azimuthal angle in ring plane {Float64}
     """
-    cosr = cos(rot); sinr = sin(rot); cosi = cos(i); sini = sin(i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint)
+    cosr = cos(rot); sinr = sin(rot); cosi = cos(-i); sini = sin(-i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint) #flip i to match convention in rotate3D, +x bottom of disk
     xRing = (β*cosr - α*cosi*sinr)/(cosi*cosθₒ+cosr*sini*sinθₒ) #system x
     yRing = (α*(cosi*cosθₒ+sini/cosr*sinθₒ)+β*cosθₒ*sinr/cosr)/(cosi*cosθₒ/cosr+sini*sinθₒ)
     r = √(xRing^2 + yRing^2)
@@ -290,6 +290,11 @@ end
             τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
 
 Perform raytracing for a model, combining overlapping components along line of sight.
+
+!!!warning "Slow"
+    This function not very performant and can take a long time to combine large models.
+    Consider using [`removeDiskObscuredClouds!`](@ref BLR.removeDiskObscuredClouds!) for
+    simple disk obscuration removal if you do not need full raytracing.
 
 This function should be called after combining all relevant models (i.e. `mCombined = m1 + m2 + m3...`).
 It performs raytracing in discrete steps (no absorption, only adding intensity in chunks along 
