@@ -2,7 +2,7 @@
 module BLR
 include("structs.jl")
 include("util.jl")
-include("HSTutil.jl")
+include("lightcurve.jl")
 include("profiles.jl")
 include("intensity.jl")
 include("velocity.jl")

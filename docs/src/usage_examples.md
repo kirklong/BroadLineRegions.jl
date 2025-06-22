@@ -516,6 +516,10 @@ BLR.reset!
 BLR.phase
 ```
 
-<!-- ```@docs
+```@docs
+BLR.DRW
+```
+
+```@docs
 BLR.syntheticLC
-``` -->
+```
