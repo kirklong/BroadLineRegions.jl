@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 push!(LOAD_PATH, "../src/")
-using BLR
+using BroadLineRegions
 using Documenter 
 
 makedocs(
