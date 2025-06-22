@@ -9,10 +9,14 @@ Depth = 2:3
 
 ## Reproducing the line profile and transfer function shown in [CM96](https://ui.adsabs.harvard.edu/abs/1996ApJ...466..704C/abstract)
 
-CM96 showed that disk-wind models of the BLR could produce single-peaked line profiles, and as part of their results they generated a hypothetical 2D transfer function for a disk-wind BLR as applied to NGC 5548. We can reproduce such a map with just a few lines of code using `BLR.jl`.
+CM96 showed that disk-wind models of the BLR could produce single-peaked line profiles, and as part of their results they generated a hypothetical 2D transfer function for a disk-wind BLR as applied to NGC 5548. We can reproduce such a map with just a few lines of code using `BroadLineRegions.jl`. 
+
+!!! note
+    `BroadLineRegions.jl` exports itself as both `BroadLineRegions` *and* the shorter `BLR`. We will use the shorter `BLR` throughout these examples but know that `BLR` is equivalent to `BroadLineRegions` should you prefer the longer version.
 
 First, let's define the model using [`DiskWindModel`](@ref BLR.DiskWindModel): 
 ```julia
+using BroadLineRegions
 mCM96 = BLR.DiskWindModel(3000.,100.,1.,75/180*π,
         nr=5096,nϕ=1024,scale=:log,f1=1.0,f2=1.0,f3=0.0,f4=0.0,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,τ=5.0,reflect=false)
@@ -44,7 +48,7 @@ Which should return a plot like this (left panel, right panel is Figure 2 in CM9
 
 Note that the y-axis units are arbitrary and the x-axis is in units of velocity [``c``], not ``\lambda`` as published in Fig 2 of [CM96](https://articles.adsabs.harvard.edu/pdf/1996ApJ...466..704C), but the shape clearly matches their result that the line profile for such a model should be single-peaked. This is also showing only the full model line profile (thei solid line), not the data or other models. We could reproduce their plot exactly by rescaling our flux and converting from velocity-space to wavelength space as well as plotting the data and a model line profile with azimuthally isotropic emission, but we will leave that as an exercise for the motivated reader...
 
-It is similarly easy to use `BLR.jl` to generate transfer functions for any user-defined model. In looking at Figure 4 of [CM96](https://articles.adsabs.harvard.edu/pdf/1996ApJ...466..704C) we see that their y-axis (delays) spans 0-20 days and the x-axis (projected velocity) -12-12 (``10^8`` ``\rm{cm}`` ``\rm{s}^-1``). To match our model result to theirs, we first need to convert our units of ``\rm{r_s}`` to the more physical unit of days. CM96 used ``M_{\rm{NGC5548}} \approx 10^8 \rm{M_{\odot}}``, which means we can calculate the conversion factor as:
+It is similarly easy to use `BroadLineRegions.jl` to generate transfer functions for any user-defined model. In looking at Figure 4 of [CM96](https://articles.adsabs.harvard.edu/pdf/1996ApJ...466..704C) we see that their y-axis (delays) spans 0-20 days and the x-axis (projected velocity) -12-12 (``10^8`` ``\rm{cm}`` ``\rm{s}^-1``). To match our model result to theirs, we first need to convert our units of ``\rm{r_s}`` to the more physical unit of days. CM96 used ``M_{\rm{NGC5548}} \approx 10^8 \rm{M_{\odot}}``, which means we can calculate the conversion factor as:
 
 ```julia
 M = 1e8*2e30 #kg
@@ -100,12 +104,12 @@ Which should return something like this (left plot, right plot is Fig 4. in CM96
 While our binning is a little off/coarser than in CM96, this is clearly a pretty good match for a quick and dirty calculation. 
 
 A few final notes: 
-1. Note that when plotting we use `ΨDiscrete'` because heatmap expects the shape of the image variable to be flipped from how `BLR.jl` calculates it (the shape of `Ψ` when returned is (number of velocity bins, number of t bins)). 
-2. If you wanted to generate just the 1D response function as shown in CM96 Figure 5, `BLR.jl` has syntax for that too: `tCenters, Ψt = BLR.getΨt(mCM96,101,10/rsDay)`. 
+1. Note that when plotting we use `ΨDiscrete'` because heatmap expects the shape of the image variable to be flipped from how `BroadLineRegions.jl` calculates it (the shape of `Ψ` when returned is (number of velocity bins, number of t bins)). 
+2. If you wanted to generate just the 1D response function as shown in CM96 Figure 5, `BroadLineRegions.jl` has syntax for that too: `tCenters, Ψt = BLR.getΨt(mCM96,101,10/rsDay)`. 
 
 ## Reproducing sample cloud model results from [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract)
 
-We can also generate "cloud"/thick-disk models of the BLR similar to [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) easily with `BLR.jl`. In this section we will reproduce part of Figure 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract), which shows five different model BLRs and their 1D transfer functions with the following parameters: 
+We can also generate "cloud"/thick-disk models of the BLR similar to [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) easily with `BroadLineRegions.jl`. In this section we will reproduce part of Figure 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract), which shows five different model BLRs and their 1D transfer functions with the following parameters: 
 
 | parameter               | model 1     | model 2     |     
 |:-----------------------:|:-----------:|:-----------:|
@@ -249,7 +253,7 @@ Which should return something similar to the left panel below. Compared to the o
 
 ## Reproducing the combined model line and delay profiles shown in Long+2025 
 
-The real utility of `BLR.jl` is not in its ability to model certain prescriptions for the BLR, but instead the ability to *flexibly combine* them. To demonstrate this we will reproduce the hybrid disk + cloud model line and delay profiles shown in Figure 4 of Long+2025. As described in the paper, this model is a combination of a Pancoast style "cloud" model and a simple azimuthally isotropic disk model with a bit of radial inflow. We can generate both submodels and then combine them with simple syntax: 
+The real utility of `BroadLineRegions.jl` is not in its ability to model certain prescriptions for the BLR, but instead the ability to *flexibly combine* them. To demonstrate this we will reproduce the hybrid disk + cloud model line and delay profiles shown in Figure 4 of Long+2025. As described in the paper, this model is a combination of a Pancoast style "cloud" model and a simple azimuthally isotropic disk model with a bit of radial inflow. We can generate both submodels and then combine them with simple syntax: 
 
 ```julia
 mDisk = BLR.DiskWindModel(300.,40.,1.0,30/180*π,nr=512,nϕ=1024,f1=0.0,f2=0.0,f3=0.0,f4=1.0,
@@ -309,7 +313,7 @@ Which should produce something like the left panel in the comparison below (with
 ![line and delay profiles for combined + submodels](Long2025_line_delay_combined_quickComparison.png)
 
 ## Defining your own custom models
-`BLR.jl` makes it easy to define your own models, either by modifying one of the existing classes of models or starting entirely from scratch. 
+`BroadLineRegions.jl` makes it easy to define your own models, either by modifying one of the existing classes of models or starting entirely from scratch. 
 
 For example, say you wanted to use the [`cloudModel`](@ref BLR.cloudModel) as a base but wanted the intensities to be completely randomized. You could define your own custom intensity function and pass that to the [`cloudModel`](@ref BLR.cloudModel) constructor like so:
 ```julia
@@ -325,7 +329,7 @@ You can also modify models after creation, as shown in the Long+2025 example abo
 !!! note
     The [`model`](@ref BLR.model) and [`ring`](@ref BLR.ring) structs are *mutable*, meaning any operations you perform on them overwrite previous values. This includes submodels in larger models, i.e. if you overwrite a field in a combined model the submodel struct will also be mutated. 
 
-Of course you are not limited to using `BLR.jl`'s predefined model constructors. The most general way to make a [`model`](@ref BLR.model) is to simply pass an array of [`ring`](@ref BLR.ring) structs, a dictionary of [`profile`](@ref BLR.profile) structs, a [`camera`](@ref BLR.camera) struct, and an array of submodel start indices. 
+Of course you are not limited to using `BroadLineRegions.jl`'s predefined model constructors. The most general way to make a [`model`](@ref BLR.model) is to simply pass an array of [`ring`](@ref BLR.ring) structs, a dictionary of [`profile`](@ref BLR.profile) structs, a [`camera`](@ref BLR.camera) struct, and an array of submodel start indices. 
 
 Each [`ring`](@ref BLR.ring) represents a "ring" on a "camera" observing the BLR, and this mutable structs holds all the interesting quantities about the BLR we might wish to model. The [`camera`](@ref BLR.camera) struct holds the ``\alpha`` (x) and ``\beta`` (y) camera coordinates for all points in the model, and in each corresponding [`ring`](@ref BLR.ring) we must supply the relevant physical information on the BLR associated with that camera pixel. See the full documentation of [`ring`](@ref BLR.ring) for all available options, but at a minimum in each ring we must define ``\phi``, ``I``, ``v``, ``i`` and ``r`` for the BLR. 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-using RecipesBase
+using Plots, RecipesBase
 
 """
     reset!(m::model; profiles=true, img=false)
@@ -524,13 +524,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
     isCombined = length(model.subModelStartInds) > 1 #check if model is combined
     startInds = model.subModelStartInds
     diskFlags = [typeof(model.rings[i].I) != Float64 for i in startInds] 
-    mList = [deepcopy(model) for i=1:length(startInds)]
-    if isCombined
-        for (i,m) in enumerate(mList)
-            s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
-            m.rings = m.rings[s:e]
-        end
-    end
+    mList = [deepcopy(model[i]) for i=1:length(startInds)]
     title --> (variable == geometry ? "System geometry visualization" : "System geometry + $variable (color) visualization")
     boxSizeGlobal = 0.0
     for (mInd,model) in enumerate(mList)

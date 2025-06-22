@@ -1,5 +1,6 @@
 #!/usr/bin/env julia
-module BLR
+module BroadLineRegions
+const BLR = BroadLineRegions
 include("structs.jl")
 include("util.jl")
 include("lightcurve.jl")
@@ -10,4 +11,5 @@ include("clouds.jl")
 include("transfer.jl")
 include("operators.jl")
 include("raytrace.jl")
-end #module BLR
+export BLR
+end #module BroadLineRegions
