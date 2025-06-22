@@ -6,7 +6,7 @@ using Test
     mLAll = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=4096,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=1.0,
         f3=1.0,f4=1.0,τ=5.,reflect=false)
-    mLf1 = BLR.DiskWindModel(8.5e3.,50.,1.,45/180*π,nr=4096,nϕ=1024,
+    mLf1 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=4096,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=0.0,
         f3=0.0,f4=0.0,τ=5.,reflect=false)
     mLf2 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=4096,nϕ=1024,
