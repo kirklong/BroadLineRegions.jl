@@ -85,6 +85,8 @@ end
 All that's left to do now is visualize the result, which we will do with the `heatmap` function from Julia's `Plots.jl`:
 
 ```julia
+using Plots
+
 heatmap(vEdges.*3e10/1e8,tEdges.*rsDay,ΨDiscrete',
     ylims=(0,20),xlims=(-12,12),clims=(-4.4,0.0),cbar=false,
     xlabel="v (10⁸ cm/s)",ylabel="τ (days)",minorticks=true,
@@ -140,6 +142,8 @@ Where the first argument passed to [`cloudModel`](@ref BLR.cloudModel) is the nu
 To compare to Figure 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) we can again generate transfer functions for both models:
 
 ```julia
+using Plots
+
 vEdges = collect(range(-0.015,stop=0.015,length=51)) #Δλ/λ ~ v/c
 tEdges = collect(range(0.0,stop=20.0/rsDay,length=51))
 Ψ1 = BLR.getΨ(mP1,vEdges,tEdges)
@@ -221,6 +225,8 @@ phasef4 = BLR.getProfile(mLf4,:phase,bins=101,centered=true,U=U,V=V,PA=160/180*�
 We can then plot the line and phase profiles for all the models and compare to Figure 2 in [Long+2023](https://dx.doi.org/10.3847/1538-4357/ace4bb):
 
 ```julia
+using Plots
+
 pLP = plot(title="line profiles",xlabel="Δv [Mm/s]",ylabel="flux [normalized]") #initialize LP plot
 LPList = [LPAll,LPf1,LPf2,LPf3,LPf4]
 norm = maximum(LPAll.binSums)
@@ -278,7 +284,9 @@ LPClouds = BLR.getProfile(mClouds,:line,minX=-1e4/3e5,maxX=1e4/3e5,bins=101)
 DPCombined = BLR.getProfile(mCombined,:delay,minX=-1e4/3e5,maxX=1e4/3e5,bins=101)
 DPDisk = BLR.getProfile(mDisk,:delay,minX=-1e4/3e5,maxX=1e4/3e5,bins=101)
 DPClouds = BLR.getProfile(mClouds,:delay,minX=-1e4/3e5,maxX=1e4/3e5,bins=101)
+
 #plot the results
+using Plots
 pLP = plot(LPCombined.binCenters.*3e5,LPCombined.binSums./maximum(LPCombined.binSums),c=:purple,lw=2,label="")
 pLP = plot!(LPDisk.binCenters.*3e5,LPDisk.binSums./maximum(LPDisk.binSums),c=:dodgerblue,lw=2,label="",ls=:dash)
 pLP = plot!(LPClouds.binCenters.*3e5,LPClouds.binSums./maximum(LPClouds.binSums),c=:crimson,lw=2,label="",ls=:dash)
@@ -508,6 +516,6 @@ BLR.reset!
 BLR.phase
 ```
 
-```@docs
+<!-- ```@docs
 BLR.syntheticLC
-```
+``` -->
