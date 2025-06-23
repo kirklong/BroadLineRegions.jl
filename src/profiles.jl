@@ -123,9 +123,9 @@ end
 """
     tDisk(ring::ring)
 
-    Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)``
+    Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 - \\cos(\\phi) \\sin(i)\\right)``
 """
-tDisk(ring::ring) = @. ring.η*ring.r*(1 + cos(ring.ϕ)*sin(ring.i)) #time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
+tDisk(ring::ring) = @. ring.η*ring.r*(1 - cos(ring.ϕ)*sin(ring.i)) #time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
 
 """
     tCloud(ring::ring)
@@ -142,7 +142,13 @@ end
     Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)`` or a cloud with opening angle ``\\theta_o``
     as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
 """
-t(ring::ring) = ring.θₒ == 0.0 ? tDisk(ring) : tCloud(ring) #if θₒ = 0.0, then this is a point in a disk, otherwise it is a cloud with opening angle θₒ
+t(ring::ring) = begin 
+    if ring.θₒ == 0.0 #if θₒ = 0.0, then this is a point in a disk,
+        return tDisk(ring)
+    else #otherwise it is a cloud with opening angle θₒ
+        return tCloud(ring)  
+    end
+end
 """
     t(ring::ring, subFxn::Function=tDisk)
 

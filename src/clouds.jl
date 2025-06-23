@@ -87,8 +87,8 @@ function drawCloud(;μ::Float64=500.,β::Float64=1.0,F::Float64=0.5,ϕ₀::Float
     if reflect
         xyzSys = reflect!(xyzSys,i)
     end
-    undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)] #i flipped to match convention that +x is closer to observer
-    xyzPlane = undo_tilt*xyzSys
+    undo_tilt = [-sin(i) 0.0 cos(i); 0.0 1.0 0.0; -cos(i) 0.0 -sin(i)] #i flipped to match convention that +x is closer to observer
+    xyPlane = undo_tilt*xyzSys
     ϕ = atan(xyzSys[2],xyzSys[1]) #ϕ after rotation, measured from +x in disk plane
     η = response(r;kwargs...)
     return ring(r=r,i=i,v=v,I=I,ϕ=ϕ,ΔA=1.0,Δr=1.0,Δϕ=1.0,scale=nothing,rot=rot,θₒ=θₒ,ϕ₀=ϕ₀,reflect=reflect,rng=rng,η=η;kwargs...)

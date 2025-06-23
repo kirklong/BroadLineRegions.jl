@@ -282,6 +282,7 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
             throw(error("error in function call $(variable)(ring)"))
         end
     else
+        variable = ifelse(variable==t,ifelse(m.rings[1].θₒ==0.0,tDisk,tCloud),variable) #if variable is t, use tDisk or tCloud based on θₒ for performance
         res = stack([variable(ring) for ring in m.rings],dims=1)
         if flatten
             return vec(res) #flatten the matrix to a vector
@@ -416,37 +417,10 @@ Calculate rotation matrix to transform from initial XY plane coordinates to 3D s
 """
 function get_r3D(i,rot,θₒ)
     matrix = [
-        (cos(rot)*cos(θₒ)*sin(i)+cos(i)*sin(θₒ)) sin(i)*sin(rot) (cos(i)*cos(θₒ)-cos(rot)*sin(i)*sin(θₒ));
-        -cos(θₒ)*sin(rot) cos(rot) sin(rot)*sin(θₒ);
-        (cos(i)*cos(rot)*cos(θₒ)-sin(i)*sin(θₒ)) cos(i)*sin(rot) (-cos(θₒ)*sin(i)-cos(i)*cos(rot)*sin(θₒ))
-    ]
-
-    #puff up point by θ₀
-    Ry_θₒ = [
-        cos(θₒ) 0 sin(θₒ);
-        0 1 0;
-        -sin(θₒ) 0 cos(θₒ)
-    ]
-
-    #rotate around z axis by rot
-    Rz_rot = [
-        cos(rot) -sin(rot) 0;
-        sin(rot) cos(rot) 0;
-        0 0 1
-    ]
-
-    Ry_i = [
-        sin(i) 0 cos(i);
-        0 1 0;
-        -cos(i) 0 sin(i)
-    ] #tilt down by 90-i degrees to match convention that bottom of disk pointed towards observer (+x)
-
-    matrix = [
         (cos(θₒ)*cos(rot)*sin(i) - sin(θₒ)*cos(i)) -sin(rot)*sin(i) (sin(θₒ)*cos(rot)*sin(i) + cos(θₒ)*cos(i));
         cos(θₒ)*sin(rot) cos(rot) sin(θₒ)*sin(rot);
         -(cos(θₒ)*(cos(rot))*cos(i) + sin(θₒ)*sin(i)) sin(rot)*cos(i) (cos(θₒ)*sin(i) - sin(θₒ)*cos(rot)*cos(i))
     ]
-    #matrix = Ry_i * Rz_rot * Ry_θₒ  #apply rotations: 
     return matrix
 end
 """
@@ -462,13 +436,19 @@ Reflect coordinates in 3D space across the ring plane.
 - `xyzSys::Vector{Float64}`: `[x';y';z']` coordinates in 3D space after reflection
 """
 function reflect!(xyzSys,i)
-    i = -i #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
-    midSlope = cot(i)
-    den = 1+midSlope^2
-    xf = (xyzSys[1]-midSlope^2*xyzSys[1]+2*midSlope*xyzSys[3])/den
-    zf = (2*midSlope*xyzSys[1]+(midSlope^2-1)*xyzSys[3])/den
+    #reflect across line made with inclination angle z - m*x = 0, where m = -cot(i)
+    den = 1 + cot(i)^2
+    xf = (xyzSys[1]*(1-cot(i)^2) - 2*xyzSys[3]*cot(i))/den
+    zf = (xyzSys[3]*(cot(i)^2-1) - 2*xyzSys[1]*cot(i))/den
     xyzSys[1] = xf
     xyzSys[3] = zf
+    # i = -i #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
+    # midSlope = cot(i)
+    # den = 1+midSlope^2
+    # xf = (xyzSys[1]-midSlope^2*xyzSys[1]+2*midSlope*xyzSys[3])/den
+    # zf = (2*midSlope*xyzSys[1]+(midSlope^2-1)*xyzSys[3])/den
+    # xyzSys[1] = xf
+    # xyzSys[3] = zf
     return xyzSys
 end
 """
@@ -496,7 +476,8 @@ function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
     return xyzSys
 end
 
-midPlaneXZ(x,i) = x*cot(-i) #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
+midPlaneXZ(x,i) = -x*cot(i)
+
 function geometry(ring) #for 3d visualzation of model geometry
     return length(ring.ϕ) == 1 ? 1.0 : ones(length(ring.ϕ)) #if no variable is given, just return 1.0 for each point
 end
