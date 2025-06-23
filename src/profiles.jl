@@ -121,11 +121,19 @@ function binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariabl
 end
 
 """
-    tDisk(ring::ring; kwargs...)
+    t(ring::ring; kwargs...)
 
-Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)``.
+    Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)`` or a cloud with opening angle ``\\theta_o``
+    as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
 """
-t(ring::ring) = ring.η.*ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
+t(ring::ring) = begin 
+    if ring.θₒ == 0.0
+        return ring.η.*ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
+    else
+        xyzSys = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
+        return ring.η*(ring.r - xyzSys[1]) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
+    end
+end
 
 """
     phase(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)

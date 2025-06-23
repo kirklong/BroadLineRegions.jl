@@ -52,8 +52,8 @@ Calculate line of sight velocity for cloud in 3D space.
 - Line of sight velocity (`Float64`)
 """
 function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
-    vₒ = vCirc(r,rₛ)
-    vXYZ = [vₒ*sin(ϕ₀),vₒ*cos(ϕ₀),0.0] #match velocity sign conventions such that left side is coming towards observer
+    v₀ = vCirc(r,rₛ)
+    vXYZ = [v₀*sin(ϕ₀),v₀*cos(ϕ₀),0.0] #match velocity sign conventions such that left side is coming towards observer
     r3D = get_r3D(i,rot,θₒ)
     vXYZ = r3D*vXYZ
     if reflect
@@ -104,10 +104,13 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
         ρ = rand(rng,Normal(vc,σρᵣ))
         Θ = fFlow < 0.5 ? rand(rng,Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(rng,Normal(0.0,σΘᵣ)) + θₑ
     end
-    vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x and ϕ is along y at ϕ = 0 when left is rotating towards observer
+    vx = -√2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x, inflow = "negative" velocity at +x, and ϕ is along y at ϕ = 0 when left is rotating towards observer
     vXYZ = [vx*cos(ϕ₀)+vy*sin(ϕ₀),vx*sin(ϕ₀)+vy*cos(ϕ₀),0.0] #rotate around z by ϕ₀, match velocity sign conventions (left = towards observer)
     r3D = get_r3D(i,rot,θₒ) #transform initial coordinates to system coordinates
     vXYZ = r3D*vXYZ #rotate into system coordinates
+    if reflect
+        vXYZ = BLR.reflect!(vXYZ,i) #reflect across midplane of disk
+    end
     return vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3), negative sign to match disk convention left towards observer
 end
 

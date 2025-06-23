@@ -27,7 +27,7 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     r = √(xRing^2 + yRing^2)
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
     xyzSys = rotate3D(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
-    ϕ = atan(xyzSys[2],-xyzSys[1]) #ϕ after rotation, measured from +x in disk plane, -x because of how rotation matrix was implemented and desire to have ϕ=0 at +x
+    ϕ = atan(xyzSys[2],xyzSys[1]) #ϕ after rotation, measured from +x in disk plane
     return r, ϕ, ϕ₀
 end
 
@@ -75,16 +75,16 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
         ϕ: azimuthal angle of system ring plane at intersection {Float64}
         ϕ₀: original azimuthal angle in ring plane {Float64}
     """
-    cosr = cos(rot); sinr = sin(rot); cosi = cos(-i); sini = sin(-i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint) #flip i to match convention in rotate3D, +x bottom of disk
+    cosr = cos(rot); sinr = sin(rot); cosi = cos(-i); sini = sin(-i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint) #flip i to match convention that +x is closer
     xRing = (β*cosr - α*cosi*sinr)/(cosi*cosθₒ+cosr*sini*sinθₒ) #system x
     yRing = (α*(cosi*cosθₒ+sini/cosr*sinθₒ)+β*cosθₒ*sinr/cosr)/(cosi*cosθₒ/cosr+sini*sinθₒ)
     r = √(xRing^2 + yRing^2)
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
     xyz[1] = xRing; xyz[2] = yRing; xyz[3] = 0.0
     mul!(colBuff,r3D,xyz)
-    undo_tilt = [sini 0.0 cosi; 0.0 1.0 0.0; -cosi 0.0 sini]
+    undo_tilt = [sini 0.0 cosi; 0.0 1.0 0.0; -cosi 0.0 sini] #shouldn't it be -cosi in top row and cosi in bottom? but works...
     mul!(xyz,undo_tilt,colBuff)
-    ϕ = atan(xyz[2],-xyz[1]) #ϕ after rotation and being "puffed up", measured from +x in disk plane -- this is fine even for puffed up clouds but note ϕ is measured wrt to disk midplane then. -x because of how rotation matrix was implemented...
+    ϕ = atan(xyz[2],xyz[1]) #ϕ after rotation and being "puffed up", measured from +x in disk plane 
     return r, ϕ, ϕ₀
 end
 

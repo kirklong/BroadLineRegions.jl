@@ -152,10 +152,10 @@ vEdges = collect(range(-0.015,stop=0.015,length=51)) #Δλ/λ ~ v/c
 tEdges = collect(range(0.0,stop=20.0/rsDay,length=51))
 Ψ1 = BLR.getΨ(mP1,vEdges,tEdges)
 Ψ2 = BLR.getΨ(mP2,vEdges,tEdges)
-p1 = heatmap(vEdges.*3e5,tEdges.*rsDay,(Ψ1'./maximum(Ψ1)),ylims=(0,20),cbar=false,
+p1 = heatmap(vEdges.*3e5,tEdges.*rsDay,(Ψ1'./maximum(Ψ1)).^(1/2),ylims=(0,20),cbar=false,
     xlabel="Δv (km/s)",ylabel="Lag (days)",minorticks=true,tickdirection=:out,
     widen=false,size=(500,500),guidefontsize=18,tickfontsize=16)
-p2 = heatmap(vEdges.*3e5,tEdges.*rsDay,(Ψ2'./maximum(Ψ2)),ylims=(0,20),cbar=false,
+p2 = heatmap(vEdges.*3e5,tEdges.*rsDay,(Ψ2'./maximum(Ψ2)).^(1/2),ylims=(0,20),cbar=false,
     xlabel="Δv (km/s)",ylabel="Lag (days)",minorticks=true,tickdirection=:out,
     widen=false,size=(500,500),guidefontsize=18,tickfontsize=16)
 ```

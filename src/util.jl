@@ -414,12 +414,38 @@ Calculate rotation matrix to transform from initial XY plane coordinates to 3D s
 - `matrix::Matrix{Float64}`: 3×3 rotation matrix
 """
 function get_r3D(i,rot,θₒ)
-    i = -i #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
     matrix = [
-        (cos(rot)*cos(θₒ)*sin(i)-cos(i)*sin(θₒ)) sin(i)*sin(rot) (-cos(i)*cos(θₒ)-cos(rot)*sin(i)*sin(θₒ));
+        (cos(rot)*cos(θₒ)*sin(i)+cos(i)*sin(θₒ)) sin(i)*sin(rot) (cos(i)*cos(θₒ)-cos(rot)*sin(i)*sin(θₒ));
         -cos(θₒ)*sin(rot) cos(rot) sin(rot)*sin(θₒ);
-        (cos(i)*cos(rot)*cos(θₒ)+sin(i)*sin(θₒ)) cos(i)*sin(rot) (cos(θₒ)*sin(i)-cos(i)*cos(rot)*sin(θₒ))
+        (cos(i)*cos(rot)*cos(θₒ)-sin(i)*sin(θₒ)) cos(i)*sin(rot) (-cos(θₒ)*sin(i)-cos(i)*cos(rot)*sin(θₒ))
     ]
+
+    #puff up point by θ₀
+    Ry_θₒ = [
+        cos(θₒ) 0 sin(θₒ);
+        0 1 0;
+        -sin(θₒ) 0 cos(θₒ)
+    ]
+
+    #rotate around z axis by rot
+    Rz_rot = [
+        cos(rot) -sin(rot) 0;
+        sin(rot) cos(rot) 0;
+        0 0 1
+    ]
+
+    Ry_i = [
+        sin(i) 0 cos(i);
+        0 1 0;
+        -cos(i) 0 sin(i)
+    ] #tilt down by 90-i degrees to match convention that bottom of disk pointed towards observer (+x)
+
+    matrix = [
+        (cos(θₒ)*cos(rot)*sin(i) - sin(θₒ)*cos(i)) -sin(rot)*sin(i) (sin(θₒ)*cos(rot)*sin(i) + cos(θₒ)*cos(i));
+        cos(θₒ)*sin(rot) cos(rot) sin(θₒ)*sin(rot);
+        -(cos(θₒ)*(cos(rot))*cos(i) + sin(θₒ)*sin(i)) sin(rot)*cos(i) (cos(θₒ)*sin(i) - sin(θₒ)*cos(rot)*cos(i))
+    ]
+    #matrix = Ry_i * Rz_rot * Ry_θₒ  #apply rotations: 
     return matrix
 end
 """
@@ -462,7 +488,7 @@ Transform from ring coordinates to 3D coordinates where camera is at +x.
 """
 function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
     matrix = get_r3D(i,rot,θₒ)
-    xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0] 
+    xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0]
     if reflect
         xyzSys = BLR.reflect!(xyzSys,i)
     end
