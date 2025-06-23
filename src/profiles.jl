@@ -121,19 +121,40 @@ function binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariabl
 end
 
 """
-    t(ring::ring; kwargs...)
+    tDisk(ring::ring)
+
+    Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)``
+"""
+tDisk(ring::ring) = @. ring.η*ring.r*(1 + cos(ring.ϕ)*sin(ring.i)) #time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
+
+"""
+    tCloud(ring::ring)
+
+    Calculate time delays for a cloud with opening angle ``\\theta_o`` as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
+"""
+tCloud(ring::ring) = begin
+    xyzSys = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
+    return ring.η*(ring.r - xyzSys[1]) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
+end
+"""
+    t(ring::ring)
 
     Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)`` or a cloud with opening angle ``\\theta_o``
     as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
 """
-t(ring::ring) = begin 
-    if ring.θₒ == 0.0
-        return ring.η.*ring.r.*(1 .+ cos.(ring.ϕ).*sin(ring.i)) # time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
-    else
-        xyzSys = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
-        return ring.η*(ring.r - xyzSys[1]) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
-    end
-end
+t(ring::ring) = ring.θₒ == 0.0 ? tDisk(ring) : tCloud(ring) #if θₒ = 0.0, then this is a point in a disk, otherwise it is a cloud with opening angle θₒ
+"""
+    t(ring::ring, subFxn::Function=tDisk)
+
+    Calculate time delays for a point in a disk or cloud using a custom function `subFxn` that takes a `ring` struct.
+    It is more peformant to pass the function directly rather than figure it out on the fly if known ahead of time.
+"""
+t(ring::ring,subFxn::Function=tDisk) = subFxn(ring) #allow for custom time delay function, e.g. tDisk or tCloud
+
+"""
+    getG(β::Float64)
+"""
+    getG(β::Float64)
 
 """
     phase(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)

@@ -160,7 +160,7 @@ p2 = heatmap(vEdges.*3e5,tEdges.*rsDay,(Ψ2'./maximum(Ψ2)).^(1/2),ylims=(0,20),
     widen=false,size=(500,500),guidefontsize=18,tickfontsize=16)
 ```
 
-Which should produce something like the right column of plots in the comparison below (top plot = `p1` and bottom = `p2`):
+Which should produce something like the left column of plots in the comparison below (top plot = `p1` and bottom = `p2`):
 
 ![2D cloud Ψ maps](P14_Psi_quickComparison.png)
 
@@ -189,7 +189,7 @@ Here we will demonstrate how to generate line and *phase* profiles for model BLR
 mLAll = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=4096,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=1.0,
         f3=1.0,f4=1.0,τ=5.,reflect=false)
-mLf1 = BLR.DiskWindModel(8.5e3.,50.,1.,45/180*π,nr=4096,nϕ=1024,
+mLf1 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=4096,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=0.0,
         f3=0.0,f4=0.0,τ=5.,reflect=false)
 mLf2 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=4096,nϕ=1024,
@@ -222,7 +222,7 @@ BLRAng = 8.4e7*2*2e33*6.67e-8/9e20/548/3.09e24 #rₛ in radians for BLR distance
 
 phaseAll = BLR.getProfile(mLAll,:phase,bins=101,centered=true,U=U,V=V,PA=160/180*π,BLRAng=BLRAng)
 phasef1 = BLR.getProfile(mLf1,:phase,bins=101,centered=true,U=U,V=V,PA=160/180*π,BLRAng=BLRAng)
-phasef2 = BLR.getProfile(mf2,:phase,bins=101,centered=true,U=U,V=V,PA=160/180*π,BLRAng=BLRAng)
+phasef2 = BLR.getProfile(mLf2,:phase,bins=101,centered=true,U=U,V=V,PA=160/180*π,BLRAng=BLRAng)
 phasef3 = BLR.getProfile(mLf3,:phase,bins=101,centered=true,U=U,V=V,PA=160/180*π,BLRAng=BLRAng)
 phasef4 = BLR.getProfile(mLf4,:phase,bins=101,centered=true,U=U,V=V,PA=160/180*π,BLRAng=BLRAng)
 ```
@@ -264,14 +264,14 @@ mClouds = BLR.cloudModel(1_000_000; I=BLR.cloudIntensity, v=BLR.vCloudTurbulentE
         σρc=0.04, σΘᵣ=0.4, σΘc=0.1, σₜ=0.05,τ=0.0)
         #parameters from Long+2025
 
-#in Long+2025 the ratio between the sum of intensity values in the cloud submodel and disksubmodel is 1:1
+#in Long+2025 the ratio between the sum of intensity values in the cloud submodel and disk submodel is ~1:2
 #so we need to rescale one of the models to ensure this is true
 #note that scaling things this way is arbitrary -- a more physical way would be to specify the ratio of I*ΔA
 IDisk = BLR.getVariable(mDisk,:I)
 IClouds = BLR.getVariable(mClouds,:I)
 ratio = sum(IDisk[.!isnan.(IDisk)])/sum(IClouds[.!isnan.(IClouds)])
 for ring in mDisk.rings
-    ring.I .*= 1/ratio
+    ring.I .*= 0.5/ratio
 end
 
 mCombined = mDisk+mClouds #all we have to do to combine models is "add" them!
