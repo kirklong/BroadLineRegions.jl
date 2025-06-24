@@ -82,7 +82,7 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
     xyz[1] = xRing; xyz[2] = yRing; xyz[3] = 0.0
     mul!(colBuff,r3D,xyz)
-    undo_tilt = [sini 0.0 -cosi; 0.0 1.0 0.0; cosi 0.0 sini] #shouldn't it be -cosi in top row and cosi in bottom? but works...
+    undo_tilt = [sini 0.0 -cosi; 0.0 1.0 0.0; cosi 0.0 sini] 
     mul!(xyz,undo_tilt,colBuff)
     ϕ = atan(xyz[2],xyz[1]) #ϕ after rotation and being "puffed up", measured from +x in disk plane 
     return r, ϕ, ϕ₀

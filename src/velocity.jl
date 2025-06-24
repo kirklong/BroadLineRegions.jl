@@ -52,9 +52,6 @@ Calculate line of sight velocity for cloud in 3D space.
 """
 function vCircularCloud(;r::Float64, ϕ₀::Float64, φ::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
     v₀ = vCirc(r,rₛ)
-    # xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ,reflect)
-    # iPoint = atan(abs(xyzSys[3]/xyzSys[1]))
-    # return vCircularDisk(r=r, i=iPoint, ϕ=ϕ, rₛ=rₛ) #circular velocity in plane of disk, at ϕ = 0, left side is negative
     vXYZ = -1.0.*[v₀*sin(ϕ₀),v₀*cos(ϕ₀),0.0] #match velocity sign conventions such that right side is negative
     r3D = get_r3D(i,rot,θₒ)
     vXYZ = r3D*vXYZ
@@ -106,12 +103,6 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
         ρ = rand(rng,Normal(vc,σρᵣ))
         Θ = fFlow < 0.5 ? rand(rng,Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(rng,Normal(0.0,σΘᵣ)) + θₑ
     end
-    # vr = √2*ρ*cos(Θ); vϕ = ρ*sin(Θ)
-    # xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ,reflect)
-    # iPoint = atan(abs(xyzSys[3]/xyzSys[1]))
-    # vrₓ = vr*sin(iPoint)*cos(ϕ)
-    # vϕₓ = vϕ*sin(iPoint)*sin(ϕ)
-    # return -1.0*(vrₓ + vϕₓ) + vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3), negative sign to match disk convention left towards observer
     vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x, inflow = "negative" velocity at +x, and ϕ is along y at ϕ = 0 when left is rotating towards observer
     vXYZ = -1.0.*[vx*cos(ϕ₀)+vy*sin(ϕ₀),vx*sin(ϕ₀)+vy*cos(ϕ₀),0.0] #rotate around z by ϕ₀, match velocity sign conventions (right = negative)
     r3D = get_r3D(i,rot,θₒ) #transform initial coordinates to system coordinates
