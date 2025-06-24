@@ -158,11 +158,6 @@ end
 t(ring::ring,subFxn::Function=tDisk) = subFxn(ring) #allow for custom time delay function, e.g. tDisk or tCloud
 
 """
-    getG(β::Float64)
-"""
-    getG(β::Float64)
-
-"""
     phase(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)
 
 Calculate differential phase signal for a model based on specified baselines, model orientation, and BLR angular size.
