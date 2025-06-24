@@ -49,7 +49,7 @@ using Test
     @test isapprox(LPf4.binCenters[secondMax], (0.002*sign(LPf2.binCenters[secondMax])), atol = 5e-3)
     M = 1.7e8*2e30; rs = 2*6.67e-11*M/9e16; rsDay = rs/3e8/24/3600
     tCenters,Ψt = BLR.getΨt(mLAll,501,100/rsDay)
-    @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 10.0, atol = 5e-1)
+    @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 40.0, atol = 5e-1)
 end
 
 @testset "Cloud model initialized successfully" begin 

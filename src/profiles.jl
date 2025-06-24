@@ -155,7 +155,7 @@ end
 #     Calculate time delays for a point in a disk or cloud using a custom function `subFxn` that takes a `ring` struct.
 #     It is more peformant to pass the function directly rather than figure it out on the fly if known ahead of time.
 # """
-t(ring::ring,subFxn::Function=tDisk) = subFxn(ring) #allow for custom time delay function, e.g. tDisk or tCloud
+t(ring::ring,subFxn::Function) = subFxn(ring) #allow for custom time delay function, e.g. tDisk or tCloud
 
 """
     phase(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)
