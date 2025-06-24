@@ -262,7 +262,9 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
             l = 0
             for i=1:length(startInds)
                 s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
-                variable = ifelse(variable==t,ifelse(m.rings[s].θₒ==0.0,tDisk,tCloud),variable) #if variable is t, use tDisk or tCloud based on θₒ for performance
+                if variable == t 
+                    variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud #if variable is t, use tDisk or tCloud depending on whether θₒ is 0
+                end
                 chunk = [variable(ring) for ring in m.rings[s:e]]
                 push!(chunks,chunk)
                 l+=sum(length,chunk)
@@ -282,7 +284,9 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
             throw(error("error in function call $(variable)(ring)"))
         end
     else
-        variable = ifelse(variable==t,ifelse(m.rings[1].θₒ==0.0,tDisk,tCloud),variable) #if variable is t, use tDisk or tCloud based on θₒ for performance
+        if variable == t
+            variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud
+        end
         res = stack([variable(ring) for ring in m.rings],dims=1)
         if flatten
             return vec(res) #flatten the matrix to a vector
