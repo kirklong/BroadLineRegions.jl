@@ -442,13 +442,6 @@ function reflect!(xyzSys,i)
     zf = (xyzSys[3]*(cot(i)^2-1) - 2*xyzSys[1]*cot(i))/den
     xyzSys[1] = xf
     xyzSys[3] = zf
-    # i = -i #invert inclination angle to match convention that bottom of disk pointed towards observer (+x)
-    # midSlope = cot(i)
-    # den = 1+midSlope^2
-    # xf = (xyzSys[1]-midSlope^2*xyzSys[1]+2*midSlope*xyzSys[3])/den
-    # zf = (2*midSlope*xyzSys[1]+(midSlope^2-1)*xyzSys[3])/den
-    # xyzSys[1] = xf
-    # xyzSys[3] = zf
     return xyzSys
 end
 """
