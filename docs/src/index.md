@@ -1,6 +1,8 @@
 # BroadLineRegions.jl
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia.
+
+![Sample combined model animation for parameters in Long+2025](mCombined.gif)
 ## Installation 
 ### Julia
 ```julia

@@ -319,6 +319,10 @@ Which should produce something like the left panel in the comparison below (with
 
 Note that there is some inherent randomness in the clouds, and you can improve the smoothness of the profiles by increasing the number of model points if you so desire, but we've reproduced the main features in the plot just fine even at this lower resolution.
 
+You can of course visualize your combined models with the same standard plotting recipes shown earlier to generate fun animations like the one below showcasing the intensity, delay, and velocity structure of this combined model: 
+
+![Sample combined model animation for parameters in Long+2025](mCombined.gif)
+
 ## Defining your own custom models
 `BroadLineRegions.jl` makes it easy to define your own models, either by modifying one of the existing classes of models or starting entirely from scratch. 
 
