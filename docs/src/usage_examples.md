@@ -186,19 +186,19 @@ While reverberation mapping has historically been the primary way to constrain t
 
 Here we will demonstrate how to generate line and *phase* profiles for model BLRs, reproducing the results shown in the left panel in Figure 2 of [Long+2023](https://dx.doi.org/10.3847/1538-4357/ace4bb) in the process. To start, we define disk-wind model objects for each case shown in the figure: 
 ```julia
-mLAll = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=2048,nϕ=1024,
+mLAll = BLR.DiskWindModel(8e3,45.,1.,45/180*π,nr=2048,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=1.0,
         f3=1.0,f4=1.0,τ=5.,reflect=false)
-mLf1 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=2048,nϕ=1024,
+mLf1 = BLR.DiskWindModel(8e3,45.,1.,45/180*π,nr=2048,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=0.0,
         f3=0.0,f4=0.0,τ=5.,reflect=false)
-mLf2 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=2048,nϕ=1024,
+mLf2 = BLR.DiskWindModel(8e3,45.,1.,45/180*π,nr=2048,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=0.0,f2=1.0,
         f3=0.0,f4=0.0,τ=5.,reflect=false)
-mLf3 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=2048,nϕ=1024,
+mLf3 = BLR.DiskWindModel(8e3,45.,1.,45/180*π,nr=2048,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=0.0,f2=0.0,
         f3=1.0,f4=0.0,τ=5.,reflect=false)
-mLf4 = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=2048,nϕ=1024,
+mLf4 = BLR.DiskWindModel(8e3,45.,1.,45/180*π,nr=2048,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=0.0,f2=0.0,
         f3=0.0,f4=1.0,τ=5.,reflect=false)
 ```
@@ -216,10 +216,11 @@ Note that this time we don't store the profiles in their respective models (alth
 
 To generate the average phase profile we need to pass a few bits of additional information to the [`phase`](@ref BLR.phase) function. As the documenation there shows, we must supply the U-V baseline information (in units of ``\rm{M\lambda}``), the position angle, and the angular scale size of the BLR. Using the published information in the paper we can set these quantities and generate the average phase profiles like so:
 ```julia
-U = [-18.346909957837198, -33.56613523884647, -48.698570595903554, -14.942664391893409, -29.796334354450384, -14.76368897621181, -24.759483405776525, -32.71936044780294, -36.682578352633264, -7.76620715016356, -11.58052554955926, -4.073062007808528, -24.892849909294707, -39.75804336980509, -53.27689326473395, -14.957054767646966, -28.352905965208993, -13.459074151241555, -24.301161456982094, -38.43158347498171, -49.64708431162909, -13.168981507518257, -23.464313904842403, -10.912122036718138] #Mλ
-V = [8.63641703495584, -6.383504477240494, -27.578844897537465, -15.04195936592504, -36.26778925081391, -21.229760064196043, 9.689797323095124, -4.798395078027196, -25.56317284034309, -14.479367253742678, -35.24862063439095, -20.773150186942956, 8.946312891458865, -5.906062082484997, -26.94693584103236, -14.816925731069297, -35.8588243819711, -21.043799197907198, 9.817029995084985, -5.8946612647096215, -27.583851892747216, -15.401140293812933, -37.58326121804998, -21.630778375611328] #Mλ
-BLRAng = 8.4e7*2*2e33*6.67e-8/9e20/548/3.09e24 #rₛ in radians for BLR distance of 548 Mpc
-PA = 240/180*π-π #rad, rotate by -π as the disk in Long+2023 rotated in opposite direction as one does here 
+#"off" axis U-V baselines as in Gravity+2019, Long+2023
+U = [-14.942664391893409, -29.796334354450384, -14.76368897621181, -7.76620715016356, -11.58052554955926, -4.073062007808528, -14.957054767646966, -28.352905965208993, -13.459074151241555, -13.168981507518257, -23.464313904842403, -10.912122036718138] #Mλ
+V = [-15.04195936592504, -36.26778925081391, -21.229760064196043, -14.479367253742678, -35.24862063439095, -20.773150186942956, -14.816925731069297, -35.8588243819711, -21.043799197907198, -15.401140293812933, -37.58326121804998, -21.630778375611328] #Mλ
+BLRAng = 2*8e7*2e33*6.67e-8/9e20/548/3.09e24 #rₛ in radians for BLR distance of 548 Mpc
+PA = 300/180*π #rad
 
 phaseAll = BLR.getProfile(mLAll,:phase,bins=101,centered=true,U=U,V=V,PA=PA,BLRAng=BLRAng)
 phasef1 = BLR.getProfile(mLf1,:phase,bins=101,centered=true,U=U,V=V,PA=PA,BLRAng=BLRAng)

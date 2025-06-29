@@ -187,12 +187,12 @@ function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vecto
     if size(U) != size(V)
         throw(ArgumentError("U and V must be the same size, got $(size(U)) and $(size(V))"))
     end
-    X = m.camera.α.*BLRAng; Y = m.camera.β.*BLRAng
+    X = m.camera.α.*BLRAng; Y = m.camera.β.*BLRAng #DEBUG: - to make consistent with old paper
     function getΔϕ(v::Array{Float64,},I::Array{Float64,},ΔA::Array{Float64,},x::Array{Float64,},y::Array{Float64},U::Float64,V::Float64,PA::Float64;kwargs...)
-        U′ = -cos(PA)*U-sin(PA)*V; V′ = sin(PA)*U-cos(PA)*V
+        U′ = cos(PA)*U+sin(PA)*V; V′ = -sin(PA)*U+cos(PA)*V
         edges,centers,Δϕ = binnedSum(v, -2π*(x.*U′ .+ y.*V′).*I.*ΔA.*(180/π*1e6);kwargs...) 
         edges,centers,LP = binnedSum(v, I.*ΔA;kwargs...)
-        return (edges,centers,Δϕ./(1.0.+LP)) #divide out LP but then weight by f/(1+f) to get the differential phase
+        return (edges,centers,Δϕ./(1.0 .+ LP))#./(1.0.+LP)) #divide out LP but then weight by f/(1+f) to get the differential phase
     end
     v = getVariable(m,:v,flatten=true); I = getVariable(m,:I,flatten=true); ΔA = getVariable(m,:ΔA,flatten=true)
     if isnothing(offAxisInds)
