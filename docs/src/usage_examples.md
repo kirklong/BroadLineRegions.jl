@@ -253,10 +253,6 @@ Which should return something similar to the left panel below. Compared to the o
 
 ![line and phase profiles for disk-wind models](Long2023_phase_line_quickComparison.png)
 
-A few final notes: 
-1. When setting the position angle, we rotated from the approximate value given in [Long+2023](https://dx.doi.org/10.3847/1538-4357/ace4bb) by ``\pi`` because in older versions of this code the disk's velocity structure was flipped, which means the left and right photocenters on the sky are by default on the opposite sides in the new versions of the code than they were in the old ones. This is fixed easily by just rotating a little extra!
-2. Minor differences in the amplitude/structure of the phase profiles are due to not picking and choosing only the baselines that are "off" axis, see [Long+2023](https://dx.doi.org/10.3847/1538-4357/ace4bb) for details.
-
 ## Reproducing the combined model line and delay profiles shown in Long+2025 
 
 The real utility of `BroadLineRegions.jl` is not in its ability to model certain prescriptions for the BLR, but instead the ability to *flexibly combine* them. To demonstrate this we will reproduce the hybrid disk + cloud model line and delay profiles shown in Figure 4 of Long+2025. As described in the paper, this model is a combination of a Pancoast style "cloud" model and a simple azimuthally isotropic disk model with a bit of radial inflow. We can generate both submodels and then combine them with simple syntax: 
