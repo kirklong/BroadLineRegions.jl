@@ -50,7 +50,7 @@ Calculate line of sight velocity for cloud in 3D space.
 # Returns
 - Line of sight velocity (`Float64`)
 """
-function vCircularCloud(;r::Float64, ϕ₀::Float64, φ::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
+function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
     v₀ = vCirc(r,rₛ)
     vXYZ = -1.0.*[v₀*sin(ϕ₀),v₀*cos(ϕ₀),0.0] #match velocity sign conventions such that right side is negative
     r3D = get_r3D(i,rot,θₒ)
