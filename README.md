@@ -9,6 +9,8 @@
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia. 
 
+![combinedGif](docs/src/mCombined.gif)
+
 [![view - Documentation](https://img.shields.io/badge/view-Documentation-blue?style=for-the-badge)](https://www.kirklong.space/BroadLineRegions.jl/dev/ "Go to project documentation")
 ## Installation 
 ### Julia
