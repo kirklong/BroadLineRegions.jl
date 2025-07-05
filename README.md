@@ -42,16 +42,6 @@ mClouds = BLR.cloudModel(100_000,μ=500.,β=1.,F=0.5,θₒ=30/180*π,γ=1.,ξ=1.
         I=BLR.IsotropicIntensity,v=BLR.vCircularCloud,rescale=1e-5,τ=0.0)
 ```
 
-Note that if you are working from within Python you will need to modify all the code examples with the corresponing name that you imported julia with, i.e. the example above in Python would become: 
-
-```python
-from juliacall import Main as jl
-import numpy as np
-jl.seval("Using BroadLineRegions") #load BLR into Main
-mClouds = jl.BLR.cloudModel(100_000,μ=500.,β=1.,F=0.5,θₒ=30/180*np.pi,γ=1.,ξ=1.,i=0.,
-             I=jl.BLR.IsotropicIntensity,v=jl.BLR.vCircularCloud,rescale=1e-5,τ=0.0)
-```
-
 To generate a "disk-wind" model similar to that of Chiang and Murray 1996 and 1997 following the prescription laid out in Long+ 2023 and 2025 use syntax like:
 ```julia
 mDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,nϕ=48,scale=:log,
@@ -89,6 +79,19 @@ mDisk = DiskWindModel(parms...) #instead of BLR.DiskWindModel
 For more detailed examples, see the [Usage and Examples](https://www.kirklong.space/BroadLineRegions.jl/dev/usage_examples/) page.
 
 Full documentation is available in the [API](https://www.kirklong.space/BroadLineRegions.jl/dev/api/) section.
+
+Also note that if you are using `BroadLineRegions` from within Python you will need to modify all the code examples with the corresponding name that you imported julia with, i.e. the simple cloud example in the quickstart above in Python would become: 
+
+```python
+from juliacall import Main as jl
+import numpy as np
+jl.seval("Using BroadLineRegions") #load BLR into Main
+
+mClouds = jl.BLR.cloudModel(100_000,μ=500.,β=1.,F=0.5,θₒ=30/180*np.pi,γ=1.,ξ=1.,i=0.,
+             I=jl.BLR.IsotropicIntensity,v=jl.BLR.vCircularCloud,rescale=1e-5,τ=0.0)
+```
+
+You may also consider starting Julia with a `sysimage` to improve performance (see pure Julia example [here](https://julialang.github.io/PackageCompiler.jl/dev/sysimages.html), and instructions for enabling the functionality in `juliacall` [here](https://juliapy.github.io/PythonCall.jl/stable/juliacall/#julia-config)).
 
 ## Referencing
 If you find this code useful in your work, please cite it as:

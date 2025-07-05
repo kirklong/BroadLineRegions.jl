@@ -71,6 +71,19 @@ For more detailed examples, see the [Usage and Examples](@ref) page.
 
 Full documentation is available in the [API](@ref) section.
 
+Also note that if you are using `BroadLineRegions` from within Python you will need to modify all the code examples with the corresponding name that you imported julia with, i.e. the simple cloud example in the quickstart above in Python would become: 
+
+```python
+from juliacall import Main as jl
+import numpy as np
+jl.seval("Using BroadLineRegions") #load BLR into Main
+
+mClouds = jl.BLR.cloudModel(100_000,μ=500.,β=1.,F=0.5,θₒ=30/180*np.pi,γ=1.,ξ=1.,i=0.,
+             I=jl.BLR.IsotropicIntensity,v=jl.BLR.vCircularCloud,rescale=1e-5,τ=0.0)
+```
+
+You may also consider starting Julia with a `sysimage` to improve performance (see pure Julia example [here](https://julialang.github.io/PackageCompiler.jl/dev/sysimages.html), and instructions for enabling the functionality in `juliacall` [here](https://juliapy.github.io/PythonCall.jl/stable/juliacall/#julia-config)).
+
 ## Referencing
 If you find this code useful in your work, please cite it as:
 ```bibtex
