@@ -253,9 +253,9 @@ Which should return something similar to the left panel below. Compared to the o
 
 ![line and phase profiles for disk-wind models](Long2023_phase_line_quickComparison.png)
 
-## Reproducing the combined model line and delay profiles shown in Long+2025 
+## Reproducing the combined model line and delay profiles shown in [Long+2025](https://doi.org/10.3847/1538-4357/adda38) 
 
-The real utility of `BroadLineRegions.jl` is not in its ability to model certain prescriptions for the BLR, but instead the ability to *flexibly combine* them. To demonstrate this we will reproduce the hybrid disk + cloud model line and delay profiles shown in Figure 4 of Long+2025. As described in the paper, this model is a combination of a Pancoast style "cloud" model and a simple azimuthally isotropic disk model with a bit of radial inflow. We can generate both submodels and then combine them with simple syntax: 
+The real utility of `BroadLineRegions.jl` is not in its ability to model certain prescriptions for the BLR, but instead the ability to *flexibly combine* them. To demonstrate this we will reproduce the hybrid disk + cloud model line and delay profiles shown in Figure 4 of [Long+2025](https://doi.org/10.3847/1538-4357/adda38). As described in the paper, this model is a combination of a Pancoast style "cloud" model and a simple azimuthally isotropic disk model with a bit of radial inflow. We can generate both submodels and then combine them with simple syntax: 
 
 ```julia
 mDisk = BLR.DiskWindModel(300.,40.,1.0,30/180*π,nr=512,nϕ=1024,f1=0.0,f2=0.0,f3=0.0,f4=1.0,
@@ -279,7 +279,7 @@ end
 mCombined = mDisk+mClouds #all we have to do to combine models is "add" them!
 ```
 
-We can again easily generate profiles for both the combined model and the submodels. This time we will generate line and delay profiles for each component and the combined model to compare to Figure 4 of Long+2025:
+We can again easily generate profiles for both the combined model and the submodels. This time we will generate line and delay profiles for each component and the combined model to compare to Figure 4 of [Long+2025](https://doi.org/10.3847/1538-4357/adda38):
 
 ```julia
 #get line profiles for each model
