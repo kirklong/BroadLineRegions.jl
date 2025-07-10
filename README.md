@@ -5,7 +5,7 @@
 ![lifecycle](https://img.shields.io/badge/lifecycle-retired-orange.svg)
 ![lifecycle](https://img.shields.io/badge/lifecycle-archived-red.svg)
 ![lifecycle](https://img.shields.io/badge/lifecycle-dormant-blue.svg) -->
-[![build](https://github.com/kirklong/BLR.jl/workflows/CI/badge.svg)](https://github.com/kirklong/BLR.jl/actions?query=workflow%3ACI)
+[![build](https://github.com/kirklong/BLR.jl/workflows/CI/badge.svg)]
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia. 
 
