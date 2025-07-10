@@ -21,7 +21,7 @@ Pkg.add("BroadLineRegions")
 Or install from the GitHub repo directly:
 ```julia
 using Pkg
-Pkg.add("https://github.com/kirklong/.jl")
+Pkg.add("https://github.com/kirklong/BroadLineRegions.jl")
 ```
 ### Python
 To access `BroadLineRegions` from within your Python installation, first you must install [`JuliaCall`](https://juliapy.github.io/PythonCall.jl/stable/juliacall/)
