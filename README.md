@@ -1,5 +1,6 @@
 # BroadLineRegions.jl
 ![lifecycle](https://img.shields.io/badge/lifecycle-experimental-orange.svg)
+[![CI](https://github.com/kirklong/BroadLineRegions.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/kirklong/BroadLineRegions.jl/actions/workflows/CI.yml)
 <!-- 
 ![lifecycle](https://img.shields.io/badge/lifecycle-maturing-blue.svg)
 ![lifecycle](https://img.shields.io/badge/lifecycle-stable-green.svg)
@@ -7,7 +8,6 @@
 ![lifecycle](https://img.shields.io/badge/lifecycle-archived-red.svg)
 ![lifecycle](https://img.shields.io/badge/lifecycle-dormant-blue.svg)
 -->
-[![CI](https://github.com/kirklong/BroadLineRegions.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/kirklong/BroadLineRegions.jl/actions/workflows/CI.yml)
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia. 
 
