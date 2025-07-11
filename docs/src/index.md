@@ -15,7 +15,7 @@ using Pkg
 Pkg.add("https://github.com/kirklong/BroadLineRegions.jl")
 ```
 ### Python
-To access `BroadLineRegions.jl` from within your Python installation, first you must install [`JuliaCall`](https://juliapy.github.io/PythonCall.jl/stable/juliacall/)
+To access `BroadLineRegions.jl` from within your Python installation, first you must install [`JuliaCall`](https://juliapy.github.io/PythonCall.jl/stable/juliacall/).
 After successfully installing `JuliaCall` you can add `BroadLineRegions.jl` to your new Julia installation in Python with: 
 ```python
 from juliacall import Main as jl
