@@ -11,7 +11,7 @@ authors:
     equal-contrib: true
     affiliation: 1
 affiliations:
- - name: JILA, University of Colorado Boulder
+ - name: JILA, University of Colorado Boulder, USA
    index: 1
 date: 01 July 2025
 bibliography: paper.bib
