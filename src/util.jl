@@ -464,7 +464,7 @@ Transform from ring coordinates to 3D coordinates where camera is at +x.
 # Returns
 - `Tuple{Float64, Float64, Float64}`: `(x, y, z)` coordinates in 3D space
 """
-function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
+function rotate3D(r::Float64,ϕ₀::Float64,i::Float64,rot::Float64,θₒ::Float64,reflect::Bool=false)
     matrix = get_r3D(i,rot,θₒ)
     xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0]
     if reflect
@@ -472,6 +472,28 @@ function rotate3D(r,ϕ₀,i,rot,θₒ,reflect=false)
     end
     return xyzSys
 end
+"""
+    rotate3D(r::Float64, ϕ₀::Float64, i::Float64, matrix::Matrix{Float64}, reflect::Bool=false)
+Transform from ring coordinates to 3D coordinates where camera is at +x using a precomputed rotation matrix.
+# Parameters
+- `r::Float64`: Radius from central mass (in terms of rₛ)
+- `ϕ₀::Float64`: Starting azimuthal angle in ring plane (rad)
+- `i::Float64`: Inclination angle of ring plane (rad)
+- `matrix::Matrix{Float64}`: Precomputed rotation matrix for the ring
+- `reflect::Bool=false`: Whether to reflect across the ring plane
+# Returns
+- `Vector{Float64}`: `[x; y; z]` coordinates in 3D space
+"""
+function rotate3D(r::Float64,ϕ₀::Float64,i::Float64,matrix::Matrix{Float64},reflect::Bool=false)
+    xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0]
+    if reflect
+        xyzSys = BLR.reflect!(xyzSys,i) #use the inclination angle from the rotation matrix
+    end
+    return xyzSys
+end
+
+"""
+    midPlaneXZ(x::Float64, i::Float64) -> Float64
 
 midPlaneXZ(x,i) = -x*cot(i)
 
