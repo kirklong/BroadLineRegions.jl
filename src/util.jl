@@ -492,9 +492,12 @@ function rotate3D(r::Float64,ϕ₀::Float64,i::Float64,matrix::Matrix{Float64},r
     return xyzSys
 end
 
+
 """
     midPlaneXZ(x::Float64, i::Float64) -> Float64
 
+midPlaneXZ(x,i) = -x*cot(i)
+"""
 midPlaneXZ(x,i) = -x*cot(i)
 
 function geometry(ring) #for 3d visualzation of model geometry
