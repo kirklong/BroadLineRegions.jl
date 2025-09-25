@@ -190,8 +190,11 @@ function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vecto
     X = m.camera.α.*BLRAng; Y = m.camera.β.*BLRAng #DEBUG: - to make consistent with old paper
     function getΔϕ(v::Array{Float64,},I::Array{Float64,},ΔA::Array{Float64,},x::Array{Float64,},y::Array{Float64},U::Float64,V::Float64,PA::Float64;kwargs...)
         U′ = cos(PA)*U+sin(PA)*V; V′ = -sin(PA)*U+cos(PA)*V
-        edges,centers,Δϕ = binnedSum(v, -2π*(x.*U′ .+ y.*V′).*I.*ΔA.*1e6;kwargs...) 
         edges,centers,LP = binnedSum(v, I.*ΔA;kwargs...)
+        norm = maximum(LP)
+        LP = LP./norm #normalize the line profile to 1.0
+        I = I./norm #normalize the intensity to 1.0
+        edges,centers,Δϕ = binnedSum(v, -2π*(x.*U′ .+ y.*V′).*I.*ΔA.*1e6;kwargs...) 
         return (edges,centers,Δϕ./(1.0 .+ LP))#./(1.0.+LP)) #divide out LP but then weight by f/(1+f) to get the differential phase
     end
     v = getVariable(m,:v,flatten=true); I = getVariable(m,:I,flatten=true); ΔA = getVariable(m,:ΔA,flatten=true)
