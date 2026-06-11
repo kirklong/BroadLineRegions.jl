@@ -371,6 +371,40 @@ end
 meshgrid(x,y) = (reshape(repeat(x,outer=length(y)),length(x),length(y)), reshape(repeat(y,inner=length(x)),length(x),length(y)))
 
 """
+    fillDiskGrid!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β,
+        i, rot, θₒ, M, r3D, rMin, rMax, ηₒ, η₁, αRM, rNorm)
+
+Typed inner pixel loop of the disk-wind `model` constructor (function barrier).
+
+The constructor body is type-unstable (its locals come from `kwargs`), which would box every
+per-pixel value; routing the loop through this concretely-typed helper keeps the raytracing
+allocation-free. Fills the supplied matrices in place; out-of-range pixels
+(`r < rMin` or `r > rMax`, compared after rounding to 9 significant digits) are set to NaN.
+`M` and `r3D` are the precomputed matrices described in `raytrace`; `ηₒ, η₁, αRM, rNorm` are the
+`response` parameters (hoisted from kwargs once instead of splatted per pixel).
+"""
+function fillDiskGrid!(rSystem::Matrix{Float64}, ϕSystem::Matrix{Float64}, ϕ₀::Matrix{Float64}, η::Matrix{Float64},
+        xSystem::Matrix{Float64}, ySystem::Matrix{Float64}, zSystem::Matrix{Float64},
+        α::Matrix{Float64}, β::Matrix{Float64}, i::Float64, rot::Float64, θₒ::Float64,
+        M::Matrix{Float64}, r3D::Matrix{Float64}, rMin::Float64, rMax::Float64,
+        ηₒ::Float64, η₁::Float64, αRM::Float64, rNorm::Float64)
+    rMinR = round(rMin,sigdigits=9); rMaxR = round(rMax,sigdigits=9) #constant over the loop -- hoisted
+    for ri in axes(α,1)
+        for ϕi in axes(α,2)
+            rt, ϕt, ϕ₀t, xt, yt, zt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, M, r3D)
+            if round(rt,sigdigits=9) < rMinR || round(rt,sigdigits=9) > rMaxR #exclude portions outside of (rMin, rMax), round because of numerical errors
+                rSystem[ri,ϕi] = NaN; ϕSystem[ri,ϕi] = NaN; ϕ₀[ri,ϕi] = NaN; η[ri,ϕi] = NaN
+                xSystem[ri,ϕi] = NaN; ySystem[ri,ϕi] = NaN; zSystem[ri,ϕi] = NaN
+            else
+                rSystem[ri,ϕi] = rt; ϕSystem[ri,ϕi] = ϕt; ϕ₀[ri,ϕi] = ϕ₀t; η[ri,ϕi] = response(rt, ηₒ, η₁, αRM, rNorm)
+                xSystem[ri,ϕi] = xt; ySystem[ri,ϕi] = yt; zSystem[ri,ϕi] = zt
+            end
+        end
+    end
+    return nothing
+end
+
+"""
     model
 
 A mutable structure to hold many rings and their parameters that model the BLR.
@@ -473,25 +507,9 @@ mutable struct model
         r3D = get_r3D(i,rot,θₒ)
         undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)]
         M_raytrace = undo_tilt * r3D #constant for fixed (i, rot, θₒ) -- precompute once instead of per pixel
-        rt = 0.0; ϕt = 0.0; ϕ₀t = 0.0; xt = 0.0; yt = 0.0; zt = 0.0 #preallocate raytracing variables
-        for ri in 1:nr
-            for ϕi in 1:nϕ
-                rt, ϕt, ϕ₀t, xt, yt, zt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, M_raytrace, r3D)
-                ηt = response(rt; kwargs...) #response function
-                # println("RAYTRACE: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
-                # x = β[ri,ϕi]/cos(i); y = α[ri,ϕi]; z = 0.0 #system coordinates from camera coordinates, raytraced back to disk plane
-                # rt = sqrt(x^2 + y^2 + z^2); ϕt = atan(y,x); ϕ₀t = atan(y,x) #convert to polar coordinates
-                # println("OLD WAY: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
-                # exit()
-                if round(rt,sigdigits=9) < round(rMin,sigdigits=9) || round(rt,sigdigits=9) > round(rMax,sigdigits=9) #exclude portions outside of (rMin, rMax), round because of numerical errors
-                    rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = NaN, NaN, NaN, NaN
-                    xSystem[ri,ϕi], ySystem[ri,ϕi], zSystem[ri,ϕi] = NaN, NaN, NaN
-                else
-                    rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = rt, ϕt, ϕ₀t, ηt
-                    xSystem[ri,ϕi], ySystem[ri,ϕi], zSystem[ri,ϕi] = xt, yt, zt
-                end
-            end
-        end
+        #response parameters hoisted from kwargs once (per-pixel kwargs splat is slow in this type-unstable scope)
+        ηₒ = Float64(get(kwargs, :ηₒ, 0.5)); η₁ = Float64(get(kwargs, :η₁, 0.5)); αRM = Float64(get(kwargs, :αRM, 0.0)); rNorm = Float64(get(kwargs, :rNorm, 1.0))
+        fillDiskGrid!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β, i, rot, θₒ, M_raytrace, r3D, rMin, rMax, ηₒ, η₁, αRM, rNorm) #typed function barrier does the pixel loop
 
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕ₀ = [ϕ₀[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
         xSystem = [xSystem[i,:] for i in 1:nr]; ySystem = [ySystem[i,:] for i in 1:nr]; zSystem = [zSystem[i,:] for i in 1:nr]

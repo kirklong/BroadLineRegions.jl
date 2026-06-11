@@ -10,6 +10,13 @@ function response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Floa
 end
 
 """
+    response(r::Float64, ηₒ::Float64, η₁::Float64, αRM::Float64, rNorm::Float64)
+
+Positional-argument version of `response` for hot loops — avoids the per-call keyword splat.
+"""
+response(r::Float64, ηₒ::Float64, η₁::Float64, αRM::Float64, rNorm::Float64) = ηₒ + η₁*(r/rNorm)^αRM
+
+"""
     getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
 
 Calculate the 2D transfer function Ψ for a model `m` over specified velocity and time bins, whose edges are given by `vEdges` and `tEdges`.
