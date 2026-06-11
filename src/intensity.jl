@@ -22,7 +22,7 @@ DiskWind_I_(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2
     pre = @. sqrt(1 /(2 * r^3))
     term12 = @. (3*sini^2)*(cosϕ) * (√2*f1 * cosϕ + f2/2 *sinϕ)
     term3 = @. ((-f3*3*sini*cosi)) * cosϕ
-    term4 = @. √2*f4*cosi^2 * $ones($length(ϕ))
+    term4 = √2*f4*cosi^2 #scalar -- broadcasts below, no need to materialize a ones() vector
     dvl_dl = @. pre * (term12 + term3 + term4)
     I = @. r^(-α) * abs(dvl_dl)
     I
@@ -37,7 +37,7 @@ DiskWind_I_(r::Float64, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float6
     pre = sqrt(1 /(2 * r^3))
     term12 = @. (3*sini^2)*(cosϕ) * (√2*f1 * cosϕ + f2/2 *sinϕ)
     term3 = @. ((-f3*3*sini*cosi)) * cosϕ
-    term4 = @. √2*f4*cosi^2 * $ones($length(ϕ))
+    term4 = √2*f4*cosi^2 #scalar -- broadcasts below, no need to materialize a ones() vector
     dvl_dl = @. pre * (term12 + term3 + term4)
     I = @. r^(-α) * abs(dvl_dl)
     I
@@ -73,7 +73,36 @@ DiskWind_I_(r::Float64, ϕ::Float64, i::Float64, f1::Float64, f2::Float64, f3::F
     I
 end
 """
-    DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64}, 
+    DiskWind_I_grid(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64,
+        f3::Float64, f4::Float64, α::Float64, rMin::Float64, rMax::Float64)
+
+Typed helper (function barrier) for `DiskWindIntensity`'s vector path. Fills a single preallocated
+vector with the scalar `DiskWind_I_` per point, then applies the `(rMin, rMax)` mask with the bounds
+rounded to 9 significant digits *once* instead of per point.
+
+The outer mask guard replicates the original semantics exactly: when `r` contains NaN (out-of-grid
+sentinels), `minimum(r)`/`maximum(r)` are NaN, the guard comparisons are false, and **no masking pass
+runs** — NaN points keep their NaN intensity rather than being zeroed.
+"""
+function DiskWind_I_grid(r::Vector{Float64}, ϕ::Vector{Float64}, i::Float64, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64, rMax::Float64)
+    I = Vector{Float64}(undef, length(r))
+    @inbounds for k in eachindex(r, ϕ)
+        I[k] = DiskWind_I_(r[k], ϕ[k], i, f1, f2, f3, f4, α)
+    end
+    rMinR = round(rMin, sigdigits=9); rMaxR = round(rMax, sigdigits=9)
+    if round(minimum(r), sigdigits=9) <= rMinR || round(maximum(r), sigdigits=9) >= rMaxR #false when r contains NaN -- see docstring
+        @inbounds for k in eachindex(r, I)
+            rk = round(r[k], sigdigits=9)
+            if !(rk >= rMinR && rk <= rMaxR)
+                I[k] = 0.0
+            end
+        end
+    end
+    return I
+end
+
+"""
+    DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64},
             f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
 
 Calculates the intensity from a disk-wind model of the BLR following the prescription given in Long+ 2023 and 2025, similar to Chiang and Murray 1996 and 1997, assumes optically thick line emission limit (Sobolev).
@@ -112,10 +141,7 @@ function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::U
     if typeof(r) == Float64 || typeof(ϕ) == Float64
         I = (r >= rMin && r <= rMax) ? DiskWind_I_(r, ϕ, i, f1, f2, f3, f4, α) : 0.0
     elseif typeof(r) == Vector{Float64} && typeof(ϕ) == Vector{Float64}
-        I = vcat([DiskWind_I_(ri,ϕi,i,f1,f2,f3,f4,α) for (ri,ϕi) in zip(r,ϕ)]...) #one intensity value at each r,ϕ pair
-        if round(minimum(r),sigdigits=9) <= round(rMin,sigdigits=9) || round(maximum(r),sigdigits=9) >= round(rMax,sigdigits=9)
-            I = [(round(ri,sigdigits=9) >= round(rMin,sigdigits=9) && round(ri,sigdigits=9) <= round(rMax,sigdigits=9)) ? Ii : 0.0 for (ri,Ii) in zip(r,I)]
-        end
+        I = DiskWind_I_grid(r, ϕ, i, f1, f2, f3, f4, α, rMin, rMax) #one intensity value at each r,ϕ pair, masked to (rMin, rMax)
     else
         error("got unsupported types for r and ϕ: got $(typeof(r)) and $(typeof(ϕ)), expected Float64 or Vector{Float64}")
     end
@@ -144,7 +170,8 @@ function IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector
         if typeof(r) == Float64
             I = (round(r,sigdigits=9) >= round(rMin,sigdigits=9) && round(r,sigdigits=9) <= round(rMax,sigdigits=9)) ? rescale.*ones(length(ϕ)) : zeros(length(ϕ))
         elseif typeof(ϕ) == Vector{Float64}
-            I = vcat([round(ri,sigdigits=9) >= round(rMin,sigdigits=9) && round(ri,sigdigits=9) <= round(rMax,sigdigits=9) ? rescale : 0.0 for (ri,ϕi) in zip(r,ϕ)]...) #one intensity value at each r,ϕ pair
+            rMinR = round(rMin,sigdigits=9); rMaxR = round(rMax,sigdigits=9) #round bounds once, not per point
+            I = Float64[(round(ri,sigdigits=9) >= rMinR && round(ri,sigdigits=9) <= rMaxR) ? rescale : 0.0 for ri in r] #one intensity value at each r,ϕ pair
         else
             error("got unsupported types for r and ϕ: got $(typeof(r)) and $(typeof(ϕ)), expected Float64 or Vector{Float64}")
         end
@@ -225,7 +252,7 @@ function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Flo
         end
         I = (ϕ >= ϕMin && ϕ <= ϕMax) ? DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α) : 0.0 #left side of disk goes 0 -> -π, right side goes 0 -> π, where 0 (top) is tilted towards the observer (exclude back of disk)
     else
-        I = vcat([IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax) for (ri,ϕi) in zip(r,ϕ)]...)
+        I = Float64[IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax)::Float64 for (ri,ϕi) in zip(r,ϕ)] #typed comprehension instead of vcat splat
     end
     return I
 end
