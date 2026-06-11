@@ -452,14 +452,13 @@ mutable struct model
         ΔA = scale == :log ? rMesh.^2 .* (Δr * Δϕ) : rMesh .* (Δr * Δϕ) #projected disk area, normalization doesn't matter
         rSystem = zeros(nr,nϕ); ϕSystem = zeros(nr,nϕ); ϕ₀ = zeros(nr,nϕ); η = zeros(nr,nϕ)
         θₒ = 0.0; rot = 0.0
-        r3D = get_r3D(i,rot,θₒ) 
-        xyz = [0.0;0.0;0.0]
-        matBuff = zeros(3,3)
-        colBuff = zeros(3)
+        r3D = get_r3D(i,rot,θₒ)
+        undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)]
+        M_raytrace = undo_tilt * r3D #constant for fixed (i, rot, θₒ) -- precompute once instead of per pixel
         rt = 0.0; ϕt = 0.0; ϕ₀t = 0.0 #preallocate raytracing variables
         for ri in 1:nr
             for ϕi in 1:nϕ
-                rt, ϕt, ϕ₀t = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, r3D, xyz, matBuff, colBuff) 
+                rt, ϕt, ϕ₀t = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, M_raytrace)
                 ηt = response(rt; kwargs...) #response function
                 # println("RAYTRACE: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
                 # x = β[ri,ϕi]/cos(i); y = α[ri,ϕi]; z = 0.0 #system coordinates from camera coordinates, raytraced back to disk plane

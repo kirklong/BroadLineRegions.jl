@@ -133,7 +133,7 @@ tDisk(ring::ring) = @. ring.η*ring.r*(1 - cos(ring.ϕ)*sin(ring.i)) #time delay
     Calculate time delays for a cloud with opening angle ``\\theta_o`` as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
 """
 tCloud(ring::ring) = begin
-    xyzSys = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
+    xyzSys = rotate3D_scalar(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
     return ring.η*(ring.r - xyzSys[1]) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
 end
 """

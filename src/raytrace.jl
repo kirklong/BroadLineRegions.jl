@@ -26,8 +26,38 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     yRing = (α*(cos(i)*cos(θₒPoint)+sec(rot)*sin(i)*sin(θₒPoint))+β*cos(θₒPoint)*tan(rot))/(cos(i)*cos(θₒPoint)*sec(rot)+sin(i)*sin(θₒPoint)) #system y
     r = √(xRing^2 + yRing^2)
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
-    xyzSys = rotate3D(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
+    xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
     ϕ = atan(xyzSys[2],xyzSys[1]) #ϕ after rotation, measured from +x in disk plane
+    return r, ϕ, ϕ₀
+end
+
+"""
+    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64})
+
+Allocation-free version of `raytrace` — calculate where ray traced back from camera coordinates `α`, `β`
+intersects the system (assumes circular geometry), using a single precomputed rotation matrix.
+
+`M` must be `undo_tilt * get_r3D(i, rot, θₒPoint)` where
+`undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)]` — both factors are constant for fixed
+`(i, rot, θₒ)` so `M` should be computed once outside any pixel loop.
+
+# Returns
+- `r::Float64`: distance from central mass (in terms of rₛ)
+- `ϕ::Float64`: azimuthal angle of system ring plane at intersection
+- `ϕ₀::Float64`: original azimuthal angle in ring plane
+
+# Note
+Supersedes the buffer-based 9-argument method (which is retained for compatibility).
+"""
+function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64})
+    cosr = cos(rot); sinr = sin(rot); cosi = cos(i); sini = sin(i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint) #flip i to match convention that +x is closer
+    xRing = -(β*cosr - α*cosi*sinr)/(cosi*cosθₒ+cosr*sini*sinθₒ) #system x, negative because want bottom towards camera
+    yRing = (α*(cosi*cosθₒ+sini/cosr*sinθₒ)+β*cosθₒ*sinr/cosr)/(cosi*cosθₒ/cosr+sini*sinθₒ)
+    r = √(xRing^2 + yRing^2)
+    ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
+    x = M[1,1]*xRing + M[1,2]*yRing #z component of ring coordinates is 0 so third column never contributes
+    y = M[2,1]*xRing + M[2,2]*yRing
+    ϕ = atan(y,x) #ϕ after rotation and being "puffed up", measured from +x in disk plane
     return r, ϕ, ϕ₀
 end
 
@@ -55,7 +85,12 @@ Performant version of `raytrace` function -- calculate where ray traced back fro
 - `ϕ₀::Float64`: original azimuthal angle in ring plane
 
 # Note
-This function is *coordinate* raytracing only. To raytrace models and combine intensities, see `raytrace!`. 
+This function is *coordinate* raytracing only. To raytrace models and combine intensities, see `raytrace!`.
+
+!!! warning "Deprecated"
+    Prefer the 6-argument method `raytrace(α, β, i, rot, θₒPoint, M)` with a single precomputed
+    `M = undo_tilt * get_r3D(i, rot, θₒ)` — it is allocation-free and faster. This buffer-based method
+    is retained for backwards compatibility only.
 """
 function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, colBuff::Vector{Float64})
     """performant version of raytrace function -- calculate where ray traced back from camera coordinates r_c, ϕ_c intersects the system (assumes circular geometry)
@@ -109,14 +144,14 @@ Calculate the image coordinates from system coordinates r, ϕ + inclination angl
 This function is *coordinate* photography only. To visualize models, see `Image`.`
 """
 function photograph(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
-    xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ,reflect)
+    xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒ,reflect)
     α = xyzSys[2] #camera is at +x, so α is y
     β = xyzSys[3] #and β is z
     return α, β
 end
 
 """
-    zeroDiskObscuredClouds!(m::model; diskCloudIntensityRatio::Float64=1.0, rotate3D::Function=rotate3D)
+    zeroDiskObscuredClouds!(m::model; diskCloudIntensityRatio::Float64=1.0, rotate3D::Function=rotate3D_scalar)
 
 Zero out the intensities of clouds that are obscured by the disk.
 
@@ -128,7 +163,7 @@ and adjusting the disk intensity according to the specified ratio.
 - `m::model`: Model to zero out disk obscured clouds. Should be a combined model consisting of a disk component and a cloud component. 
 - `diskCloudIntensityRatio::Float64=1.0`: Ratio of disk to cloud intensity, used to scale 
   the disk intensities after zeroing out clouds
-- `rotate3D::Function=rotate3D`: Function to rotate coordinates in 3D space
+- `rotate3D::Function=rotate3D_scalar`: Function to rotate coordinates in 3D space (must return an indexable `(x,y,z)`)
 
 # Returns
 - `m::model`: Model with disk obscured clouds zeroed out
@@ -136,7 +171,7 @@ and adjusting the disk intensity according to the specified ratio.
 # See also 
 - `removeDiskObscuredClouds!`: Function to remove disk obscured clouds instead of zeroing them out
 """
-function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,rotate3D::Function=rotate3D)
+function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,rotate3D::Function=rotate3D_scalar)
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
     startInds = m.subModelStartInds #start indices of submodels
     if !isCombined
@@ -185,7 +220,7 @@ function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,ro
 end
 
 """
-    removeDiskObscuredClouds!(m::model, rotate3D::Function=rotate3D)
+    removeDiskObscuredClouds!(m::model, rotate3D::Function=rotate3D_scalar)
 
 Remove clouds that are obscured by the disk.
 
@@ -196,7 +231,7 @@ Note that this is a mutating operation and the input model will be modified in p
 # Arguments
 - `m::model`: Model to remove disk obscured clouds. Should be a combined model consisting 
   of a disk component and a cloud component.
-- `rotate3D::Function=rotate3D`: Function to rotate coordinates in 3D space
+- `rotate3D::Function=rotate3D_scalar`: Function to rotate coordinates in 3D space (must return an indexable `(x,y,z)`)
 
 # Returns
 - `m::model`: Model with disk obscured clouds removed
@@ -204,7 +239,7 @@ Note that this is a mutating operation and the input model will be modified in p
 # See also 
 - `zeroDiskObscuredClouds!`: Function to zero out disk obscured clouds instead of removing them
 """
-function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
+function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
     startInds = m.subModelStartInds #start indices of submodels
     if !isCombined

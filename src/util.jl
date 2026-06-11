@@ -449,6 +449,49 @@ function reflect!(xyzSys,i)
     return xyzSys
 end
 """
+    reflect_scalar(x::Float64, y::Float64, z::Float64, i::Float64) -> NTuple{3,Float64}
+
+Allocation-free scalar version of `reflect!` — reflect coordinates in 3D space across the ring plane.
+Same math as `reflect!` but takes/returns plain scalars instead of mutating a `Vector`.
+"""
+function reflect_scalar(x::Float64, y::Float64, z::Float64, i::Float64)
+    #reflect across line made with inclination angle z - m*x = 0, where m = -cot(i) (math copied from reflect!)
+    cti = cot(i)
+    den = 1 + cti^2
+    xf = (x*(1-cti^2) - 2*z*cti)/den
+    zf = (z*(cti^2-1) - 2*x*cti)/den
+    return (xf, y, zf)
+end
+
+"""
+    rotate3D_vector_scalar(vx::Float64, vy::Float64, vz::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false) -> NTuple{3,Float64}
+
+Allocation-free rotation of an arbitrary vector `(vx,vy,vz)` from initial XY-plane coordinates into 3D space
+(camera at +x), with optional reflection across the ring plane. The matrix entries are those of
+`get_r3D(i,rot,θₒ)` inlined; used for rotating velocity vectors as well as positions.
+"""
+function rotate3D_vector_scalar(vx::Float64, vy::Float64, vz::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
+    sini, cosi = sincos(i)
+    sinrot, cosrot = sincos(rot)
+    sinθₒ, cosθₒ = sincos(θₒ)
+    x = (cosθₒ*cosrot*sini - sinθₒ*cosi)*vx - sinrot*sini*vy + (sinθₒ*cosrot*sini + cosθₒ*cosi)*vz
+    y = cosθₒ*sinrot*vx + cosrot*vy + sinθₒ*sinrot*vz
+    z = -(cosθₒ*cosrot*cosi + sinθₒ*sini)*vx + sinrot*cosi*vy + (cosθₒ*sini - sinθₒ*cosrot*cosi)*vz
+    return reflect ? reflect_scalar(x, y, z, i) : (x, y, z)
+end
+
+"""
+    rotate3D_scalar(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false) -> NTuple{3,Float64}
+
+Allocation-free version of `rotate3D`: transform from ring coordinates to 3D coordinates where camera
+is at +x, returning an `(x, y, z)` tuple instead of a heap-allocated `Vector`. Prefer this in hot loops.
+"""
+function rotate3D_scalar(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
+    sinϕ₀, cosϕ₀ = sincos(ϕ₀)
+    return rotate3D_vector_scalar(r*cosϕ₀, r*sinϕ₀, 0.0, i, rot, θₒ, reflect)
+end
+
+"""
     rotate3D(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
 
 Transform from ring coordinates to 3D coordinates where camera is at +x.
@@ -462,15 +505,14 @@ Transform from ring coordinates to 3D coordinates where camera is at +x.
 - `reflect::Bool=false`: Whether to reflect across the ring plane
 
 # Returns
-- `Tuple{Float64, Float64, Float64}`: `(x, y, z)` coordinates in 3D space
+- `Vector{Float64}`: `[x; y; z]` coordinates in 3D space
+
+# Note
+This method allocates its result; in performance-critical loops use [`rotate3D_scalar`](@ref) which
+returns a stack-allocated tuple instead.
 """
 function rotate3D(r::Float64,ϕ₀::Float64,i::Float64,rot::Float64,θₒ::Float64,reflect::Bool=false)
-    matrix = get_r3D(i,rot,θₒ)
-    xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0]
-    if reflect
-        xyzSys = BLR.reflect!(xyzSys,i)
-    end
-    return xyzSys
+    return collect(rotate3D_scalar(r,ϕ₀,i,rot,θₒ,reflect))
 end
 """
     rotate3D(r::Float64, ϕ₀::Float64, i::Float64, matrix::Matrix{Float64}, reflect::Bool=false)
@@ -568,14 +610,14 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             for ii in 1:size(r)[1]
                 for jj in 1:size(r)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D_scalar(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect)
                 end
             end
         elseif typeof(r) == Vector{Float64} && typeof(ϕ₀) == Matrix{Float64}
             for ii in 1:size(ϕ)[1]
                 for jj in 1:size(ϕ)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D_scalar(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect)
                 end
             end
         else #if r is just a vector (with ϕ and i matching)
@@ -583,7 +625,7 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             θₒ = getVariable(model,:θₒ)
             reflect = getVariable(model,:reflect)
             for ii in 1:length(r)
-                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],reflect[ii]) 
+                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D_scalar(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],reflect[ii])
             end
         end
         boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])

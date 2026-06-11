@@ -82,14 +82,15 @@ function drawCloud(;μ::Float64=500.,β::Float64=1.0,F::Float64=0.5,ϕ₀::Float
     # r = getR(rₛ,γ)
     g = getG(β)
     r = getR(rₛ,μ,β,F,g,rng)
-    xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ) #system coordinates xyz
+    xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒ) #system coordinates xyz
     reflect = (xyzSys[3] < midPlaneXZ(xyzSys[1],i)) && (rand(rng) > ξ) #reflect particles from back of disk across disk midplane to front, leaving ξ fraction of particles in back
     if reflect
-        xyzSys = reflect!(xyzSys,i)
+        xyzSys = reflect_scalar(xyzSys[1],xyzSys[2],xyzSys[3],i)
     end
-    undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)] #i flipped to match convention that +x is closer to observer
-    xyPlane = undo_tilt*xyzSys
-    ϕ = atan(xyPlane[2],xyPlane[1]) #ϕ after rotation, measured from +x in disk plane
+    sini, cosi = sincos(i) #i flipped to match convention that +x is closer to observer
+    xyPlaneX = sini*xyzSys[1] - cosi*xyzSys[3] #undo_tilt = [sin(i) 0 -cos(i); 0 1 0; cos(i) 0 sin(i)] rows 1-2, row 3 unused
+    xyPlaneY = xyzSys[2]
+    ϕ = atan(xyPlaneY,xyPlaneX) #ϕ after rotation, measured from +x in disk plane
     η = response(r;kwargs...)
     return ring(r=r,i=i,v=v,I=I,ϕ=ϕ,ΔA=1.0,Δr=1.0,Δϕ=1.0,scale=nothing,rot=rot,θₒ=θₒ,ϕ₀=ϕ₀,reflect=reflect,rng=rng,η=η;kwargs...)
 end
