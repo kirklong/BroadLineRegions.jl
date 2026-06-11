@@ -62,11 +62,17 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
   - `Union{Nothing, Symbol}`
   - `:log` or `:linear` scale
 
+- `x`, `y`, `z`: Cached 3D system coordinates of each point (camera at +x), or `nothing`
+  - `Union{Vector{Float64}, Float64, Nothing}`
+  - Computed once at construction (or lazily by `getXYZ`) so hot loops never recompute `rotate3D`
+  - Values are *post-reflection*: if `reflect` is true the stored coordinates already include it
+  - Default `nothing`; access through `getXYZ(ring)` which fills the cache on first use
+
 # Constructor
 
 ```julia
-ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false, 
-    τ=0.0, η=1.0, Δr=1.0, Δϕ=1.0, scale=nothing, kwargs...)
+ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false,
+    τ=0.0, η=1.0, Δr=1.0, Δϕ=1.0, scale=nothing, x=nothing, y=nothing, z=nothing, kwargs...)
 ```
 
 Required parameters:
@@ -93,12 +99,16 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
     Δr::Float64
     Δϕ::Float64
     scale::Union{Nothing,Symbol}
+    x::Union{V,F,Nothing} #cached 3D system coordinates (post-reflection), nothing until computed -- see getXYZ
+    y::Union{V,F,Nothing}
+    z::Union{V,F,Nothing}
 
     function ring(;kwargs...) #could re-write this to use multiple dispatch? i.e. ring(;r::Float64, i::Float64, e::Float64, v::Float64, I::Float64, ϕ::Float64) etc.
         """
         constructor for ring struct -- takes in kwargs (detailed above) and returns a ring object (detailed above) while checking for errors
         """
         r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; ΔA = nothing; rot = 0.0; θₒ = 0.0; ϕ₀ = nothing; reflect = false; τ = 0.0; η = 1.0; Δr = 1.0; Δϕ = 1.0; scale = nothing
+        x = get(kwargs, :x, nothing); y = get(kwargs, :y, nothing); z = get(kwargs, :z, nothing) #cached coordinates are optional, no message when missing
         try; r = kwargs[:r]; catch; error("r must be provided as kwarg"); end
         try; i = kwargs[:i]; catch; error("i must be provided as kwarg"); end
         try; v = kwargs[:v]; catch; error("v must be provided as kwarg"); end
@@ -202,7 +212,14 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
             @assert τ>=0.0 "τ must be greater than or equal to 0"
         end
 
-        new{Vector{Float64},Float64}(r,i,rot,θₒ,v,I,ϕ,ϕ₀,ΔA,reflect,τ,η,Δr,Δϕ,scale)
+        for (val,name) in ((x,"x"),(y,"y"),(z,"z"))
+            @assert isnothing(val) || typeof(val) == Float64 || typeof(val) == Vector{Float64} "$name must be Float64, Vector{Float64}, or nothing, got $(typeof(val))"
+            if typeof(val) == Vector{Float64}
+                @assert length(val) == length(ϕ) "$name must be the same length as ϕ"
+            end
+        end
+
+        new{Vector{Float64},Float64}(r,i,rot,θₒ,v,I,ϕ,ϕ₀,ΔA,reflect,τ,η,Δr,Δϕ,scale,x,y,z)
     end
 end
 
@@ -405,10 +422,10 @@ mutable struct model
         """
         constructor for model struct -- takes in cloud rings and returns a model object (detailed above) while checking for errors
         """
-        r = [ring.r for ring in rings]; ϕ₀ = [ring.ϕ₀ for ring in rings]; i = [ring.i for ring in rings]; rot = [ring.rot for ring in rings]; θₒ = [ring.θₒ for ring in rings]; reflect = [ring.reflect for ring in rings]
-        α = zeros(length(r)); β = zeros(length(r))
-        for (i,(ri,ϕi,ii,roti,θₒi,reflecti)) in enumerate(zip(r,ϕ₀,i,rot,θₒ,reflect))
-            α[i], β[i] = photograph(ri,ϕi,ii,roti,θₒi,reflecti)  #get camera coordinates from physical 
+        α = zeros(length(rings)); β = zeros(length(rings))
+        for (i,r) in enumerate(rings)
+            xyz = getXYZ(r) #cached (or computed once here) system coordinates -- camera is at +x so α = y and β = z (see photograph)
+            α[i] = xyz[2]; β[i] = xyz[3]
         end
         new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
     end
@@ -451,14 +468,15 @@ mutable struct model
         α = rMesh .* cos.(ϕMesh); β = rMesh .* sin.(ϕMesh) #camera coordinates
         ΔA = scale == :log ? rMesh.^2 .* (Δr * Δϕ) : rMesh .* (Δr * Δϕ) #projected disk area, normalization doesn't matter
         rSystem = zeros(nr,nϕ); ϕSystem = zeros(nr,nϕ); ϕ₀ = zeros(nr,nϕ); η = zeros(nr,nϕ)
+        xSystem = zeros(nr,nϕ); ySystem = zeros(nr,nϕ); zSystem = zeros(nr,nϕ) #3D system coordinate cache (camera at +x)
         θₒ = 0.0; rot = 0.0
         r3D = get_r3D(i,rot,θₒ)
         undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)]
         M_raytrace = undo_tilt * r3D #constant for fixed (i, rot, θₒ) -- precompute once instead of per pixel
-        rt = 0.0; ϕt = 0.0; ϕ₀t = 0.0 #preallocate raytracing variables
+        rt = 0.0; ϕt = 0.0; ϕ₀t = 0.0; xt = 0.0; yt = 0.0; zt = 0.0 #preallocate raytracing variables
         for ri in 1:nr
             for ϕi in 1:nϕ
-                rt, ϕt, ϕ₀t = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, M_raytrace)
+                rt, ϕt, ϕ₀t, xt, yt, zt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, M_raytrace, r3D)
                 ηt = response(rt; kwargs...) #response function
                 # println("RAYTRACE: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
                 # x = β[ri,ϕi]/cos(i); y = α[ri,ϕi]; z = 0.0 #system coordinates from camera coordinates, raytraced back to disk plane
@@ -467,14 +485,17 @@ mutable struct model
                 # exit()
                 if round(rt,sigdigits=9) < round(rMin,sigdigits=9) || round(rt,sigdigits=9) > round(rMax,sigdigits=9) #exclude portions outside of (rMin, rMax), round because of numerical errors
                     rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = NaN, NaN, NaN, NaN
+                    xSystem[ri,ϕi], ySystem[ri,ϕi], zSystem[ri,ϕi] = NaN, NaN, NaN
                 else
                     rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = rt, ϕt, ϕ₀t, ηt
+                    xSystem[ri,ϕi], ySystem[ri,ϕi], zSystem[ri,ϕi] = xt, yt, zt
                 end
             end
         end
 
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕ₀ = [ϕ₀[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
-        rings = [ring(r = ri, i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η)]
+        xSystem = [xSystem[i,:] for i in 1:nr]; ySystem = [ySystem[i,:] for i in 1:nr]; zSystem = [zSystem[i,:] for i in 1:nr]
+        rings = [ring(r = ri, i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi, x=xi, y=yi, z=zi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi,xi,yi,zi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η,xSystem,ySystem,zSystem)]
         m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
     end
 

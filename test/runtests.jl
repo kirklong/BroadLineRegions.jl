@@ -1,5 +1,6 @@
 using BroadLineRegions
 using Test
+using Random
 
 # write tests here
 @testset "DiskWind model initialized successfully" begin
@@ -80,6 +81,54 @@ end
     tCenters,Ψt = BLR.getΨt(mP2,501,10/rsDay)
     @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 1.8, atol = 5e-1)
 end
+@testset "cached xyz coordinates (getXYZ)" begin
+    #disk model: cache populated at construction, NaN-masked consistently by removeNaN!
+    mD = BLR.DiskWindModel(500., 5., 1., 30/180*π, nr=32, nϕ=64, scale=:log,
+        f1=1.0, f2=1.0, f3=1.0, f4=1.0, reflect=false, τ=5.)
+    for r in mD.rings
+        @test !isnothing(r.x) && !isnothing(r.y) && !isnothing(r.z)
+        @test length(r.x) == length(r.I)
+        @test isnan.(r.x) == isnan.(r.I) #NaN sentinels must line up with intensity
+    end
+    BLR.removeNaN!(mD)
+    for r in mD.rings
+        @test length(r.x) == length(r.I) && length(r.y) == length(r.I) && length(r.z) == length(r.I)
+        @test !any(isnan, r.x)
+    end
+    #spot-check: cached values match a fresh rotate3D computation
+    #(after removeNaN! per-ring scalars may have been expanded to vectors -- handle both, see removeNaN!)
+    r1 = mD.rings[1]
+    k = 1
+    i1 = typeof(r1.i) == Float64 ? r1.i : r1.i[k]
+    rot1 = typeof(r1.rot) == Float64 ? r1.rot : r1.rot[k]
+    θₒ1 = typeof(r1.θₒ) == Float64 ? r1.θₒ : r1.θₒ[k]
+    reflect1 = typeof(r1.reflect) == Bool ? r1.reflect : r1.reflect[k]
+    fresh = BLR.rotate3D_scalar(r1.r[k], r1.ϕ₀[k], i1, rot1, θₒ1, reflect1)
+    @test isapprox(r1.x[k], fresh[1], rtol=1e-12) && isapprox(r1.y[k], fresh[2], rtol=1e-12) && isapprox(r1.z[k], fresh[3], rtol=1e-12)
+
+    #cloud model: cache populated by drawCloud (post-reflection), camera built from it
+    mC = BLR.cloudModel(2_000, μ=500., β=1.0, F=0.5, θₒ=40/180*π, i=20/180*π, γ=1.0, ξ=0.5,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.0, rng=MersenneTwister(7))
+    for r in mC.rings[1:100]
+        @test typeof(r.x) == Float64
+        fresh = BLR.rotate3D_scalar(r.r, r.ϕ₀, r.i, r.rot, r.θₒ, r.reflect)
+        @test isapprox(r.x, fresh[1], rtol=1e-12) && isapprox(r.y, fresh[2], rtol=1e-12) && isapprox(r.z, fresh[3], rtol=1e-12)
+    end
+    #camera coordinates must equal cached (y, z)
+    @test all(mC.camera.α[j] == mC.rings[j].y for j in 1:length(mC.rings))
+    @test all(mC.camera.β[j] == mC.rings[j].z for j in 1:length(mC.rings))
+    #delay spot-check: tCloud must agree with direct recomputation
+    rc = mC.rings[1]
+    @test isapprox(BLR.tCloud(rc), rc.η*(rc.r - BLR.rotate3D_scalar(rc.r, rc.ϕ₀, rc.i, rc.rot, rc.θₒ, rc.reflect)[1]), rtol=1e-12)
+
+    #lazy path: a hand-built ring without x/y/z computes and caches on first access
+    rl = BLR.ring(r=100.0, i=0.3, v=0.001, I=1.0, ϕ=0.5, ϕ₀=0.5, ΔA=1.0, rot=0.2, θₒ=0.1, reflect=true)
+    @test isnothing(rl.x)
+    xyz = BLR.getXYZ(rl)
+    @test !isnothing(rl.x) && rl.x == xyz[1] && rl.y == xyz[2] && rl.z == xyz[3]
+    @test all(collect(xyz) .== BLR.rotate3D(100.0, 0.5, 0.3, 0.2, 0.1, true)) #reflection already applied exactly once
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin

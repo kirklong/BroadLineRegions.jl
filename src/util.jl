@@ -101,6 +101,23 @@ function removeNaN!(m::model)
                 ring.reflect = fill(ring.reflect,length(ring.I))
                 ring.reflect = ring.reflect[NaNMask] #keep only not NaN reflect flags
             end
+            #cached coordinates are per-point: mask like the other fields, but if the cache is in an
+            #unexpected shape just drop it (getXYZ will lazily recompute from the masked geometry)
+            if !isnothing(ring.x) && length(ring.x) == length(ring.I)
+                ring.x = ring.x[NaNMask] #keep only not NaN x coordinates
+            elseif !isnothing(ring.x) && sum(NaNMask) != 0
+                ring.x = nothing
+            end
+            if !isnothing(ring.y) && length(ring.y) == length(ring.I)
+                ring.y = ring.y[NaNMask] #keep only not NaN y coordinates
+            elseif !isnothing(ring.y) && sum(NaNMask) != 0
+                ring.y = nothing
+            end
+            if !isnothing(ring.z) && length(ring.z) == length(ring.I)
+                ring.z = ring.z[NaNMask] #keep only not NaN z coordinates
+            elseif !isnothing(ring.z) && sum(NaNMask) != 0
+                ring.z = nothing
+            end
             ring.I = ring.I[NaNMask] #keep only not NaN intensities
         end
     end
@@ -515,6 +532,51 @@ function rotate3D(r::Float64,ϕ₀::Float64,i::Float64,rot::Float64,θₒ::Float
     return collect(rotate3D_scalar(r,ϕ₀,i,rot,θₒ,reflect))
 end
 """
+    getXYZ(ring::ring)
+
+Return the 3D system coordinates `(x, y, z)` of every point in `ring` (camera at +x).
+
+Uses the cached `ring.x/y/z` fields when present; otherwise computes them with
+`rotate3D_scalar` and stores them on the (mutable) ring so the transform is only
+ever done once per point.
+
+# Returns
+- For a cloud/point ring (scalar fields): `NTuple{3,Float64}`
+- For a continuous ring (vector fields): `Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}`
+
+!!! warning "Reflection already applied"
+    Cached coordinates are *post-reflection* — if `ring.reflect` is true the stored values already
+    include the reflection across the disk midplane. Never apply `reflect!`/`reflect_scalar` to the
+    result of `getXYZ` a second time.
+
+!!! warning "Geometry mutation"
+    The cache is filled from `r`, `ϕ₀`, `i`, `rot`, `θₒ` at first access. If you mutate any of those
+    fields afterwards, set `ring.x = nothing; ring.y = nothing; ring.z = nothing` to force a recompute.
+"""
+function getXYZ(ring::ring)
+    if !isnothing(ring.x) && !isnothing(ring.y) && !isnothing(ring.z)
+        return ring.x, ring.y, ring.z
+    end
+    if typeof(ring.r) == Float64 && typeof(ring.ϕ₀) == Float64 #cloud/point ring
+        xyz = rotate3D_scalar(ring.r, ring.ϕ₀, ring.i, ring.rot, ring.θₒ, ring.reflect)
+        ring.x = xyz[1]; ring.y = xyz[2]; ring.z = xyz[3]
+        return xyz
+    else #continuous ring -- per-point fields may be scalars or vectors (see removeNaN! for the canonical pattern)
+        n = length(ring.r)
+        x = Vector{Float64}(undef,n); y = Vector{Float64}(undef,n); z = Vector{Float64}(undef,n)
+        for k in 1:n
+            ik = typeof(ring.i) == Float64 ? ring.i : ring.i[k]
+            rotk = typeof(ring.rot) == Float64 ? ring.rot : ring.rot[k]
+            θₒk = typeof(ring.θₒ) == Float64 ? ring.θₒ : ring.θₒ[k]
+            reflectk = typeof(ring.reflect) == Bool ? ring.reflect : ring.reflect[k]
+            x[k], y[k], z[k] = rotate3D_scalar(ring.r[k], ring.ϕ₀[k], ik, rotk, θₒk, reflectk)
+        end
+        ring.x = x; ring.y = y; ring.z = z
+        return x, y, z
+    end
+end
+
+"""
     rotate3D(r::Float64, ϕ₀::Float64, i::Float64, matrix::Matrix{Float64}, reflect::Bool=false)
 Transform from ring coordinates to 3D coordinates where camera is at +x using a precomputed rotation matrix.
 # Parameters
@@ -620,12 +682,9 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
                     xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D_scalar(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect)
                 end
             end
-        else #if r is just a vector (with ϕ and i matching)
-            rot = getVariable(model,:rot)
-            θₒ = getVariable(model,:θₒ)
-            reflect = getVariable(model,:reflect)
-            for ii in 1:length(r)
-                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D_scalar(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],reflect[ii])
+        else #if r is just a vector (with ϕ and i matching) -- cloud/point rings, one point per ring
+            for (ii,r) in enumerate(model.rings)
+                xtmp[ii],ytmp[ii],ztmp[ii] = getXYZ(r) #cached system coordinates
             end
         end
         boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])

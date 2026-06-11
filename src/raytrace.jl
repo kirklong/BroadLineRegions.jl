@@ -62,6 +62,32 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
 end
 
 """
+    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64}, r3D::Matrix{Float64})
+
+Same as the 6-argument `raytrace(α, β, i, rot, θₒPoint, M)` method but additionally returns the 3D
+*system* coordinates of the intersection point (camera at +x), computed from the supplied
+`r3D = get_r3D(i, rot, θₒPoint)` matrix. Used at model construction to fill the per-point
+coordinate cache (`ring.x/y/z`) without a second rotation pass.
+
+# Returns
+- `r, ϕ, ϕ₀, x, y, z` (all `Float64`)
+"""
+function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64}, r3D::Matrix{Float64})
+    cosr = cos(rot); sinr = sin(rot); cosi = cos(i); sini = sin(i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint) #flip i to match convention that +x is closer
+    xRing = -(β*cosr - α*cosi*sinr)/(cosi*cosθₒ+cosr*sini*sinθₒ) #system x, negative because want bottom towards camera
+    yRing = (α*(cosi*cosθₒ+sini/cosr*sinθₒ)+β*cosθₒ*sinr/cosr)/(cosi*cosθₒ/cosr+sini*sinθₒ)
+    r = √(xRing^2 + yRing^2)
+    ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
+    x = r3D[1,1]*xRing + r3D[1,2]*yRing #system coordinates (z component of ring coordinates is 0 so third columns never contribute)
+    y = r3D[2,1]*xRing + r3D[2,2]*yRing
+    z = r3D[3,1]*xRing + r3D[3,2]*yRing
+    xd = M[1,1]*xRing + M[1,2]*yRing #disk-plane ("puffed up" + tilt undone) coordinates for ϕ
+    yd = M[2,1]*xRing + M[2,2]*yRing
+    ϕ = atan(yd,xd) #ϕ after rotation and being "puffed up", measured from +x in disk plane
+    return r, ϕ, ϕ₀, x, y, z
+end
+
+"""
     raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, 
             r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, 
             colBuff::Vector{Float64})
@@ -203,7 +229,7 @@ function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,ro
         end
     end
     for ring in m.rings[.!diskFlagRing]
-        xyzCloud = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
+        xyzCloud = rotate3D === rotate3D_scalar ? getXYZ(ring) : rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #cached system coordinates xyz unless a custom rotate3D was passed
         zDisk = midPlaneXZ(xyzCloud[1],iDisk) #z value of disk at x value of cloud
         if xyzCloud[3] < zDisk #cloud below disk -- invisible to camera
             ring.I = 0.0
@@ -291,7 +317,7 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
     ϕList = [m.rings[i].ϕ for i in 1:length(m.rings)]
     cloudRingInds = [i for i in 1:length(m.rings) if typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64]
     for i in cloudRingInds #check if r inside rMin/max, then find closest disk cell, then compare xs and flag for removal if xCloud behind xDisk
-        xyzSys = rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect) #system coordinates xyz
+        xyzSys = rotate3D === rotate3D_scalar ? getXYZ(m.rings[i]) : rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect) #cached system coordinates xyz unless a custom rotate3D was passed
         xCloud = xyzSys[1]
         α,β = m.camera.α[αβStartInds[i]],m.camera.β[αβStartInds[i]]
         rCam = sqrt(α^2 + β^2)
@@ -299,7 +325,7 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
         if (rCam > rMinDisk) && (rCam < rMaxDisk)
             rDiskInd = argmin(abs.(rCam .- rUnique))
             ϕDiskInd = argmin(abs.(ϕCam .- ϕList[rDiskInd]))
-            xDisk = rotate3D(m.rings[rDiskInd].r[ϕDiskInd],m.rings[rDiskInd].ϕ₀[ϕDiskInd],m.rings[rDiskInd].i,m.rings[rDiskInd].rot,m.rings[rDiskInd].θₒ,m.rings[rDiskInd].reflect)[1] #system coordinates xyz
+            xDisk = rotate3D === rotate3D_scalar ? getXYZ(m.rings[rDiskInd])[1][ϕDiskInd] : rotate3D(m.rings[rDiskInd].r[ϕDiskInd],m.rings[rDiskInd].ϕ₀[ϕDiskInd],m.rings[rDiskInd].i,m.rings[rDiskInd].rot,m.rings[rDiskInd].θₒ,m.rings[rDiskInd].reflect)[1] #system coordinates xyz (cached x vector indexed at this point unless a custom rotate3D was passed)
             if xCloud < xDisk #cloud behind disk
                 removeFlag[i] = true
             end
