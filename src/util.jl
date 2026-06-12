@@ -4,7 +4,10 @@ using Plots, RecipesBase
 """
     reset!(m::model; profiles=true, img=false)
 
-Erase existing profiles/raytrace status.
+Erase existing profiles/raytrace status and invalidate the model's `getVariable` cache.
+
+Call this after mutating ring fields directly (e.g. `m.rings[1].I .= ...`) so that subsequent
+`getVariable`/`getProfile` calls see the new values instead of memoized ones.
 
 # Parameters
 - `m::model`: Model object to reset
@@ -12,11 +15,14 @@ Erase existing profiles/raytrace status.
 - `img::Bool=false`: If true, reset raytracing boolean (does not change existing model but allows model to be raytraced again after combining other new models)
 """
 function reset!(m::model;profiles=true,img=false)
-    if profiles 
+    if profiles
         m.profiles = Dict{Symbol,profile}()
     end
     if img
         m.camera.raytraced = false
+    end
+    if !isnothing(m.cache)
+        empty!(m.cache) #invalidate memoized getVariable results
     end
 end
 
@@ -32,6 +38,9 @@ Remove points with `I = NaN` from model.
 - `m::model`: Model with NaN points removed
 """
 function removeNaN!(m::model)
+    if !isnothing(m.cache)
+        empty!(m.cache) #defend against a stale cache if rings were mutated without reset! -- gather fresh below
+    end
     I = getVariable(m,:I,flatten=true)
     NaNMask = .!isnan.(I)
     #remove camera points with I = 0.0
@@ -123,6 +132,7 @@ function removeNaN!(m::model)
     end
     m.rings = m.rings[ringMask] #filter out cloud NaN rings
     m.rings =  filter(ring -> length(ring.I) > 0, m.rings) #filter out rings with no points left
+    m.cache = Dict{Any,Array}() #invalidate (and re-enable, if disabled) the getVariable cache -- ring contents changed
     oldLength = length(m.rings[1].I) #get length of first ring to use as reference
     m.subModelStartInds = [1] #reset subModelStartInds to only include first ring
     for (i,ring) in enumerate(m.rings[2:end])
@@ -232,7 +242,14 @@ function getVariable(m::model,variable::Symbol;flatten=false) # method for getti
     if variable ∉ fieldnames(ring)
         throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
     end
+    if !isnothing(m.cache)
+        cached = get(m.cache, (variable, flatten), nothing)
+        if !isnothing(cached)
+            return cached #treat as read-only -- see cache contract in the model docstring
+        end
+    end
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
+    res = nothing
     if isCombined
         startInds = m.subModelStartInds
         chunks = []
@@ -253,14 +270,40 @@ function getVariable(m::model,variable::Symbol;flatten=false) # method for getti
                 res[startInd:endInd] = chunk
             end
         end
+    else
+        res = gatherStack(m.rings, variable)
+        if flatten
+            res = vec(res) #flatten the matrix to a vector
+        end
+    end
+    if !isnothing(m.cache)
+        m.cache[(variable, flatten)] = res
+    end
+    return res
+end
+
+"""
+    gatherStack(rings::Vector{ring}, variable::Symbol)
+
+Typed helper (function barrier) for `getVariable`: stacks `getfield(ring, variable)` over all rings
+into a `Vector` (one scalar per ring, e.g. cloud models) or a `Matrix` with one row per ring
+(vector-valued fields), without the intermediate vector-of-vectors that `stack` requires.
+Preserves the element type of the field (e.g. `Bool` for `:reflect`).
+"""
+function gatherStack(rings::Vector{ring}, variable::Symbol)
+    fv = getfield(rings[1], variable)
+    if fv isa AbstractVector
+        res = Matrix{eltype(fv)}(undef, length(rings), length(fv))
+        @inbounds for k in eachindex(rings)
+            res[k,:] .= getfield(rings[k], variable)
+        end
         return res
     else
-        res = stack([getfield(ring,variable) for ring in m.rings],dims=1)
-        if flatten
-            return vec(res) #flatten the matrix to a vector
-        else
-            return res #return as is
+        res = Vector{typeof(fv)}(undef, length(rings))
+        @inbounds for k in eachindex(rings)
+            res[k] = getfield(rings[k], variable)
         end
+        return res
     end
 end
 
@@ -268,8 +311,31 @@ end
     getVariable(m::model, variable::Function; flatten=false)
 
 Retrieve model variable when specified as a `Function`. See main docstring for details.
+
+# Note
+Results are memoized in `m.cache` only for the package's own pure delay functions
+(`t`, `tDisk`, `tCloud`) — user-supplied functions are always re-evaluated, since they may
+capture state the cache cannot see.
 """
 function getVariable(m::model,variable::Function;flatten=false) # method for getting variable if Function
+    if variable == t && length(m.subModelStartInds) == 1 && length(m.rings) > 0
+        variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud #resolve t up front so the cache key is the concrete function
+    end
+    cacheable = variable === tDisk || variable === tCloud #only package-owned pure functions -- never cache user closures
+    if cacheable && !isnothing(m.cache)
+        cached = get(m.cache, (variable, flatten), nothing)
+        if !isnothing(cached)
+            return cached #treat as read-only -- see cache contract in the model docstring
+        end
+    end
+    res = getVariableFunction(m, variable; flatten=flatten)
+    if cacheable && !isnothing(m.cache)
+        m.cache[(variable, flatten)] = res
+    end
+    return res
+end
+
+function getVariableFunction(m::model,variable::Function;flatten=false) #uncached implementation, see getVariable
     res = nothing
     isCombined = m.subModelStartInds != [1]
     if isCombined

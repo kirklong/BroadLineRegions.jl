@@ -415,6 +415,10 @@ A mutable structure to hold many rings and their parameters that model the BLR.
 - `profiles::Union{Nothing,Dict{Symbol,profile}}`: Dictionary of profiles (see `profile` struct) with keys as symbols; optional, usually initialized to empty dictionary and filled in with `setProfile!`
 - `camera::Union{Nothing,camera}`: Camera coordinates (α,β) corresponding to each ring used to generate images and in raytracing, see `camera` struct
 - `subModelStartInds::Vector{Int}`: Indices of start of each submodel in list of rings; used to separate out submodels for raytracing or for the recovery of individual models after being combined
+- `cache::Union{Nothing,Dict{Any,Array}}`: Memoized `getVariable` results so repeated profile calculations
+  don't re-gather data from the rings. Managed automatically by the package's own mutating functions;
+  if you mutate ring fields directly, call `reset!(m)` afterwards to invalidate it. Set to `nothing`
+  to disable caching for a model entirely.
 
 # Constructors
 ```julia
@@ -441,6 +445,10 @@ mutable struct model
     profiles::Union{Nothing,Dict{Symbol,profile}}
     camera::Union{Nothing,camera}
     subModelStartInds::Vector{Int} #indices of start of each submodel in list of rings
+    cache::Union{Nothing,Dict{Any,Array}} #memoized getVariable results, keyed by (variable, flatten); set to nothing to disable caching entirely
+    #cache contract: any code that mutates ring fields directly must call reset!(m) (which empties the
+    #cache) before the next getVariable/getProfile call -- the package's own mutating functions
+    #(removeNaN!, raytrace!, zeroDiskObscuredClouds!, removeDiskObscuredClouds!, +) handle this themselves
     #note: move α,β for every point (as currently defined) to new struct -- camera α and β should be user defined and separate
     #also keep track of xyz in this new struct? call it coords and have one field be camera and the other be system
     #or just put it in each ring? probably less cluttered/better...do tomorrow
@@ -449,7 +457,7 @@ mutable struct model
         """
         constructor for model struct -- takes in rings, profiles, camera, and subModelStartInds and returns a model object (detailed above) while checking for errors
         """
-        new(rings,profiles,camera,subModelStartInds)
+        new(rings,profiles,camera,subModelStartInds,Dict{Any,Array}())
     end
 
     function model(rings::Vector{ring{Vector{Float64},Float64}})
@@ -461,7 +469,7 @@ mutable struct model
             xyz = getXYZ(r) #cached (or computed once here) system coordinates -- camera is at +x so α = y and β = z (see photograph)
             α[i] = xyz[2]; β[i] = xyz[3]
         end
-        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
+        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}())
     end
 
     function model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
@@ -514,7 +522,7 @@ mutable struct model
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕ₀ = [ϕ₀[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
         xSystem = [xSystem[i,:] for i in 1:nr]; ySystem = [ySystem[i,:] for i in 1:nr]; zSystem = [zSystem[i,:] for i in 1:nr]
         rings = [ring(r = ri, i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi, x=xi, y=yi, z=zi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi,xi,yi,zi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η,xSystem,ySystem,zSystem)]
-        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
+        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}())
     end
 
     function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)

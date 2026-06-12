@@ -129,6 +129,39 @@ end
     @test all(collect(xyz) .== BLR.rotate3D(100.0, 0.5, 0.3, 0.2, 0.1, true)) #reflection already applied exactly once
 end
 
+@testset "getVariable cache" begin
+    m = BLR.DiskWindModel(500., 5., 1., 30/180*π, nr=16, nϕ=32, scale=:log,
+        f1=1.0, f2=1.0, f3=1.0, f4=1.0, reflect=false, τ=5.)
+    v1 = BLR.getVariable(m, :I)
+    @test BLR.getVariable(m, :I) === v1 #cache hit returns the memoized array
+    vf = BLR.getVariable(m, :I, flatten=true)
+    @test isequal(vf, vec(v1)) #flattened variant cached under its own key but consistent
+    #invalidation contract: reset! after direct ring mutation
+    m.rings[1].I[1] = 12345.6789
+    BLR.reset!(m)
+    v2 = BLR.getVariable(m, :I)
+    @test v2 !== v1
+    @test v2[1,1] == 12345.6789
+    #package delay functions are memoized; user functions are always re-evaluated
+    d1 = BLR.getVariable(m, BLR.t)
+    @test BLR.getVariable(m, BLR.t) === d1
+    myfun(ring) = ring.r
+    @test BLR.getVariable(m, myfun) !== BLR.getVariable(m, myfun)
+    @test isequal(BLR.getVariable(m, myfun), BLR.getVariable(m, :r))
+    #combining models starts with a fresh cache
+    mc = m + m
+    @test isempty(mc.cache)
+    #cache can be disabled entirely
+    m.cache = nothing
+    @test BLR.getVariable(m, :I) !== BLR.getVariable(m, :I)
+    #removeNaN! re-enables and repopulates consistently
+    m2 = BLR.DiskWindModel(500., 5., 1., 30/180*π, nr=16, nϕ=32, scale=:log,
+        f1=1.0, f2=1.0, f3=1.0, f4=1.0, reflect=false, τ=5.)
+    BLR.getVariable(m2, :I) #populate
+    BLR.removeNaN!(m2)
+    @test !any(isnan, BLR.getVariable(m2, :I, flatten=true)) #post-removal gather is fresh, not stale
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin

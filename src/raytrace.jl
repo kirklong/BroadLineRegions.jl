@@ -456,6 +456,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
             
             baseCam = camera(baseModelα,baseModelβ,false) #camera object for base model
             baseModel = model(baseModelRings,Dict{Symbol,profile}(),baseCam,[1]) #initialize new model object with base model rings
+            baseModel.cache = nothing #disable getVariable memoization -- raytracing mutates rings then re-gathers, cache would go stale (removeNaN! re-enables at the end)
             base_r = getVariable(baseModel,:r,flatten=true)
             base_i = getVariable(baseModel,:i,flatten=true)
             base_ϕ = getVariable(baseModel,:ϕ,flatten=true)
@@ -505,6 +506,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
                     if j != baseModelInd
                         endInd = j == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[j+1]-1 #end index of submodel
                         subModel = model(m.rings[m.subModelStartInds[j]:endInd],nothing,nothing,[j]) #submodel to check
+                        subModel.cache = nothing #per-pixel temporary -- don't pay cache bookkeeping (and rings mutate between pixels)
                         camStartInd = camStartInds[j] #flattened camera index for this submodel
                         camEndInd = j == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[j+1]-1 #flattened camera index for the next submodel
                         αSegment = m.camera.α[camStartInd:camEndInd]
@@ -675,6 +677,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
                         camera_j = camera(m.camera.α[camStartInds[j]:endInd],m.camera.β[camStartInds[j]:endInd],false) #camera α coordinates for submodel j
                         endInd = i == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[i+1]-1 #ring index for the next submodel
                         subModelI = model(m.rings[m.subModelStartInds[i]:endInd],nothing,camera_i,[1]) #submodel i to check
+                        subModelI.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
                         endInd = j == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[j+1]-1 #ring index for the next submodel
                         subModelI += model(m.rings[m.subModelStartInds[j]:endInd],nothing,camera_j,[1]) #add j to check
                         IRatiosTmp = deepcopy(IRatios[i,j])
@@ -688,6 +691,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
                                         rMin = minimum([gridInfo[i][1],gridInfo[j][1]]) #minimum radius of continuous models i and j
                                         rMax = maximum([gridInfo[i][2],gridInfo[j][2]]) #maximum radius of continuous models i and j
                                         subModel_ii = model(m.rings[m.subModelStartInds[ii]:endInd],nothing,camera_ii,[1]) #submodel ii to check
+                                        subModel_ii.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
                                         for (jj,ring) in enumerate(subModel_ii.rings)
                                             rtmp = sqrt(subModel_ii.camera.α[jj]^2 + subModel_ii.camera.β[jj]^2) #camera coordinates
                                             if rtmp <= rMin || rtmp >= rMax #free floating cloud, mark for "deletion" (still in original model m, but don't want to add duplicates in this step)
@@ -728,6 +732,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
             camtmp = camera(m.camera.α[camStartInds[firstSubModel]:endInd],m.camera.β[camStartInds[firstSubModel]:endInd],false) #camera α coordinates for first discrete model
             endInd = firstSubModel == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[firstSubModel+1]-1 #ring index for the next submodel
             subModel = model(m.rings[m.subModelStartInds[firstSubModel]:endInd],nothing,camtmp,[1]) #submodel to check
+            subModel.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
             for i in firstSubModel:length(m.subModelStartInds) 
                 if (gridInfo[i][3] == 1) && (i > firstSubModel) #not first discrete model, check for overlaps
                     endInd = i == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[i+1]-1 #flattened camera index for the next submodel

@@ -214,8 +214,30 @@ function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vecto
 end
 
 """
-    getProfile(m::model, name::Union{String,Symbol,Function}; 
-               bins::Union{Int,Vector{Float64}}=100, 
+    binWeightedMean(m::model, x, yNum, yDen, bins, dx; kwargs...)
+
+Shared helper for the weighted-mean profile options of `getProfile` (`:delay`, `:r`, `:ϕ`):
+bins `yNum.*dA` and `yDen.*dA` over `x` and returns `(edges, centers, num./den)`.
+Replicates `binModel`'s `ΔA` shape fix-up (per-ring scalar `ΔA` broadcast across a matrix `y`).
+Operates on precomputed arrays so the gathers can come from the model's memoized cache.
+"""
+function binWeightedMean(m::model, x, yNum, yDen, bins, dx; kwargs...)
+    dA = isnothing(dx) ? getVariable(m,:ΔA) : dx
+    if size(yNum) != size(dA)
+        if size(dA)[1] == size(yNum)[1] && typeof(m.rings[1].ΔA) == Float64
+            dA = stack([dA for _ in 1:size(yNum)[2]],dims=2)
+        else
+            throw(ArgumentError("y and dA must be the same size, got $(size(yNum)) and $(size(dA))\nconsider supplying custom dx = Array{Float64,}(size(y)) (use ones for equal weighting)"))
+        end
+    end
+    pNum = binnedSum(x, yNum.*dA, bins=bins; kwargs...)
+    pDen = binnedSum(x, yDen.*dA, bins=bins; kwargs...)
+    return (pNum[1], pNum[2], pNum[3]./pDen[3])
+end
+
+"""
+    getProfile(m::model, name::Union{String,Symbol,Function};
+               bins::Union{Int,Vector{Float64}}=100,
                dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
 
 Return a profile for the model based on the specified name.
@@ -249,22 +271,36 @@ function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{I
     if n == :line
         p = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
     elseif n == :delay
-        #d(ring::ring;kwargs...) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring;kwargs...).*ring.I : tDisk(ring;kwargs...).*ring.I
-        d(ring::ring;kwargs...) = t(ring;kwargs...).*ring.I 
-        den(ring::ring;) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η 
-        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=d,xVariable=:v;kwargs...)
-        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=den,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=den,xVariable=:v;kwargs...)
-        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        if length(m.subModelStartInds) == 1 #fast path: memoized arrays (getVariable(m,t) hits m.cache; broadcasting aligns per-ring scalars row-wise)
+            delays = getVariable(m,t); I = getVariable(m,:I); η = getVariable(m,:η); v = getVariable(m,:v)
+            p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
+        else #combined models: per-ring evaluation -- flattened arrays lose ring boundaries for per-ring scalar fields like η
+            d(ring::ring;kwargs...) = t(ring;kwargs...).*ring.I
+            den(ring::ring;) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η
+            pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=d,xVariable=:v;kwargs...)
+            pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=den,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=den,xVariable=:v;kwargs...)
+            p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        end
     elseif n == :r
-        r(ring::ring) = ring.r.*ring.I
-        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=r,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
-        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
-        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        if isnothing(dx) && length(m.subModelStartInds) == 1 #fast path from memoized arrays
+            rr = getVariable(m,:r); I = getVariable(m,:I); v = getVariable(m,:v)
+            p = binWeightedMean(m, v, rr.*I, I, bins, nothing; kwargs...)
+        else #combined models, or user-supplied dx (where the numerator is unweighted by I -- pre-existing behavior, kept for compatibility)
+            r(ring::ring) = ring.r.*ring.I
+            pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=r,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
+            pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+            p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        end
     elseif n == :ϕ
-        ϕ(ring::ring) = ring.ϕ.*ring.I
-        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=ϕ,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
-        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
-        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        if isnothing(dx) && length(m.subModelStartInds) == 1 #fast path from memoized arrays
+            ϕϕ = getVariable(m,:ϕ); I = getVariable(m,:I); v = getVariable(m,:v)
+            p = binWeightedMean(m, v, ϕϕ.*I, I, bins, nothing; kwargs...)
+        else #combined models, or user-supplied dx (where the numerator is unweighted by I -- pre-existing behavior, kept for compatibility)
+            ϕ(ring::ring) = ring.ϕ.*ring.I
+            pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=ϕ,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
+            pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+            p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        end
     elseif n == :phase
         edges,centers,avgPhase = phase(m,returnAvg=true;kwargs...)
         p = (edges, centers, avgPhase)

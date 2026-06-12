@@ -10,6 +10,7 @@ Base.:+(m1::model,m2::model) = begin
     mCombined.rings = [r1...; r2...]
     mCombined.subModelStartInds = push!(mCombined.subModelStartInds, length(r1)+1)
     mCombined.profiles = Dict{Symbol,profile}()
+    mCombined.cache = Dict{Any,Array}() #fresh cache -- combined rings differ from m1's
     α1 = m1.camera.α; α2 = m2.camera.α
     β1 = m1.camera.β; β2 = m2.camera.β
     raytraced = m1.camera.raytraced || m2.camera.raytraced

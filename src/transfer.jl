@@ -25,8 +25,7 @@ function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
     v = getVariable(m,:v)
-    d(ring::ring) = t(ring)
-    delays = getVariable(m,d)
+    delays = getVariable(m,t) #pass t itself (not a closure) so the result is memoized in m.cache
     Ψ = Array{Float64}(undef,length(vEdges)-1,length(tEdges)-1)
     for i in 1:length(vEdges)-1
         for j in 1:length(tEdges)-1
