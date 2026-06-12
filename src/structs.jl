@@ -382,6 +382,10 @@ allocation-free. Fills the supplied matrices in place; out-of-range pixels
 (`r < rMin` or `r > rMax`, compared after rounding to 9 significant digits) are set to NaN.
 `M` and `r3D` are the precomputed matrices described in `raytrace`; `ηₒ, η₁, αRM, rNorm` are the
 `response` parameters (hoisted from kwargs once instead of splatted per pixel).
+
+Rows are processed in parallel when Julia is started with multiple threads (`julia -t N`).
+Every pixel writes only its own matrix slots and the computation is deterministic, so results
+are bit-identical at any thread count.
 """
 function fillDiskGrid!(rSystem::Matrix{Float64}, ϕSystem::Matrix{Float64}, ϕ₀::Matrix{Float64}, η::Matrix{Float64},
         xSystem::Matrix{Float64}, ySystem::Matrix{Float64}, zSystem::Matrix{Float64},
@@ -389,7 +393,7 @@ function fillDiskGrid!(rSystem::Matrix{Float64}, ϕSystem::Matrix{Float64}, ϕ�
         M::Matrix{Float64}, r3D::Matrix{Float64}, rMin::Float64, rMax::Float64,
         ηₒ::Float64, η₁::Float64, αRM::Float64, rNorm::Float64)
     rMinR = round(rMin,sigdigits=9); rMaxR = round(rMax,sigdigits=9) #constant over the loop -- hoisted
-    for ri in axes(α,1)
+    Threads.@threads for ri in axes(α,1)
         for ϕi in axes(α,2)
             rt, ϕt, ϕ₀t, xt, yt, zt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, M, r3D)
             if round(rt,sigdigits=9) < rMinR || round(rt,sigdigits=9) > rMaxR #exclude portions outside of (rMin, rMax), round because of numerical errors
@@ -521,7 +525,13 @@ mutable struct model
 
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕ₀ = [ϕ₀[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
         xSystem = [xSystem[i,:] for i in 1:nr]; ySystem = [ySystem[i,:] for i in 1:nr]; zSystem = [zSystem[i,:] for i in 1:nr]
-        rings = [ring(r = ri, i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi, x=xi, y=yi, z=zi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi,xi,yi,zi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η,xSystem,ySystem,zSystem)]
+        #rings are independent of each other, so build them in parallel when Julia has multiple threads
+        #(the I and v functions are evaluated concurrently across rings -- the built-in ones are pure;
+        #custom I/v functions passed to the constructor must be thread-safe to benefit from julia -t N)
+        rings = Vector{ring{Vector{Float64},Float64}}(undef, nr)
+        Threads.@threads for k in 1:nr
+            rings[k] = ring(r = rSystem[k], i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕSystem[k], ϕ₀ = ϕ₀[k], ΔA = ΔA[k], rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=η[k], x=xSystem[k], y=ySystem[k], z=zSystem[k]; kwargs...)
+        end
         m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}())
     end
 
