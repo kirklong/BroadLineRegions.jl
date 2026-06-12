@@ -253,6 +253,43 @@ end
     end
 end
 
+@testset "transfer functions single-pass" begin
+    #reference = the old masked algorithm, written out explicitly; new code must match
+    #(bin assignment exactly; sums to summation-order rounding)
+    mD = BLR.DiskWindModel(500., 5., 1., 30/180*π, nr=16, nϕ=32, scale=:log,
+        f1=1.0, f2=1.0, f3=1.0, f4=1.0, reflect=false, τ=5.) #keeps NaN sentinel pixels -- exercises NaN exclusion
+    mC = BLR.cloudModel(2_000, μ=500., β=1.0, F=0.5, θₒ=40/180*π, i=20/180*π, γ=1.0, ξ=0.5,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.0, rng=MersenneTwister(21))
+    for m in (mD, mC, mD + mC)
+        I = BLR.getVariable(m,:I); ΔA = BLR.getVariable(m,:ΔA); v = BLR.getVariable(m,:v); d = BLR.getVariable(m,BLR.t)
+        vEdges = collect(range(-0.05, stop=0.05, length=12))
+        tEdges = collect(range(0.0, stop=1500.0, length=9))
+        Ψ = BLR.getΨ(m, vEdges, tEdges)
+        for i in 1:length(vEdges)-1, j in 1:length(tEdges)-1
+            mask = (v .>= vEdges[i]) .& (v .< vEdges[i+1]) .& (d .>= tEdges[j]) .& (d .< tEdges[j+1])
+            s = sum(I[mask].*ΔA[mask])
+            expected = s > 0 ? s : 1e-30
+            @test isapprox(Ψ[i,j], expected, rtol=1e-12)
+            @test (Ψ[i,j] == 1e-30) == (expected == 1e-30) #empty/poisoned bins identical
+        end
+        for ovf in (false, true)
+            Ψt = BLR.getΨt(m, tEdges, ovf)
+            ref = map(1:length(tEdges)-1) do j
+                mask = (d .>= tEdges[j]) .& (d .< tEdges[j+1])
+                s = sum(I[mask].*ΔA[mask])
+                s > 0 ? s : 1e-30
+            end
+            if ovf
+                sU = sum(I[(d .< tEdges[1])].*ΔA[(d .< tEdges[1])])
+                sO = sum(I[(d .>= tEdges[end])].*ΔA[(d .>= tEdges[end])])
+                ref[1] += sU > 0 ? sU : 1e-30
+                ref[end] += sO > 0 ? sO : 1e-30
+            end
+            @test all(isapprox.(Ψt, ref, rtol=1e-12))
+        end
+    end
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin
