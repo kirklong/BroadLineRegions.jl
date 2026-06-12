@@ -130,11 +130,18 @@ tDisk(ring::ring) = @. ring.η*ring.r*(1 - cos(ring.ϕ)*sin(ring.i)) #time delay
 """
     tCloud(ring::ring)
 
-    Calculate time delays for a cloud with opening angle ``\\theta_o`` as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
+    Calculate time delays from the general geometric formula ``t = \\eta (r - x)``, where ``x`` is the
+    3D system coordinate of the point towards the camera (cached on the ring, see `getXYZ`).
+
+    Despite the name this is exact for *any* geometry: for a flat ring (``\\theta_o = 0``) it reduces
+    algebraically to the `tDisk` formula (``x = r\\cos\\phi\\sin i``), and unlike `tDisk` it also
+    accounts for lifted (``\\theta_o \\neq 0``) and reflected points. Works on both point (scalar) and
+    continuous (vector) rings.
 """
 tCloud(ring::ring) = begin
-    xyzSys = getXYZ(ring) #cached system coordinates xyz (computed once, reused every call)
-    return ring.η*(ring.r - xyzSys[1]) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
+    x = getXYZ(ring)[1] #cached system coordinates (computed once, reused every call)
+    η = ring.η; r = ring.r
+    return @. η*(r - x) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
 end
 """
     t(ring::ring)
@@ -156,16 +163,6 @@ end
 #     It is more peformant to pass the function directly rather than figure it out on the fly if known ahead of time.
 # """
 t(ring::ring,subFxn::Function) = subFxn(ring) #allow for custom time delay function, e.g. tDisk or tCloud
-
-"""
-    tPerRing(ring::ring)
-
-Same as `t(ring)`, but under a name that `getVariable` will *not* substitute: passing `t` to
-`getVariable` on a combined model resolves it to `tDisk`/`tCloud` once from `m.rings[1]`, whereas
-`tPerRing` lets `t` choose per ring — required for mixed disk+cloud models where different
-submodels need different delay formulae. Memoized in `m.cache` like `t`.
-"""
-tPerRing(ring::ring) = t(ring)
 
 """
     phase(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)
@@ -285,8 +282,8 @@ function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{I
         if length(m.subModelStartInds) == 1 #single model: getVariable(m,t) resolves tDisk/tCloud once and hits m.cache (shared with getΨ/getΨt)
             delays = getVariable(m,t); I = getVariable(m,:I); η = getVariable(m,:η); v = getVariable(m,:v)
             p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
-        else #combined model: tPerRing keeps per-ring delay resolution (mixed disk+cloud), expandPerPoint aligns per-ring scalar η with flattened I
-            delays = getVariable(m,tPerRing); I = getVariable(m,:I,flatten=true); η = expandPerPoint(m,:η); v = getVariable(m,:v,flatten=true)
+        else #combined model: getVariable(m,t) resolves to the general tCloud formula for every point (same delays as getΨ/getΨt -- exact consistency); expandPerPoint aligns per-ring scalar η with flattened I
+            delays = getVariable(m,t); I = getVariable(m,:I,flatten=true); η = expandPerPoint(m,:η); v = getVariable(m,:v,flatten=true)
             p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
         end
     elseif n == :r

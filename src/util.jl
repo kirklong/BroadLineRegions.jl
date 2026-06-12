@@ -381,8 +381,8 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
         variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud #resolve t up front so the cache key is the concrete function
     end
     #only package-owned pure functions are memoized -- never cache user closures
-    #(t stays unresolved for combined models and is cached under its own key; tPerRing resolves per ring, see profiles.jl)
-    cacheable = variable === t || variable === tDisk || variable === tCloud || variable === tPerRing
+    #(t stays unresolved here for combined models -- getVariableFunction resolves it to tCloud -- and is cached under its own key)
+    cacheable = variable === t || variable === tDisk || variable === tCloud
     if cacheable && !isnothing(m.cache)
         cached = get(m.cache, (variable, flatten), nothing)
         if !isnothing(cached)
@@ -401,14 +401,18 @@ function getVariableFunction(m::model,variable::Function;flatten=false) #uncache
     isCombined = m.subModelStartInds != [1]
     if isCombined
         try
+            if variable == t
+                #combined models can mix flat and lifted/reflected submodels: use the general geometric
+                #delay (r - x via cached xyz) for every point -- exact for flat rings too (≡ tDisk to
+                #rounding), and correct for clouds where the old once-from-rings[1] resolution applied
+                #the flat-disk formula to lifted points (or errored if a cloud submodel came first)
+                variable = tCloud
+            end
             startInds = m.subModelStartInds
             chunks = []
             l = 0
             for i=1:length(startInds)
                 s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
-                if variable == t 
-                    variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud #if variable is t, use tDisk or tCloud depending on whether θₒ is 0
-                end
                 chunk = [variable(ring) for ring in m.rings[s:e]]
                 push!(chunks,chunk)
                 l+=sum(length,chunk)

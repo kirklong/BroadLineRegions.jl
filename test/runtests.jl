@@ -168,9 +168,9 @@ end
     mC = BLR.cloudModel(5_000, μ=500., β=1., F=0.5, θₒ=30/180*π, γ=1., ξ=1., i=45/180*π,
         I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rescale=1e-5, τ=0.0, rng=MersenneTwister(11))
     mc = mD + mC
-    #fast paths must match the per-ring closure (legacy) computation exactly
+    #fast paths must match the per-ring closure computation exactly (combined delays = tCloud everywhere)
     pFast = BLR.getProfile(mc, :delay, bins=31, centered=true)
-    d(ring) = BLR.t(ring).*ring.I
+    d(ring) = BLR.tCloud(ring).*ring.I
     den(ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η
     pNum = BLR.binModel(31, m=mc, yVariable=d, xVariable=:v, centered=true)
     pDen = BLR.binModel(31, m=mc, yVariable=den, xVariable=:v, centered=true)
@@ -180,7 +180,23 @@ end
     @test isequal(pR.binSums, BLR.binModel(31,m=mc,yVariable=rfun,xVariable=:v,centered=true)[3] ./
                               BLR.binModel(31,m=mc,yVariable=:I,xVariable=:v,centered=true)[3])
     #delay arrays are memoized for combined models too
-    @test BLR.getVariable(mc, BLR.tPerRing) === BLR.getVariable(mc, BLR.tPerRing)
+    @test BLR.getVariable(mc, BLR.t) === BLR.getVariable(mc, BLR.t)
+    #tCloud (general r - x) reduces to the analytic tDisk formula on flat rings
+    for k in (1, 16, 32)
+        td = BLR.tDisk(mD.rings[k]); tg = BLR.tCloud(mD.rings[k])
+        fin = .!isnan.(td)
+        @test maximum(abs.((td[fin] .- tg[fin]) ./ td[fin])) < 1e-10
+    end
+    #combined transfer functions are order-independent and work clouds-first (errored before)
+    mc2 = mC + mD #clouds first
+    tEdges = collect(range(0.0, stop=2000.0, length=101))
+    Ψ1 = BLR.getΨt(mc, tEdges); Ψ2 = BLR.getΨt(mc2, tEdges)
+    @test all(isapprox.(Ψ1, Ψ2, rtol=1e-10))
+    #delay profile and transfer function use identical delays for combined models
+    delays = BLR.getVariable(mc, BLR.t)
+    dPer = vcat([BLR.tCloud(r) for r in mc.rings[mc.subModelStartInds[2]:end]]...)
+    nDisk = length(delays) - length(dPer)
+    @test isequal(delays[nDisk+1:end], dPer)
     #expandPerPoint aligns per-ring scalar fields (cloud η here) with the flattened I
     ηpp = BLR.expandPerPoint(mc, :η)
     @test length(ηpp) == length(BLR.getVariable(mc, :I, flatten=true))
