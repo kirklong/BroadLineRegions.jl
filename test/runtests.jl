@@ -237,6 +237,22 @@ end
     @test all(isapprox.(pD.binSums[fin], dProfRef[fin], rtol=1e-8))
 end
 
+@testset "binnedSum direct indexing" begin
+    rng = MersenneTwister(99)
+    nb = 37; lo = -2.0; hi = 3.0
+    edges = collect(range(lo, stop=hi, length=nb+1))
+    #random values + values exactly on every edge + NaN/Inf + out-of-range
+    xs = vcat(lo .+ (hi-lo).*rand(rng, 10_000), copy(edges), [NaN, Inf, -Inf, lo-1.0, hi+1.0])
+    ys = vcat(rand(rng, 10_000), ones(length(edges)), ones(5))
+    for ovf in (false, true)
+        #Int bins (uniform fast path) vs the same edges as an explicit vector (searchsortedfirst path)
+        e1, c1, r1 = BLR.binnedSum(xs, ys, bins=nb, centered=false, minX=lo, maxX=hi, overflow=ovf)
+        e2, c2, r2 = BLR.binnedSum(xs, ys, bins=edges, overflow=ovf)
+        @test e1 == e2
+        @test r1 == r2 #bit-identical, including exact-edge assignment convention
+    end
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin

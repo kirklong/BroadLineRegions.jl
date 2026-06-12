@@ -24,7 +24,8 @@ Bin the x and y variables into a histogram, where each bin is the sum of the y v
   - `result`: Binned sums of the y variable
 """
 function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false, centered::Bool=true, minX::Union{Float64,Nothing}=nothing, maxX::Union{Float64,Nothing}=nothing)
-    binEdges = nothing 
+    binEdges = nothing
+    uniform = typeof(bins) == Int #edges we construct from a range are uniform -> direct index math; user-supplied edge vectors may not be
     if typeof(bins) == Int
         if isnothing(minX)
             minX = isnan(minimum(x)) ? minimum(i for i in x if !isnan(i)) : minimum(x)
@@ -47,23 +48,65 @@ function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vect
     end
     binCenters = @. (binEdges[1:end-1] + binEdges[2:end])/2
     result = zeros(length(binEdges)-1)
-    for (x,y) in zip(x,y)
-        if isfinite(x) && isfinite(y)
-            if x <= binEdges[1]
-                if overflow
-                    result[1] += y
+    binAccumulate!(result, x, y, binEdges, overflow, uniform)
+    return (binEdges, binCenters, result)
+end
+
+"""
+    binAccumulate!(result, x, y, binEdges, overflow::Bool, uniform::Bool)
+
+Typed accumulation loop for `binnedSum` (function barrier). When `uniform` is true the bin index is
+computed directly from the spacing (`floor`) and then corrected against the actual edges, which keeps
+the assignment *bit-identical* to `searchsortedfirst` — including the exact-edge convention (a point
+exactly on an interior edge belongs to the bin to its left) and any floating-point rounding of the
+direct computation. Non-uniform (user-supplied) edges use `searchsortedfirst` as before.
+"""
+function binAccumulate!(result::Vector{Float64}, x::Array{Float64,}, y::Array{Float64,}, binEdges::Vector{Float64}, overflow::Bool, uniform::Bool)
+    nbins = length(binEdges)-1
+    if uniform
+        x0 = binEdges[1]
+        invΔ = nbins/(binEdges[end]-binEdges[1])
+        @inbounds for (xi,yi) in zip(x, y) #zip (not eachindex) preserves the old shape-leniency for callers
+            if isfinite(xi) && isfinite(yi)
+                if xi <= binEdges[1]
+                    if overflow
+                        result[1] += yi
+                    end
+                elseif xi >= binEdges[end]
+                    if overflow
+                        result[end] += yi
+                    end
+                else
+                    b = clamp(floor(Int,(xi-x0)*invΔ)+1, 1, nbins)
+                    while b > 1 && xi <= binEdges[b] #left-exclusive: a point exactly on an edge belongs to the bin to its left
+                        b -= 1
+                    end
+                    while b < nbins && xi > binEdges[b+1] #guard against floor() rounding one bin low
+                        b += 1
+                    end
+                    result[b] += yi
                 end
-            elseif x >= binEdges[end]
-                if overflow
-                    result[end] += y
+            end
+        end
+    else
+        @inbounds for (xi,yi) in zip(x, y) #zip (not eachindex) preserves the old shape-leniency for callers
+            if isfinite(xi) && isfinite(yi)
+                if xi <= binEdges[1]
+                    if overflow
+                        result[1] += yi
+                    end
+                elseif xi >= binEdges[end]
+                    if overflow
+                        result[end] += yi
+                    end
+                else
+                    bin = searchsortedfirst(binEdges,xi)-1
+                    result[bin] += yi
                 end
-            else
-                bin = searchsortedfirst(binEdges,x)-1
-                result[bin] += y
             end
         end
     end
-    return (binEdges, binCenters, result)
+    return result
 end
 
 """
