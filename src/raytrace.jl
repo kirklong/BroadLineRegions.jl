@@ -26,9 +26,65 @@ function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint
     yRing = (α*(cos(i)*cos(θₒPoint)+sec(rot)*sin(i)*sin(θₒPoint))+β*cos(θₒPoint)*tan(rot))/(cos(i)*cos(θₒPoint)*sec(rot)+sin(i)*sin(θₒPoint)) #system y
     r = √(xRing^2 + yRing^2)
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
-    xyzSys = rotate3D(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
+    xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
     ϕ = atan(xyzSys[2],xyzSys[1]) #ϕ after rotation, measured from +x in disk plane
     return r, ϕ, ϕ₀
+end
+
+"""
+    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64})
+
+Allocation-free version of `raytrace` — calculate where ray traced back from camera coordinates `α`, `β`
+intersects the system (assumes circular geometry), using a single precomputed rotation matrix.
+
+`M` must be `undo_tilt * get_r3D(i, rot, θₒPoint)` where
+`undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)]` — both factors are constant for fixed
+`(i, rot, θₒ)` so `M` should be computed once outside any pixel loop.
+
+# Returns
+- `r::Float64`: distance from central mass (in terms of rₛ)
+- `ϕ::Float64`: azimuthal angle of system ring plane at intersection
+- `ϕ₀::Float64`: original azimuthal angle in ring plane
+
+# Note
+Supersedes the buffer-based 9-argument method (which is retained for compatibility).
+"""
+function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64})
+    cosr = cos(rot); sinr = sin(rot); cosi = cos(i); sini = sin(i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint) #flip i to match convention that +x is closer
+    xRing = -(β*cosr - α*cosi*sinr)/(cosi*cosθₒ+cosr*sini*sinθₒ) #system x, negative because want bottom towards camera
+    yRing = (α*(cosi*cosθₒ+sini/cosr*sinθₒ)+β*cosθₒ*sinr/cosr)/(cosi*cosθₒ/cosr+sini*sinθₒ)
+    r = √(xRing^2 + yRing^2)
+    ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
+    x = M[1,1]*xRing + M[1,2]*yRing #z component of ring coordinates is 0 so third column never contributes
+    y = M[2,1]*xRing + M[2,2]*yRing
+    ϕ = atan(y,x) #ϕ after rotation and being "puffed up", measured from +x in disk plane
+    return r, ϕ, ϕ₀
+end
+
+"""
+    raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64}, r3D::Matrix{Float64})
+
+Same as the 6-argument `raytrace(α, β, i, rot, θₒPoint, M)` method but additionally returns the 3D
+*system* coordinates of the intersection point (camera at +x), computed from the supplied
+`r3D = get_r3D(i, rot, θₒPoint)` matrix. Used at model construction to fill the per-point
+coordinate cache (`ring.x/y/z`) without a second rotation pass.
+
+# Returns
+- `r, ϕ, ϕ₀, x, y, z` (all `Float64`)
+"""
+function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, M::Matrix{Float64}, r3D::Matrix{Float64})
+    cosr = cos(rot); sinr = sin(rot); cosi = cos(i); sini = sin(i); cosθₒ = cos(θₒPoint); sinθₒ = sin(θₒPoint) #flip i to match convention that +x is closer
+    xRing = -(β*cosr - α*cosi*sinr)/(cosi*cosθₒ+cosr*sini*sinθₒ) #system x, negative because want bottom towards camera
+    yRing = (α*(cosi*cosθₒ+sini/cosr*sinθₒ)+β*cosθₒ*sinr/cosr)/(cosi*cosθₒ/cosr+sini*sinθₒ)
+    r = √(xRing^2 + yRing^2)
+    ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
+    x = r3D[1,1]*xRing + r3D[1,2]*yRing #system coordinates (z component of ring coordinates is 0 so third columns never contribute)
+    y = r3D[2,1]*xRing + r3D[2,2]*yRing
+    z = r3D[3,1]*xRing + r3D[3,2]*yRing
+    xd = M[1,1]*xRing + M[1,2]*yRing #disk-plane ("puffed up" + tilt undone) coordinates for ϕ
+    yd = M[2,1]*xRing + M[2,2]*yRing
+    ϕ = atan(yd,xd) #ϕ after rotation and being "puffed up", measured from +x in disk plane
+    return r, ϕ, ϕ₀, x, y, z
 end
 
 """
@@ -55,7 +111,12 @@ Performant version of `raytrace` function -- calculate where ray traced back fro
 - `ϕ₀::Float64`: original azimuthal angle in ring plane
 
 # Note
-This function is *coordinate* raytracing only. To raytrace models and combine intensities, see `raytrace!`. 
+This function is *coordinate* raytracing only. To raytrace models and combine intensities, see `raytrace!`.
+
+!!! warning "Deprecated"
+    Prefer the 6-argument method `raytrace(α, β, i, rot, θₒPoint, M)` with a single precomputed
+    `M = undo_tilt * get_r3D(i, rot, θₒ)` — it is allocation-free and faster. This buffer-based method
+    is retained for backwards compatibility only.
 """
 function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64, r3D::Matrix{Float64}, xyz::Vector{Float64}, matBuff::Matrix{Float64}, colBuff::Vector{Float64})
     """performant version of raytrace function -- calculate where ray traced back from camera coordinates r_c, ϕ_c intersects the system (assumes circular geometry)
@@ -109,14 +170,14 @@ Calculate the image coordinates from system coordinates r, ϕ + inclination angl
 This function is *coordinate* photography only. To visualize models, see `Image`.`
 """
 function photograph(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
-    xyzSys = rotate3D(r,ϕ₀,i,rot,θₒ,reflect)
+    xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒ,reflect)
     α = xyzSys[2] #camera is at +x, so α is y
     β = xyzSys[3] #and β is z
     return α, β
 end
 
 """
-    zeroDiskObscuredClouds!(m::model; diskCloudIntensityRatio::Float64=1.0, rotate3D::Function=rotate3D)
+    zeroDiskObscuredClouds!(m::model; diskCloudIntensityRatio::Float64=1.0, rotate3D::Function=rotate3D_scalar)
 
 Zero out the intensities of clouds that are obscured by the disk.
 
@@ -128,7 +189,7 @@ and adjusting the disk intensity according to the specified ratio.
 - `m::model`: Model to zero out disk obscured clouds. Should be a combined model consisting of a disk component and a cloud component. 
 - `diskCloudIntensityRatio::Float64=1.0`: Ratio of disk to cloud intensity, used to scale 
   the disk intensities after zeroing out clouds
-- `rotate3D::Function=rotate3D`: Function to rotate coordinates in 3D space
+- `rotate3D::Function=rotate3D_scalar`: Function to rotate coordinates in 3D space (must return an indexable `(x,y,z)`)
 
 # Returns
 - `m::model`: Model with disk obscured clouds zeroed out
@@ -136,7 +197,7 @@ and adjusting the disk intensity according to the specified ratio.
 # See also 
 - `removeDiskObscuredClouds!`: Function to remove disk obscured clouds instead of zeroing them out
 """
-function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,rotate3D::Function=rotate3D)
+function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,rotate3D::Function=rotate3D_scalar)
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
     startInds = m.subModelStartInds #start indices of submodels
     if !isCombined
@@ -168,7 +229,7 @@ function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,ro
         end
     end
     for ring in m.rings[.!diskFlagRing]
-        xyzCloud = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
+        xyzCloud = rotate3D === rotate3D_scalar ? getXYZ(ring) : rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #cached system coordinates xyz unless a custom rotate3D was passed
         zDisk = midPlaneXZ(xyzCloud[1],iDisk) #z value of disk at x value of cloud
         if xyzCloud[3] < zDisk #cloud below disk -- invisible to camera
             ring.I = 0.0
@@ -185,7 +246,7 @@ function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,ro
 end
 
 """
-    removeDiskObscuredClouds!(m::model, rotate3D::Function=rotate3D)
+    removeDiskObscuredClouds!(m::model, rotate3D::Function=rotate3D_scalar)
 
 Remove clouds that are obscured by the disk.
 
@@ -196,7 +257,7 @@ Note that this is a mutating operation and the input model will be modified in p
 # Arguments
 - `m::model`: Model to remove disk obscured clouds. Should be a combined model consisting 
   of a disk component and a cloud component.
-- `rotate3D::Function=rotate3D`: Function to rotate coordinates in 3D space
+- `rotate3D::Function=rotate3D_scalar`: Function to rotate coordinates in 3D space (must return an indexable `(x,y,z)`)
 
 # Returns
 - `m::model`: Model with disk obscured clouds removed
@@ -204,7 +265,7 @@ Note that this is a mutating operation and the input model will be modified in p
 # See also 
 - `zeroDiskObscuredClouds!`: Function to zero out disk obscured clouds instead of removing them
 """
-function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
+function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
     startInds = m.subModelStartInds #start indices of submodels
     if !isCombined
@@ -256,7 +317,7 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
     ϕList = [m.rings[i].ϕ for i in 1:length(m.rings)]
     cloudRingInds = [i for i in 1:length(m.rings) if typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64]
     for i in cloudRingInds #check if r inside rMin/max, then find closest disk cell, then compare xs and flag for removal if xCloud behind xDisk
-        xyzSys = rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect) #system coordinates xyz
+        xyzSys = rotate3D === rotate3D_scalar ? getXYZ(m.rings[i]) : rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect) #cached system coordinates xyz unless a custom rotate3D was passed
         xCloud = xyzSys[1]
         α,β = m.camera.α[αβStartInds[i]],m.camera.β[αβStartInds[i]]
         rCam = sqrt(α^2 + β^2)
@@ -264,7 +325,7 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D)
         if (rCam > rMinDisk) && (rCam < rMaxDisk)
             rDiskInd = argmin(abs.(rCam .- rUnique))
             ϕDiskInd = argmin(abs.(ϕCam .- ϕList[rDiskInd]))
-            xDisk = rotate3D(m.rings[rDiskInd].r[ϕDiskInd],m.rings[rDiskInd].ϕ₀[ϕDiskInd],m.rings[rDiskInd].i,m.rings[rDiskInd].rot,m.rings[rDiskInd].θₒ,m.rings[rDiskInd].reflect)[1] #system coordinates xyz
+            xDisk = rotate3D === rotate3D_scalar ? getXYZ(m.rings[rDiskInd])[1][ϕDiskInd] : rotate3D(m.rings[rDiskInd].r[ϕDiskInd],m.rings[rDiskInd].ϕ₀[ϕDiskInd],m.rings[rDiskInd].i,m.rings[rDiskInd].rot,m.rings[rDiskInd].θₒ,m.rings[rDiskInd].reflect)[1] #system coordinates xyz (cached x vector indexed at this point unless a custom rotate3D was passed)
             if xCloud < xDisk #cloud behind disk
                 removeFlag[i] = true
             end
@@ -395,6 +456,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
             
             baseCam = camera(baseModelα,baseModelβ,false) #camera object for base model
             baseModel = model(baseModelRings,Dict{Symbol,profile}(),baseCam,[1]) #initialize new model object with base model rings
+            baseModel.cache = nothing #disable getVariable memoization -- raytracing mutates rings then re-gathers, cache would go stale (removeNaN! re-enables at the end)
             base_r = getVariable(baseModel,:r,flatten=true)
             base_i = getVariable(baseModel,:i,flatten=true)
             base_ϕ = getVariable(baseModel,:ϕ,flatten=true)
@@ -444,6 +506,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
                     if j != baseModelInd
                         endInd = j == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[j+1]-1 #end index of submodel
                         subModel = model(m.rings[m.subModelStartInds[j]:endInd],nothing,nothing,[j]) #submodel to check
+                        subModel.cache = nothing #per-pixel temporary -- don't pay cache bookkeeping (and rings mutate between pixels)
                         camStartInd = camStartInds[j] #flattened camera index for this submodel
                         camEndInd = j == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[j+1]-1 #flattened camera index for the next submodel
                         αSegment = m.camera.α[camStartInd:camEndInd]
@@ -614,6 +677,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
                         camera_j = camera(m.camera.α[camStartInds[j]:endInd],m.camera.β[camStartInds[j]:endInd],false) #camera α coordinates for submodel j
                         endInd = i == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[i+1]-1 #ring index for the next submodel
                         subModelI = model(m.rings[m.subModelStartInds[i]:endInd],nothing,camera_i,[1]) #submodel i to check
+                        subModelI.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
                         endInd = j == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[j+1]-1 #ring index for the next submodel
                         subModelI += model(m.rings[m.subModelStartInds[j]:endInd],nothing,camera_j,[1]) #add j to check
                         IRatiosTmp = deepcopy(IRatios[i,j])
@@ -627,6 +691,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
                                         rMin = minimum([gridInfo[i][1],gridInfo[j][1]]) #minimum radius of continuous models i and j
                                         rMax = maximum([gridInfo[i][2],gridInfo[j][2]]) #maximum radius of continuous models i and j
                                         subModel_ii = model(m.rings[m.subModelStartInds[ii]:endInd],nothing,camera_ii,[1]) #submodel ii to check
+                                        subModel_ii.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
                                         for (jj,ring) in enumerate(subModel_ii.rings)
                                             rtmp = sqrt(subModel_ii.camera.α[jj]^2 + subModel_ii.camera.β[jj]^2) #camera coordinates
                                             if rtmp <= rMin || rtmp >= rMax #free floating cloud, mark for "deletion" (still in original model m, but don't want to add duplicates in this step)
@@ -667,6 +732,7 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
             camtmp = camera(m.camera.α[camStartInds[firstSubModel]:endInd],m.camera.β[camStartInds[firstSubModel]:endInd],false) #camera α coordinates for first discrete model
             endInd = firstSubModel == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[firstSubModel+1]-1 #ring index for the next submodel
             subModel = model(m.rings[m.subModelStartInds[firstSubModel]:endInd],nothing,camtmp,[1]) #submodel to check
+            subModel.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
             for i in firstSubModel:length(m.subModelStartInds) 
                 if (gridInfo[i][3] == 1) && (i > firstSubModel) #not first discrete model, check for overlaps
                     endInd = i == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[i+1]-1 #flattened camera index for the next submodel

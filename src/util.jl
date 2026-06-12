@@ -4,7 +4,10 @@ using Plots, RecipesBase
 """
     reset!(m::model; profiles=true, img=false)
 
-Erase existing profiles/raytrace status.
+Erase existing profiles/raytrace status and invalidate the model's `getVariable` cache.
+
+Call this after mutating ring fields directly (e.g. `m.rings[1].I .= ...`) so that subsequent
+`getVariable`/`getProfile` calls see the new values instead of memoized ones.
 
 # Parameters
 - `m::model`: Model object to reset
@@ -12,11 +15,14 @@ Erase existing profiles/raytrace status.
 - `img::Bool=false`: If true, reset raytracing boolean (does not change existing model but allows model to be raytraced again after combining other new models)
 """
 function reset!(m::model;profiles=true,img=false)
-    if profiles 
+    if profiles
         m.profiles = Dict{Symbol,profile}()
     end
     if img
         m.camera.raytraced = false
+    end
+    if !isnothing(m.cache)
+        empty!(m.cache) #invalidate memoized getVariable results
     end
 end
 
@@ -32,6 +38,9 @@ Remove points with `I = NaN` from model.
 - `m::model`: Model with NaN points removed
 """
 function removeNaN!(m::model)
+    if !isnothing(m.cache)
+        empty!(m.cache) #defend against a stale cache if rings were mutated without reset! -- gather fresh below
+    end
     I = getVariable(m,:I,flatten=true)
     NaNMask = .!isnan.(I)
     #remove camera points with I = 0.0
@@ -101,11 +110,29 @@ function removeNaN!(m::model)
                 ring.reflect = fill(ring.reflect,length(ring.I))
                 ring.reflect = ring.reflect[NaNMask] #keep only not NaN reflect flags
             end
+            #cached coordinates are per-point: mask like the other fields, but if the cache is in an
+            #unexpected shape just drop it (getXYZ will lazily recompute from the masked geometry)
+            if !isnothing(ring.x) && length(ring.x) == length(ring.I)
+                ring.x = ring.x[NaNMask] #keep only not NaN x coordinates
+            elseif !isnothing(ring.x) && sum(NaNMask) != 0
+                ring.x = nothing
+            end
+            if !isnothing(ring.y) && length(ring.y) == length(ring.I)
+                ring.y = ring.y[NaNMask] #keep only not NaN y coordinates
+            elseif !isnothing(ring.y) && sum(NaNMask) != 0
+                ring.y = nothing
+            end
+            if !isnothing(ring.z) && length(ring.z) == length(ring.I)
+                ring.z = ring.z[NaNMask] #keep only not NaN z coordinates
+            elseif !isnothing(ring.z) && sum(NaNMask) != 0
+                ring.z = nothing
+            end
             ring.I = ring.I[NaNMask] #keep only not NaN intensities
         end
     end
     m.rings = m.rings[ringMask] #filter out cloud NaN rings
     m.rings =  filter(ring -> length(ring.I) > 0, m.rings) #filter out rings with no points left
+    m.cache = Dict{Any,Array}() #invalidate (and re-enable, if disabled) the getVariable cache -- ring contents changed
     oldLength = length(m.rings[1].I) #get length of first ring to use as reference
     m.subModelStartInds = [1] #reset subModelStartInds to only include first ring
     for (i,ring) in enumerate(m.rings[2:end])
@@ -215,7 +242,14 @@ function getVariable(m::model,variable::Symbol;flatten=false) # method for getti
     if variable ∉ fieldnames(ring)
         throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
     end
+    if !isnothing(m.cache)
+        cached = get(m.cache, (variable, flatten), nothing)
+        if !isnothing(cached)
+            return cached #treat as read-only -- see cache contract in the model docstring
+        end
+    end
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
+    res = nothing
     if isCombined
         startInds = m.subModelStartInds
         chunks = []
@@ -236,43 +270,157 @@ function getVariable(m::model,variable::Symbol;flatten=false) # method for getti
                 res[startInd:endInd] = chunk
             end
         end
-        return res
     else
-        res = stack([getfield(ring,variable) for ring in m.rings],dims=1)
+        res = gatherStack(m.rings, variable)
         if flatten
-            return vec(res) #flatten the matrix to a vector
-        else
-            return res #return as is
+            res = vec(res) #flatten the matrix to a vector
         end
     end
+    if !isnothing(m.cache)
+        m.cache[(variable, flatten)] = res
+    end
+    return res
+end
+
+"""
+    gatherStack(rings::Vector{ring}, variable::Symbol)
+
+Typed helper (function barrier) for `getVariable`: stacks `getfield(ring, variable)` over all rings
+into a `Vector` (one scalar per ring, e.g. cloud models) or a `Matrix` with one row per ring
+(vector-valued fields), without the intermediate vector-of-vectors that `stack` requires.
+Preserves the element type of the field (e.g. `Bool` for `:reflect`).
+"""
+function gatherStack(rings::Vector{ring}, variable::Symbol)
+    fv = getfield(rings[1], variable)
+    if fv isa AbstractVector
+        res = Matrix{eltype(fv)}(undef, length(rings), length(fv))
+        @inbounds for k in eachindex(rings)
+            res[k,:] .= getfield(rings[k], variable)
+        end
+        return res
+    else
+        res = Vector{typeof(fv)}(undef, length(rings))
+        @inbounds for k in eachindex(rings)
+            res[k] = getfield(rings[k], variable)
+        end
+        return res
+    end
+end
+
+"""
+    expandPerPoint(m::model, variable::Symbol)
+
+Like `getVariable(m, variable; flatten=true)` but per-ring *scalar* values are expanded to
+per-point length, so the result always aligns elementwise with
+`getVariable(m, :I, flatten=true)` — including for combined models where some rings store a
+field (e.g. `η`) as a single scalar while `I` is a vector.
+
+The within-chunk ordering matches `getVariable`'s flattening (`vec(stack(chunk, dims=1))`,
+i.e. point-major across the rings of each submodel), so elementwise products with other
+flattened gathers are valid. Results are memoized in `m.cache` under `(variable, :perpoint)`.
+
+!!! note
+    `raytrace!` relies on `getVariable`'s *un*-expanded behavior (it checks
+    `length(sub_η) < length(sub_I)` to detect per-ring scalars) — that is why this is a separate
+    function rather than a `getVariable` option.
+"""
+function expandPerPoint(m::model, variable::Symbol)
+    if variable ∉ fieldnames(ring)
+        throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
+    end
+    if !isnothing(m.cache)
+        cached = get(m.cache, (variable, :perpoint), nothing)
+        if !isnothing(cached)
+            return cached
+        end
+    end
+    l = 0
+    for r in m.rings
+        l += length(r.I)
+    end
+    res = Vector{Float64}(undef, l)
+    startInds = m.subModelStartInds
+    offset = 0
+    for c in 1:length(startInds)
+        s = startInds[c]; e = c == length(startInds) ? length(m.rings) : startInds[c+1]-1
+        nRingsChunk = e - s + 1
+        nPer = length(m.rings[s].I) #rings are uniform length within a chunk by construction
+        for k in 1:nRingsChunk
+            val = getfield(m.rings[s+k-1], variable)
+            if val isa AbstractVector
+                length(val) == nPer || throw(DimensionMismatch("$variable has length $(length(val)) but I has length $nPer in ring $(s+k-1)"))
+                for j in 1:nPer
+                    res[offset + (j-1)*nRingsChunk + k] = val[j]
+                end
+            else #per-ring scalar: repeat for every point of this ring
+                for j in 1:nPer
+                    res[offset + (j-1)*nRingsChunk + k] = val
+                end
+            end
+        end
+        offset += nRingsChunk*nPer
+    end
+    if !isnothing(m.cache)
+        m.cache[(variable, :perpoint)] = res
+    end
+    return res
 end
 
 """
     getVariable(m::model, variable::Function; flatten=false)
 
 Retrieve model variable when specified as a `Function`. See main docstring for details.
+
+# Note
+Results are memoized in `m.cache` only for the package's own pure delay functions
+(`t`, `tDisk`, `tCloud`) — user-supplied functions are always re-evaluated, since they may
+capture state the cache cannot see.
 """
 function getVariable(m::model,variable::Function;flatten=false) # method for getting variable if Function
+    if variable == t && length(m.subModelStartInds) == 1 && length(m.rings) > 0
+        variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud #resolve t up front so the cache key is the concrete function
+    end
+    #only package-owned pure functions are memoized -- never cache user closures
+    #(t stays unresolved here for combined models -- getVariableFunction resolves it to tCloud -- and is cached under its own key)
+    cacheable = variable === t || variable === tDisk || variable === tCloud
+    if cacheable && !isnothing(m.cache)
+        cached = get(m.cache, (variable, flatten), nothing)
+        if !isnothing(cached)
+            return cached #treat as read-only -- see cache contract in the model docstring
+        end
+    end
+    res = getVariableFunction(m, variable; flatten=flatten)
+    if cacheable && !isnothing(m.cache)
+        m.cache[(variable, flatten)] = res
+    end
+    return res
+end
+
+function getVariableFunction(m::model,variable::Function;flatten=false) #uncached implementation, see getVariable
     res = nothing
     isCombined = m.subModelStartInds != [1]
     if isCombined
         try
+            if variable == t
+                #combined models can mix flat and lifted/reflected submodels: use the general geometric
+                #delay (r - x via cached xyz) for every point -- exact for flat rings too (≡ tDisk to
+                #rounding), and correct for clouds where the old once-from-rings[1] resolution applied
+                #the flat-disk formula to lifted points (or errored if a cloud submodel came first)
+                variable = tCloud
+            end
             startInds = m.subModelStartInds
             chunks = []
             l = 0
             for i=1:length(startInds)
                 s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
-                if variable == t 
-                    variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud #if variable is t, use tDisk or tCloud depending on whether θₒ is 0
-                end
                 chunk = [variable(ring) for ring in m.rings[s:e]]
                 push!(chunks,chunk)
                 l+=sum(length,chunk)
             end
             res = Array{Float64}(undef,l) #preallocate array
             for (i,chunk) in enumerate(chunks)
-                startInd = i == 1 ? 1 : sum(length,chunks[i-1])*(i-1)+1
-                endInd = i == length(chunks) ? l : sum(length,chunk)*i
+                startInd = i == 1 ? 1 : sum(sum(length,chunks[ii]) for ii in 1:(i-1))+1 #cumulative offsets (same as the Symbol method) -- the old per-chunk-size arithmetic was wrong for >2 submodels
+                endInd = i == length(chunks) ? l : sum(sum(length,chunks[ii]) for ii in 1:(i))
                 if typeof(chunk) == Vector{Vector{Float64}} #if chunk is 2D
                     res[startInd:endInd] = vec(stack(chunk,dims=1))
                 else
@@ -449,6 +597,49 @@ function reflect!(xyzSys,i)
     return xyzSys
 end
 """
+    reflect_scalar(x::Float64, y::Float64, z::Float64, i::Float64) -> NTuple{3,Float64}
+
+Allocation-free scalar version of `reflect!` — reflect coordinates in 3D space across the ring plane.
+Same math as `reflect!` but takes/returns plain scalars instead of mutating a `Vector`.
+"""
+function reflect_scalar(x::Float64, y::Float64, z::Float64, i::Float64)
+    #reflect across line made with inclination angle z - m*x = 0, where m = -cot(i) (math copied from reflect!)
+    cti = cot(i)
+    den = 1 + cti^2
+    xf = (x*(1-cti^2) - 2*z*cti)/den
+    zf = (z*(cti^2-1) - 2*x*cti)/den
+    return (xf, y, zf)
+end
+
+"""
+    rotate3D_vector_scalar(vx::Float64, vy::Float64, vz::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false) -> NTuple{3,Float64}
+
+Allocation-free rotation of an arbitrary vector `(vx,vy,vz)` from initial XY-plane coordinates into 3D space
+(camera at +x), with optional reflection across the ring plane. The matrix entries are those of
+`get_r3D(i,rot,θₒ)` inlined; used for rotating velocity vectors as well as positions.
+"""
+function rotate3D_vector_scalar(vx::Float64, vy::Float64, vz::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
+    sini, cosi = sincos(i)
+    sinrot, cosrot = sincos(rot)
+    sinθₒ, cosθₒ = sincos(θₒ)
+    x = (cosθₒ*cosrot*sini - sinθₒ*cosi)*vx - sinrot*sini*vy + (sinθₒ*cosrot*sini + cosθₒ*cosi)*vz
+    y = cosθₒ*sinrot*vx + cosrot*vy + sinθₒ*sinrot*vz
+    z = -(cosθₒ*cosrot*cosi + sinθₒ*sini)*vx + sinrot*cosi*vy + (cosθₒ*sini - sinθₒ*cosrot*cosi)*vz
+    return reflect ? reflect_scalar(x, y, z, i) : (x, y, z)
+end
+
+"""
+    rotate3D_scalar(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false) -> NTuple{3,Float64}
+
+Allocation-free version of `rotate3D`: transform from ring coordinates to 3D coordinates where camera
+is at +x, returning an `(x, y, z)` tuple instead of a heap-allocated `Vector`. Prefer this in hot loops.
+"""
+function rotate3D_scalar(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
+    sinϕ₀, cosϕ₀ = sincos(ϕ₀)
+    return rotate3D_vector_scalar(r*cosϕ₀, r*sinϕ₀, 0.0, i, rot, θₒ, reflect)
+end
+
+"""
     rotate3D(r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, reflect::Bool=false)
 
 Transform from ring coordinates to 3D coordinates where camera is at +x.
@@ -462,16 +653,60 @@ Transform from ring coordinates to 3D coordinates where camera is at +x.
 - `reflect::Bool=false`: Whether to reflect across the ring plane
 
 # Returns
-- `Tuple{Float64, Float64, Float64}`: `(x, y, z)` coordinates in 3D space
+- `Vector{Float64}`: `[x; y; z]` coordinates in 3D space
+
+# Note
+This method allocates its result; in performance-critical loops use [`rotate3D_scalar`](@ref) which
+returns a stack-allocated tuple instead.
 """
 function rotate3D(r::Float64,ϕ₀::Float64,i::Float64,rot::Float64,θₒ::Float64,reflect::Bool=false)
-    matrix = get_r3D(i,rot,θₒ)
-    xyzSys = matrix*[r*cos(ϕ₀);r*sin(ϕ₀);0]
-    if reflect
-        xyzSys = BLR.reflect!(xyzSys,i)
-    end
-    return xyzSys
+    return collect(rotate3D_scalar(r,ϕ₀,i,rot,θₒ,reflect))
 end
+"""
+    getXYZ(ring::ring)
+
+Return the 3D system coordinates `(x, y, z)` of every point in `ring` (camera at +x).
+
+Uses the cached `ring.x/y/z` fields when present; otherwise computes them with
+`rotate3D_scalar` and stores them on the (mutable) ring so the transform is only
+ever done once per point.
+
+# Returns
+- For a cloud/point ring (scalar fields): `NTuple{3,Float64}`
+- For a continuous ring (vector fields): `Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}`
+
+!!! warning "Reflection already applied"
+    Cached coordinates are *post-reflection* — if `ring.reflect` is true the stored values already
+    include the reflection across the disk midplane. Never apply `reflect!`/`reflect_scalar` to the
+    result of `getXYZ` a second time.
+
+!!! warning "Geometry mutation"
+    The cache is filled from `r`, `ϕ₀`, `i`, `rot`, `θₒ` at first access. If you mutate any of those
+    fields afterwards, set `ring.x = nothing; ring.y = nothing; ring.z = nothing` to force a recompute.
+"""
+function getXYZ(ring::ring)
+    if !isnothing(ring.x) && !isnothing(ring.y) && !isnothing(ring.z)
+        return ring.x, ring.y, ring.z
+    end
+    if typeof(ring.r) == Float64 && typeof(ring.ϕ₀) == Float64 #cloud/point ring
+        xyz = rotate3D_scalar(ring.r, ring.ϕ₀, ring.i, ring.rot, ring.θₒ, ring.reflect)
+        ring.x = xyz[1]; ring.y = xyz[2]; ring.z = xyz[3]
+        return xyz
+    else #continuous ring -- per-point fields may be scalars or vectors (see removeNaN! for the canonical pattern)
+        n = length(ring.r)
+        x = Vector{Float64}(undef,n); y = Vector{Float64}(undef,n); z = Vector{Float64}(undef,n)
+        for k in 1:n
+            ik = typeof(ring.i) == Float64 ? ring.i : ring.i[k]
+            rotk = typeof(ring.rot) == Float64 ? ring.rot : ring.rot[k]
+            θₒk = typeof(ring.θₒ) == Float64 ? ring.θₒ : ring.θₒ[k]
+            reflectk = typeof(ring.reflect) == Bool ? ring.reflect : ring.reflect[k]
+            x[k], y[k], z[k] = rotate3D_scalar(ring.r[k], ring.ϕ₀[k], ik, rotk, θₒk, reflectk)
+        end
+        ring.x = x; ring.y = y; ring.z = z
+        return x, y, z
+    end
+end
+
 """
     rotate3D(r::Float64, ϕ₀::Float64, i::Float64, matrix::Matrix{Float64}, reflect::Bool=false)
 Transform from ring coordinates to 3D coordinates where camera is at +x using a precomputed rotation matrix.
@@ -568,22 +803,19 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
             for ii in 1:size(r)[1]
                 for jj in 1:size(r)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D_scalar(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect)
                 end
             end
         elseif typeof(r) == Vector{Float64} && typeof(ϕ₀) == Matrix{Float64}
             for ii in 1:size(ϕ)[1]
                 for jj in 1:size(ϕ)[2]
                     rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect) 
+                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D_scalar(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect)
                 end
             end
-        else #if r is just a vector (with ϕ and i matching)
-            rot = getVariable(model,:rot)
-            θₒ = getVariable(model,:θₒ)
-            reflect = getVariable(model,:reflect)
-            for ii in 1:length(r)
-                xtmp[ii],ytmp[ii],ztmp[ii] = rotate3D(r[ii],ϕ₀[ii],i[ii],rot[ii],θₒ[ii],reflect[ii]) 
+        else #if r is just a vector (with ϕ and i matching) -- cloud/point rings, one point per ring
+            for (ii,r) in enumerate(model.rings)
+                xtmp[ii],ytmp[ii],ztmp[ii] = getXYZ(r) #cached system coordinates
             end
         end
         boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])

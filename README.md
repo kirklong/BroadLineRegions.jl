@@ -93,7 +93,7 @@ mClouds = jl.BLR.cloudModel(100_000,μ=500.,β=1.,F=0.5,θₒ=30/180*np.pi,γ=1.
              I=jl.BLR.IsotropicIntensity,v=jl.BLR.vCircularCloud,rescale=1e-5,τ=0.0)
 ```
 
-You may also consider starting Julia with a `sysimage` to improve performance (see pure Julia example [here](https://julialang.github.io/PackageCompiler.jl/dev/sysimages.html), and instructions for enabling the functionality in `juliacall` [here](https://juliapy.github.io/PythonCall.jl/stable/juliacall/#julia-config)).
+Starting Julia with multiple threads (`julia -t N`) speeds up disk-wind model construction, especially for larger models, but note that currently "cloud" models are not parallelized to ensure RNG draws are reproducible. You may also consider starting Julia with a `sysimage` to improve performance (see pure Julia example [here](https://julialang.github.io/PackageCompiler.jl/dev/sysimages.html), and instructions for enabling the functionality in `juliacall` [here](https://juliapy.github.io/PythonCall.jl/stable/juliacall/#julia-config)).
 
 ## Referencing
 If you find this code useful in your work, please cite it as:

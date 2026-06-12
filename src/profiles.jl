@@ -24,7 +24,8 @@ Bin the x and y variables into a histogram, where each bin is the sum of the y v
   - `result`: Binned sums of the y variable
 """
 function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false, centered::Bool=true, minX::Union{Float64,Nothing}=nothing, maxX::Union{Float64,Nothing}=nothing)
-    binEdges = nothing 
+    binEdges = nothing
+    uniform = typeof(bins) == Int #edges we construct from a range are uniform -> direct index math; user-supplied edge vectors may not be
     if typeof(bins) == Int
         if isnothing(minX)
             minX = isnan(minimum(x)) ? minimum(i for i in x if !isnan(i)) : minimum(x)
@@ -47,23 +48,65 @@ function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vect
     end
     binCenters = @. (binEdges[1:end-1] + binEdges[2:end])/2
     result = zeros(length(binEdges)-1)
-    for (x,y) in zip(x,y)
-        if isfinite(x) && isfinite(y)
-            if x <= binEdges[1]
-                if overflow
-                    result[1] += y
+    binAccumulate!(result, x, y, binEdges, overflow, uniform)
+    return (binEdges, binCenters, result)
+end
+
+"""
+    binAccumulate!(result, x, y, binEdges, overflow::Bool, uniform::Bool)
+
+Typed accumulation loop for `binnedSum` (function barrier). When `uniform` is true the bin index is
+computed directly from the spacing (`floor`) and then corrected against the actual edges, which keeps
+the assignment *bit-identical* to `searchsortedfirst` — including the exact-edge convention (a point
+exactly on an interior edge belongs to the bin to its left) and any floating-point rounding of the
+direct computation. Non-uniform (user-supplied) edges use `searchsortedfirst` as before.
+"""
+function binAccumulate!(result::Vector{Float64}, x::Array{Float64,}, y::Array{Float64,}, binEdges::Vector{Float64}, overflow::Bool, uniform::Bool)
+    nbins = length(binEdges)-1
+    if uniform
+        x0 = binEdges[1]
+        invΔ = nbins/(binEdges[end]-binEdges[1])
+        @inbounds for (xi,yi) in zip(x, y) #zip (not eachindex) preserves the old shape-leniency for callers
+            if isfinite(xi) && isfinite(yi)
+                if xi <= binEdges[1]
+                    if overflow
+                        result[1] += yi
+                    end
+                elseif xi >= binEdges[end]
+                    if overflow
+                        result[end] += yi
+                    end
+                else
+                    b = clamp(floor(Int,(xi-x0)*invΔ)+1, 1, nbins)
+                    while b > 1 && xi <= binEdges[b] #left-exclusive: a point exactly on an edge belongs to the bin to its left
+                        b -= 1
+                    end
+                    while b < nbins && xi > binEdges[b+1] #guard against floor() rounding one bin low
+                        b += 1
+                    end
+                    result[b] += yi
                 end
-            elseif x >= binEdges[end]
-                if overflow
-                    result[end] += y
+            end
+        end
+    else
+        @inbounds for (xi,yi) in zip(x, y) #zip (not eachindex) preserves the old shape-leniency for callers
+            if isfinite(xi) && isfinite(yi)
+                if xi <= binEdges[1]
+                    if overflow
+                        result[1] += yi
+                    end
+                elseif xi >= binEdges[end]
+                    if overflow
+                        result[end] += yi
+                    end
+                else
+                    bin = searchsortedfirst(binEdges,xi)-1
+                    result[bin] += yi
                 end
-            else
-                bin = searchsortedfirst(binEdges,x)-1
-                result[bin] += y
             end
         end
     end
-    return (binEdges, binCenters, result)
+    return result
 end
 
 """
@@ -130,11 +173,18 @@ tDisk(ring::ring) = @. ring.η*ring.r*(1 - cos(ring.ϕ)*sin(ring.i)) #time delay
 """
     tCloud(ring::ring)
 
-    Calculate time delays for a cloud with opening angle ``\\theta_o`` as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
+    Calculate time delays from the general geometric formula ``t = \\eta (r - x)``, where ``x`` is the
+    3D system coordinate of the point towards the camera (cached on the ring, see `getXYZ`).
+
+    Despite the name this is exact for *any* geometry: for a flat ring (``\\theta_o = 0``) it reduces
+    algebraically to the `tDisk` formula (``x = r\\cos\\phi\\sin i``), and unlike `tDisk` it also
+    accounts for lifted (``\\theta_o \\neq 0``) and reflected points. Works on both point (scalar) and
+    continuous (vector) rings.
 """
 tCloud(ring::ring) = begin
-    xyzSys = rotate3D(ring.r,ring.ϕ₀,ring.i,ring.rot,ring.θₒ,ring.reflect) #system coordinates xyz
-    return ring.η*(ring.r - xyzSys[1]) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
+    x = getXYZ(ring)[1] #cached system coordinates (computed once, reused every call)
+    η = ring.η; r = ring.r
+    return @. η*(r - x) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
 end
 """
     t(ring::ring)
@@ -214,8 +264,30 @@ function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vecto
 end
 
 """
-    getProfile(m::model, name::Union{String,Symbol,Function}; 
-               bins::Union{Int,Vector{Float64}}=100, 
+    binWeightedMean(m::model, x, yNum, yDen, bins, dx; kwargs...)
+
+Shared helper for the weighted-mean profile options of `getProfile` (`:delay`, `:r`, `:ϕ`):
+bins `yNum.*dA` and `yDen.*dA` over `x` and returns `(edges, centers, num./den)`.
+Replicates `binModel`'s `ΔA` shape fix-up (per-ring scalar `ΔA` broadcast across a matrix `y`).
+Operates on precomputed arrays so the gathers can come from the model's memoized cache.
+"""
+function binWeightedMean(m::model, x, yNum, yDen, bins, dx; kwargs...)
+    dA = isnothing(dx) ? getVariable(m,:ΔA) : dx
+    if size(yNum) != size(dA)
+        if size(dA)[1] == size(yNum)[1] && typeof(m.rings[1].ΔA) == Float64
+            dA = stack([dA for _ in 1:size(yNum)[2]],dims=2)
+        else
+            throw(ArgumentError("y and dA must be the same size, got $(size(yNum)) and $(size(dA))\nconsider supplying custom dx = Array{Float64,}(size(y)) (use ones for equal weighting)"))
+        end
+    end
+    pNum = binnedSum(x, yNum.*dA, bins=bins; kwargs...)
+    pDen = binnedSum(x, yDen.*dA, bins=bins; kwargs...)
+    return (pNum[1], pNum[2], pNum[3]./pDen[3])
+end
+
+"""
+    getProfile(m::model, name::Union{String,Symbol,Function};
+               bins::Union{Int,Vector{Float64}}=100,
                dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
 
 Return a profile for the model based on the specified name.
@@ -249,22 +321,36 @@ function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{I
     if n == :line
         p = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
     elseif n == :delay
-        #d(ring::ring;kwargs...) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? tCloud(ring;kwargs...).*ring.I : tDisk(ring;kwargs...).*ring.I
-        d(ring::ring;kwargs...) = t(ring;kwargs...).*ring.I 
-        den(ring::ring;) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η 
-        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=d,xVariable=:v;kwargs...)
-        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=den,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=den,xVariable=:v;kwargs...)
-        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        #intensity-weighted mean delay per velocity bin, built from memoized arrays
+        if length(m.subModelStartInds) == 1 #single model: getVariable(m,t) resolves tDisk/tCloud once and hits m.cache (shared with getΨ/getΨt)
+            delays = getVariable(m,t); I = getVariable(m,:I); η = getVariable(m,:η); v = getVariable(m,:v)
+            p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
+        else #combined model: getVariable(m,t) resolves to the general tCloud formula for every point (same delays as getΨ/getΨt -- exact consistency); expandPerPoint aligns per-ring scalar η with flattened I
+            delays = getVariable(m,t); I = getVariable(m,:I,flatten=true); η = expandPerPoint(m,:η); v = getVariable(m,:v,flatten=true)
+            p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
+        end
     elseif n == :r
-        r(ring::ring) = ring.r.*ring.I
-        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=r,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
-        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
-        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        if isnothing(dx) #fast path from memoized arrays
+            if length(m.subModelStartInds) == 1 #broadcasting aligns per-ring scalar r row-wise with the I matrix
+                rr = getVariable(m,:r); I = getVariable(m,:I); v = getVariable(m,:v)
+            else #combined: expandPerPoint aligns per-ring scalar r with the flattened I
+                rr = expandPerPoint(m,:r); I = getVariable(m,:I,flatten=true); v = getVariable(m,:v,flatten=true)
+            end
+            p = binWeightedMean(m, v, rr.*I, I, bins, nothing; kwargs...)
+        else #user-supplied dx: numerator is unweighted by I (pre-existing behavior, kept for compatibility)
+            pNum = binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
+            pDen = binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+            p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        end
     elseif n == :ϕ
-        ϕ(ring::ring) = ring.ϕ.*ring.I
-        pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=ϕ,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
-        pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
-        p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        if isnothing(dx) #fast path from memoized arrays (ϕ is always per-point: the ring constructor asserts length(ϕ) == length(I))
+            ϕϕ = getVariable(m,:ϕ); I = getVariable(m,:I); v = getVariable(m,:v)
+            p = binWeightedMean(m, v, ϕϕ.*I, I, bins, nothing; kwargs...)
+        else #user-supplied dx: numerator is unweighted by I (pre-existing behavior, kept for compatibility)
+            pNum = binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
+            pDen = binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+            p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        end
     elseif n == :phase
         edges,centers,avgPhase = phase(m,returnAvg=true;kwargs...)
         p = (edges, centers, avgPhase)
