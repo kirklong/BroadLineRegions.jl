@@ -205,6 +205,36 @@ end
         I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rescale=1e-5, τ=0.0, rng=MersenneTwister(12))
     getr(ring) = ring.r
     @test isequal(BLR.getVariable(m3, getr), BLR.getVariable(m3, :r))
+
+    #DEFINITION (combined models): Ψ(t) is the histogram of I⋅ΔA over the general tCloud delays
+    #t = η(r − x), per point, for every submodel. Reference computed ring-by-ring from first
+    #principles -- seed- and version-independent, so this pins the convention without magic numbers.
+    dRef = Float64[]; iRef = Float64[]; aRef = Float64[]; vRef = Float64[]; ηRef = Float64[]
+    for r in mc.rings
+        td = BLR.tCloud(r)
+        n = length(r.I)
+        append!(dRef, td isa Number ? (td,) : td)
+        append!(iRef, r.I isa Number ? (r.I,) : r.I)
+        append!(vRef, r.v isa Number ? (r.v,) : r.v)
+        append!(aRef, r.ΔA isa Number ? (r.ΔA for _ in 1:n) : r.ΔA)
+        append!(ηRef, r.η isa Number ? (r.η for _ in 1:n) : r.η)
+    end
+    ΨRef = map(1:length(tEdges)-1) do j
+        mask = (dRef .>= tEdges[j]) .& (dRef .< tEdges[j+1])
+        s = sum(iRef[mask].*aRef[mask])
+        s > 0 ? s : 1e-30 #replicate getΨt's empty-bin floor
+    end
+    @test all(isapprox.(Ψ1, ΨRef, rtol=1e-10))
+    #and the :delay profile is the intensity(×η)-weighted mean of those same tCloud delays per velocity bin
+    vEdges = collect(range(-0.05, stop=0.05, length=22))
+    pD = BLR.getProfile(mc, :delay, bins=vEdges, centered=false)
+    dProfRef = map(1:length(vEdges)-1) do j
+        mask = (vRef .>= vEdges[j]) .& (vRef .< vEdges[j+1]) .& isfinite.(dRef) .& isfinite.(iRef)
+        sum(dRef[mask].*iRef[mask].*aRef[mask]) / sum(iRef[mask].*ηRef[mask].*aRef[mask])
+    end
+    fin = isfinite.(pD.binSums) .& isfinite.(dProfRef)
+    @test count(fin) > 10 #most velocity bins should be populated
+    @test all(isapprox.(pD.binSums[fin], dProfRef[fin], rtol=1e-8))
 end
 
 ## NOTE add JET to the test environment, then uncomment
