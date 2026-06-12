@@ -240,16 +240,18 @@ for p in LPList
     pLP = plot!(p.binCenters.*3e2,p.binSums./norm,label="",lw=2) #label them in the phase plot only
 end
 
+phaseList = [phaseAll,phasef1,phasef2,phasef3,phasef4]
+weightedPhase = [p.binSums.*maximum(lp.binSums)./norm for (p,lp) in zip(phaseList,LPList)] #just for this figure
+
 pPhase = plot(title="average phase profiles",xlabel="Δv [Mm/s]",ylabel="Δϕ [deg]",legend=:topleft) #initialize phase plot
-LPList = [phaseAll,phasef1,phasef2,phasef3,phasef4]
 labels = ["All terms equal","f₁ only","f₂ only","f₃ only","f₄ only"]
-for (l,p) in zip(labels,LPList)
-    pPhase = plot!(p.binCenters.*3e2,p.binSums.*180/π,label=l,lw=2)
+for (l,p,Δϕ) in zip(labels,phaseList,weightedPhase)
+    pPhase = plot!(p.binCenters.*3e2,Δϕ.*180/π,label=l,lw=2)
 end
 
 plot(pLP,pPhase,layout=@layout([a;b]),size=(500,800),margins=5*Plots.Measures.mm)
 ```
-Which should return something similar to the left panel below. Compared to the original plot (right panel) we can again see that we have reproduced the result quite well. 
+Which should return something similar to the left panel below. Compared to the original plot (right panel) we can again see that we have well reproduced the result (although not quite exactly as seen in the height of the blue phase profile, as I no longer remember the exact set of parameters I used). 
 
 ![line and phase profiles for disk-wind models](Long2023_phase_line_quickComparison.png)
 
@@ -275,6 +277,7 @@ ratio = sum(IDisk[.!isnan.(IDisk)])/sum(IClouds[.!isnan.(IClouds)])
 for ring in mDisk.rings
     ring.I .*= 1/ratio
 end
+BLR.reset!(mDisk) #after mutating ring fields directly, reset! invalidates the model's cached arrays (see Performance notes in the API docs)
 
 mCombined = mDisk+mClouds #all we have to do to combine models is "add" them!
 ```
@@ -314,7 +317,7 @@ Which should produce something like the left panel in the comparison below (with
 
 ![line and delay profiles for combined + submodels](Long2025_line_delay_combined_quickComparison.png)
 
-Note that there is some inherent randomness in the clouds, and you can improve the smoothness of the profiles by increasing the number of model points if you so desire, but we've reproduced the main features in the plot just fine even at this lower resolution.
+Note that there is some inherent randomness in the clouds and the width here is slightly larger than shown in the original paper to better demonstrate the two component nature, but you can improve the smoothness of the profiles by increasing the number of model points and fine tuning the width of the cloud profile if you so desire, and we've clearly reproduced the main features in the plot just fine even at this lower resolution and non fine-tuned prescription.
 
 You can of course visualize your combined models with the same standard plotting recipes shown earlier to generate fun animations like the one below showcasing the intensity, delay, and velocity structure of this combined model: 
 

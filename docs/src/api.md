@@ -26,7 +26,7 @@ Several internal optimizations affect how you should interact with models:
 - **Multithreading.** Disk-wind model construction parallelizes across rings/pixels when Julia is
   started with multiple threads (`julia -t N`); results are bit-identical at any thread count.
   Custom `I`/`v` functions passed to the constructors
-  must be thread-safe to benefit (the built-in ones are). Cloud model generation are currently deliberately
+  must be thread-safe to benefit (the built-in ones are). Cloud model generation is currently deliberately
   *not* threaded so that seeded models (`rng=...`) reproduce identically.
 
 - **Delays in combined models.** For combined (multi-submodel) models all time delays are computed
