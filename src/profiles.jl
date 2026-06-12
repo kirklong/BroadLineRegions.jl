@@ -158,6 +158,16 @@ end
 t(ring::ring,subFxn::Function) = subFxn(ring) #allow for custom time delay function, e.g. tDisk or tCloud
 
 """
+    tPerRing(ring::ring)
+
+Same as `t(ring)`, but under a name that `getVariable` will *not* substitute: passing `t` to
+`getVariable` on a combined model resolves it to `tDisk`/`tCloud` once from `m.rings[1]`, whereas
+`tPerRing` lets `t` choose per ring — required for mixed disk+cloud models where different
+submodels need different delay formulae. Memoized in `m.cache` like `t`.
+"""
+tPerRing(ring::ring) = t(ring)
+
+"""
     phase(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)
 
 Calculate differential phase signal for a model based on specified baselines, model orientation, and BLR angular size.
@@ -271,34 +281,34 @@ function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{I
     if n == :line
         p = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
     elseif n == :delay
-        if length(m.subModelStartInds) == 1 #fast path: memoized arrays (getVariable(m,t) hits m.cache; broadcasting aligns per-ring scalars row-wise)
+        #intensity-weighted mean delay per velocity bin, built from memoized arrays
+        if length(m.subModelStartInds) == 1 #single model: getVariable(m,t) resolves tDisk/tCloud once and hits m.cache (shared with getΨ/getΨt)
             delays = getVariable(m,t); I = getVariable(m,:I); η = getVariable(m,:η); v = getVariable(m,:v)
             p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
-        else #combined models: per-ring evaluation -- flattened arrays lose ring boundaries for per-ring scalar fields like η
-            d(ring::ring;kwargs...) = t(ring;kwargs...).*ring.I
-            den(ring::ring;) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η
-            pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=d,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=d,xVariable=:v;kwargs...)
-            pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=den,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=den,xVariable=:v;kwargs...)
-            p = (pNum[1], pNum[2], pNum[3]./pDen[3])
+        else #combined model: tPerRing keeps per-ring delay resolution (mixed disk+cloud), expandPerPoint aligns per-ring scalar η with flattened I
+            delays = getVariable(m,tPerRing); I = getVariable(m,:I,flatten=true); η = expandPerPoint(m,:η); v = getVariable(m,:v,flatten=true)
+            p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
         end
     elseif n == :r
-        if isnothing(dx) && length(m.subModelStartInds) == 1 #fast path from memoized arrays
-            rr = getVariable(m,:r); I = getVariable(m,:I); v = getVariable(m,:v)
+        if isnothing(dx) #fast path from memoized arrays
+            if length(m.subModelStartInds) == 1 #broadcasting aligns per-ring scalar r row-wise with the I matrix
+                rr = getVariable(m,:r); I = getVariable(m,:I); v = getVariable(m,:v)
+            else #combined: expandPerPoint aligns per-ring scalar r with the flattened I
+                rr = expandPerPoint(m,:r); I = getVariable(m,:I,flatten=true); v = getVariable(m,:v,flatten=true)
+            end
             p = binWeightedMean(m, v, rr.*I, I, bins, nothing; kwargs...)
-        else #combined models, or user-supplied dx (where the numerator is unweighted by I -- pre-existing behavior, kept for compatibility)
-            r(ring::ring) = ring.r.*ring.I
-            pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=r,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
-            pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+        else #user-supplied dx: numerator is unweighted by I (pre-existing behavior, kept for compatibility)
+            pNum = binModel(bins,dx,m=m,yVariable=:r,xVariable=:v;kwargs...)
+            pDen = binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
             p = (pNum[1], pNum[2], pNum[3]./pDen[3])
         end
     elseif n == :ϕ
-        if isnothing(dx) && length(m.subModelStartInds) == 1 #fast path from memoized arrays
+        if isnothing(dx) #fast path from memoized arrays (ϕ is always per-point: the ring constructor asserts length(ϕ) == length(I))
             ϕϕ = getVariable(m,:ϕ); I = getVariable(m,:I); v = getVariable(m,:v)
             p = binWeightedMean(m, v, ϕϕ.*I, I, bins, nothing; kwargs...)
-        else #combined models, or user-supplied dx (where the numerator is unweighted by I -- pre-existing behavior, kept for compatibility)
-            ϕ(ring::ring) = ring.ϕ.*ring.I
-            pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=ϕ,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
-            pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
+        else #user-supplied dx: numerator is unweighted by I (pre-existing behavior, kept for compatibility)
+            pNum = binModel(bins,dx,m=m,yVariable=:ϕ,xVariable=:v;kwargs...)
+            pDen = binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
             p = (pNum[1], pNum[2], pNum[3]./pDen[3])
         end
     elseif n == :phase

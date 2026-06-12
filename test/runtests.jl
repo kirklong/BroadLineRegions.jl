@@ -162,6 +162,35 @@ end
     @test !any(isnan, BLR.getVariable(m2, :I, flatten=true)) #post-removal gather is fresh, not stale
 end
 
+@testset "combined model profiles + gathers" begin
+    mD = BLR.DiskWindModel(500., 5., 1., 45/180*π, nr=32, nϕ=64, scale=:log,
+        f1=1.0, f2=1.0, f3=1.0, f4=1.0, reflect=false, τ=5.)
+    mC = BLR.cloudModel(5_000, μ=500., β=1., F=0.5, θₒ=30/180*π, γ=1., ξ=1., i=45/180*π,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rescale=1e-5, τ=0.0, rng=MersenneTwister(11))
+    mc = mD + mC
+    #fast paths must match the per-ring closure (legacy) computation exactly
+    pFast = BLR.getProfile(mc, :delay, bins=31, centered=true)
+    d(ring) = BLR.t(ring).*ring.I
+    den(ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η
+    pNum = BLR.binModel(31, m=mc, yVariable=d, xVariable=:v, centered=true)
+    pDen = BLR.binModel(31, m=mc, yVariable=den, xVariable=:v, centered=true)
+    @test isequal(pFast.binSums, pNum[3]./pDen[3])
+    pR = BLR.getProfile(mc, :r, bins=31, centered=true)
+    rfun(ring) = ring.r.*ring.I
+    @test isequal(pR.binSums, BLR.binModel(31,m=mc,yVariable=rfun,xVariable=:v,centered=true)[3] ./
+                              BLR.binModel(31,m=mc,yVariable=:I,xVariable=:v,centered=true)[3])
+    #delay arrays are memoized for combined models too
+    @test BLR.getVariable(mc, BLR.tPerRing) === BLR.getVariable(mc, BLR.tPerRing)
+    #expandPerPoint aligns per-ring scalar fields (cloud η here) with the flattened I
+    ηpp = BLR.expandPerPoint(mc, :η)
+    @test length(ηpp) == length(BLR.getVariable(mc, :I, flatten=true))
+    #Function gathers on >2 submodels match Symbol gathers (regression: chunk offsets were wrong and errored before)
+    m3 = mc + BLR.cloudModel(1_000, μ=500., β=1., F=0.5, θₒ=30/180*π, γ=1., ξ=1., i=45/180*π,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rescale=1e-5, τ=0.0, rng=MersenneTwister(12))
+    getr(ring) = ring.r
+    @test isequal(BLR.getVariable(m3, getr), BLR.getVariable(m3, :r))
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin

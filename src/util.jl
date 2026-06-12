@@ -308,6 +308,65 @@ function gatherStack(rings::Vector{ring}, variable::Symbol)
 end
 
 """
+    expandPerPoint(m::model, variable::Symbol)
+
+Like `getVariable(m, variable; flatten=true)` but per-ring *scalar* values are expanded to
+per-point length, so the result always aligns elementwise with
+`getVariable(m, :I, flatten=true)` — including for combined models where some rings store a
+field (e.g. `η`) as a single scalar while `I` is a vector.
+
+The within-chunk ordering matches `getVariable`'s flattening (`vec(stack(chunk, dims=1))`,
+i.e. point-major across the rings of each submodel), so elementwise products with other
+flattened gathers are valid. Results are memoized in `m.cache` under `(variable, :perpoint)`.
+
+!!! note
+    `raytrace!` relies on `getVariable`'s *un*-expanded behavior (it checks
+    `length(sub_η) < length(sub_I)` to detect per-ring scalars) — that is why this is a separate
+    function rather than a `getVariable` option.
+"""
+function expandPerPoint(m::model, variable::Symbol)
+    if variable ∉ fieldnames(ring)
+        throw(ArgumentError("variable must be a valid attribute of model.rings\nvalid attributes: $(fieldnames(ring))"))
+    end
+    if !isnothing(m.cache)
+        cached = get(m.cache, (variable, :perpoint), nothing)
+        if !isnothing(cached)
+            return cached
+        end
+    end
+    l = 0
+    for r in m.rings
+        l += length(r.I)
+    end
+    res = Vector{Float64}(undef, l)
+    startInds = m.subModelStartInds
+    offset = 0
+    for c in 1:length(startInds)
+        s = startInds[c]; e = c == length(startInds) ? length(m.rings) : startInds[c+1]-1
+        nRingsChunk = e - s + 1
+        nPer = length(m.rings[s].I) #rings are uniform length within a chunk by construction
+        for k in 1:nRingsChunk
+            val = getfield(m.rings[s+k-1], variable)
+            if val isa AbstractVector
+                length(val) == nPer || throw(DimensionMismatch("$variable has length $(length(val)) but I has length $nPer in ring $(s+k-1)"))
+                for j in 1:nPer
+                    res[offset + (j-1)*nRingsChunk + k] = val[j]
+                end
+            else #per-ring scalar: repeat for every point of this ring
+                for j in 1:nPer
+                    res[offset + (j-1)*nRingsChunk + k] = val
+                end
+            end
+        end
+        offset += nRingsChunk*nPer
+    end
+    if !isnothing(m.cache)
+        m.cache[(variable, :perpoint)] = res
+    end
+    return res
+end
+
+"""
     getVariable(m::model, variable::Function; flatten=false)
 
 Retrieve model variable when specified as a `Function`. See main docstring for details.
@@ -321,7 +380,9 @@ function getVariable(m::model,variable::Function;flatten=false) # method for get
     if variable == t && length(m.subModelStartInds) == 1 && length(m.rings) > 0
         variable = m.rings[1].θₒ == 0.0 ? tDisk : tCloud #resolve t up front so the cache key is the concrete function
     end
-    cacheable = variable === tDisk || variable === tCloud #only package-owned pure functions -- never cache user closures
+    #only package-owned pure functions are memoized -- never cache user closures
+    #(t stays unresolved for combined models and is cached under its own key; tPerRing resolves per ring, see profiles.jl)
+    cacheable = variable === t || variable === tDisk || variable === tCloud || variable === tPerRing
     if cacheable && !isnothing(m.cache)
         cached = get(m.cache, (variable, flatten), nothing)
         if !isnothing(cached)
@@ -354,8 +415,8 @@ function getVariableFunction(m::model,variable::Function;flatten=false) #uncache
             end
             res = Array{Float64}(undef,l) #preallocate array
             for (i,chunk) in enumerate(chunks)
-                startInd = i == 1 ? 1 : sum(length,chunks[i-1])*(i-1)+1
-                endInd = i == length(chunks) ? l : sum(length,chunk)*i
+                startInd = i == 1 ? 1 : sum(sum(length,chunks[ii]) for ii in 1:(i-1))+1 #cumulative offsets (same as the Symbol method) -- the old per-chunk-size arithmetic was wrong for >2 submodels
+                endInd = i == length(chunks) ? l : sum(sum(length,chunks[ii]) for ii in 1:(i))
                 if typeof(chunk) == Vector{Vector{Float64}} #if chunk is 2D
                     res[startInd:endInd] = vec(stack(chunk,dims=1))
                 else
