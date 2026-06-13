@@ -149,6 +149,39 @@ end
     @test length(pPhase.binSums) == 51
 end
 
+@testset "second moment analytic ring checks" begin
+    #a thin uniform ring of radius r₀ at inclination i has closed-form projected second moments:
+    #σ²(ψ) = ⟨r²⟩BLRAng²(cos²ψ + cos²i·sin²ψ)/2 with ψ the sky angle from the node line.
+    #⟨r²⟩ comes from the model's intrinsic radii/weights, so these checks are independent of the
+    #camera coordinates and binning machinery that secondMoment uses
+    i60 = 60/180*π; BLRAng = 1e-10
+    mRing = BLR.DiskWindModel(990.,1010.,i60,nr=256,nϕ=512,I=BLR.IsotropicIntensity,v=BLR.vCircularDisk)
+    rFlat = BLR.getVariable(mRing,:r,flatten=true)
+    wFlat = BLR.getVariable(mRing,:I,flatten=true).*BLR.getVariable(mRing,:ΔA,flatten=true)
+    ringMask = isfinite.(rFlat.*wFlat)
+    r̄² = sum(wFlat[ringMask].*rFlat[ringMask].^2)/sum(wFlat[ringMask])
+    A = r̄²*BLRAng^2/2 #variance along the node line (sky major axis)
+    χ = collect(range(0,π,length=61))[1:end-1] #baseline sky angles
+    σ²s = [BLR.secondMoment(mRing,U=[50*cos(c)],V=[50*sin(c)],PA=0.0,BLRAng=BLRAng,bins=11)[1][4] for c in χ]
+    @test isapprox(maximum(σ²s), A, rtol=2e-2)
+    @test isapprox(minimum(σ²s), A*cos(i60)^2, rtol=2e-2)
+    #trace invariance: any two orthogonal baselines sum to ⟨r²⟩BLRAng²(1+cos²i)/2
+    @test all(isapprox.(σ²s[1:30].+σ²s[31:60], A*(1+cos(i60)^2), rtol=1e-2))
+    #rotating the model by PA equals rotating the baselines by -PA
+    σ²PA = BLR.secondMoment(mRing,U=[50*cos(1.0)],V=[50*sin(1.0)],PA=0.7,BLRAng=BLRAng,bins=11)[1][4]
+    σ²rot = BLR.secondMoment(mRing,U=[50*cos(0.3)],V=[50*sin(0.3)],PA=0.0,BLRAng=BLRAng,bins=11)[1][4]
+    @test isapprox(σ²PA, σ²rot, rtol=1e-10)
+    #per-channel: with v ∝ sinφ the isovelocity pair (φ, π-φ) shares its node-line coordinate, so
+    #channel images are two points split ⊥ to the node line: σ⊥(v) = √⟨r²⟩cos(i)√(1-(v/vmax)²)
+    #while σ∥ ≈ 0 (bin-width smearing only)
+    θ₀ = χ[argmax(σ²s)] #node-line direction
+    resP = BLR.secondMoment(mRing,U=[50*cos(θ₀+π/2)],V=[50*sin(θ₀+π/2)],PA=0.0,BLRAng=BLRAng,bins=41,centered=true)[1]
+    resN = BLR.secondMoment(mRing,U=[50*cos(θ₀)],V=[50*sin(θ₀)],PA=0.0,BLRAng=BLRAng,bins=41,centered=true)[1]
+    k0 = argmin(abs.(resP[2])) #channel at line center
+    @test isapprox(sqrt(resP[3][k0]), sqrt(r̄²)*cos(i60)*BLRAng, rtol=2e-2)
+    @test resN[3][k0] < 1e-2*resP[3][k0]
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin
