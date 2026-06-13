@@ -11,7 +11,8 @@ Bin the x and y variables into a histogram, where each bin is the sum of the y v
 - `bins::Union{Int,Vector{Float64}}=100`: Number of bins or bin edges for binning
   - If `Int`: Number of bins with edges equally spaced between min/max of x
   - If `Vector{Float64}`: Specific bin edges, with number of bins = `length(bins)-1`
-  - Left edge inclusive, right edge exclusive (except last bin which is inclusive)
+  - Bins are left-edge exclusive, right-edge inclusive: a point exactly on an interior edge goes to the bin below it.
+    Points at or below the first edge, or at or above the last edge, are only counted when `overflow=true` (into the first/last bin)
 - `overflow::Bool=false`: If `true`, include values outside bin range in the first/last bins
 - `centered::Bool=false`: If `true`, shift bin edges to center around middle value
 - `minX::Union{Float64,Nothing}=nothing`: Minimum value of x for binning (defaults to `minimum(x)`)
@@ -110,6 +111,56 @@ function binAccumulate!(result::Vector{Float64}, x::Array{Float64,}, y::Array{Fl
 end
 
 """
+    binnedVariance(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,};
+            bins=100, overflow=false, kwargs...)
+
+Per-bin weighted variance of θ: bin the x variable as in `binnedSum`, then in each bin compute the
+w-weighted variance ``\\sigma^2 = \\sum_k w_k(\\theta_k-\\mu)^2 / \\sum_k w_k`` with μ the w-weighted mean of θ in that bin.
+
+The variance is computed with a two-pass algorithm (pass 1: per-bin Σw and Σwθ → per-bin mean μ;
+pass 2: per-bin Σw(θ-μ)²/Σw) rather than the raw-moment identity σ² = ⟨θ²⟩ - ⟨θ⟩², which suffers
+catastrophic cancellation when the per-bin mean is large compared to the spread (e.g. a few clouds
+clustered tightly far from the bin mean). The two-pass form is also guaranteed non-negative.
+Bin membership in pass 2 follows the same rules as `binnedSum`, so the two can never disagree.
+
+# Arguments
+- `x::Array{Float64,}`: x variable to bin over
+- `θ::Array{Float64,}`: variable to take the variance of
+- `w::Array{Float64,}`: weights (e.g. intensity × area)
+- `bins::Union{Int,Vector{Float64}}=100`: number of bins or bin edges, as in `binnedSum`
+- `overflow::Bool=false`: if `true`, include values outside the bin range in the first/last bins
+- Additional `kwargs` (`centered`, `minX`, `maxX`) are passed to `binnedSum`
+
+# Returns
+- `Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}`: A tuple containing:
+  - `binEdges`: Bin edges for the x variable
+  - `binCenters`: Bin centers for the x variable
+  - `σ²`: per-bin weighted variance of θ (NaN for empty bins)
+"""
+function binnedVariance(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,};
+    bins::Union{Int,Vector{Float64}}=100, overflow::Bool=false, kwargs...)
+    binEdges, binCenters, Σw = binnedSum(x, w, bins=bins, overflow=overflow; kwargs...)
+    _, _, Σwθ = binnedSum(x, w.*θ, bins=binEdges, overflow=overflow; kwargs...)
+    μ = Σwθ./Σw #per-bin weighted mean -- 0/0 = NaN for empty bins
+    Σwδ² = zeros(length(binCenters))
+    for k in eachindex(x)
+        xk = x[k]
+        isfinite(xk) || continue
+        bin = 0 #not in any bin -- same edge rules as binnedSum
+        if xk <= binEdges[1]
+            bin = overflow ? 1 : 0
+        elseif xk >= binEdges[end]
+            bin = overflow ? length(binEdges)-1 : 0
+        else
+            bin = searchsortedfirst(binEdges, xk) - 1
+        end
+        (bin == 0 || !isfinite(θ[k]) || !isfinite(w[k]) || !isfinite(μ[bin])) && continue
+        Σwδ²[bin] += w[k]*(θ[k]-μ[bin])^2
+    end
+    return (binEdges, binCenters, Σwδ²./Σw) #0/0 = NaN for empty bins
+end
+
+"""
     binModel(bins::Union{Int,Vector{Float64}}=100; m::model, yVariable::Union{String,Symbol,Function}, 
             xVariable::Union{String,Symbol,Function}=:v, kwargs...)
     binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariable::Union{String,Symbol,Function}, 
@@ -125,7 +176,8 @@ Bin the model into a histogram, where each bin is the integrated value of the yV
 - `bins::Union{Int,Vector{Float64}}`: Number of bins or bin edges for binning
   - If `Int`: Number of bins with edges equally spaced between min/max of xVariable
   - If `Vector{Float64}`: Specific bin edges, with number of bins = `length(bins)-1`
-  - Left edge inclusive, right edge exclusive (except last bin which is inclusive)
+  - Bins are left-edge exclusive, right-edge inclusive: a point exactly on an interior edge goes to the bin below it.
+    Points at or below the first edge, or at or above the last edge, are only counted when `overflow=true` (into the first/last bin)
 - `xVariable::Union{String,Symbol,Function}=:v`: Variable to bin over
   - Must be a valid attribute of `model.rings` or a function that can be applied to `model.rings`
 - `dx::Array{Float64,}`: Integration element for each bin
@@ -264,6 +316,73 @@ function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vecto
 end
 
 """
+    secondMoment(m::model; U, V, PA, BLRAng, returnAvg=false, offAxisInds=nothing, kwargs...)
+
+Calculate the second central moment (squared angular size) of the model image projected along interferometric
+baseline directions, both per velocity channel and integrated over the whole line.
+
+For each baseline the per-channel size is the intensity-weighted variance of the projected position û⋅x in each
+velocity bin, ``\\sigma^2_\\theta(v, \\hat{u}) = \\langle (\\hat{u}\\cdot(x - \\bar{x}_v))^2 \\rangle_v``, i.e. the squared rms angular
+extent of the channel image along the baseline direction. In the marginally-resolved limit this predicts the
+differential visibility-amplitude dip via ``|V_l|(v) = 1 - 2\\pi^2 |u|^2 \\sigma^2_\\theta(v)`` with ``|u| = \\sqrt{U^2+V^2}\\times10^6``
+(baseline length in units of the observed wavelength).
+
+The line-integrated size is the same variance taken over the whole line image (all velocities in a single channel),
+which by the law of total variance equals the flux-weighted mean of the per-channel sizes *plus* the flux-weighted
+spread of the per-channel photocenters — for a rotation-dominated BLR the photocenter-spread term is comparable to
+the mean per-channel size, so the line-integrated size is significantly larger than the flux-averaged channel size.
+
+Note that these are moments of the line image only: unlike `phase`, no continuum dilution factor f/(1+f) is applied.
+
+# Arguments
+- `m::model`: Model object to calculate image second moments for
+- `U::Vector{Float64}`: U component of complex visibility in [Mλ]
+- `V::Vector{Float64}`: V component of complex visibility in [Mλ]
+- `PA::Float64`: On-sky position angle of the model in radians
+- `BLRAng::Float64`: Characteristic size of the BLR model in radians (conversion from ``r_s`` to radians)
+- `returnAvg::Bool=false`: If `true`, returns the average across all baselines
+- `offAxisInds::Union{Nothing,Vector{Int}}=nothing`: If provided, only calculates moments for baselines at specified indices
+- Additional `kwargs` (`bins`, `overflow`, `centered`, `minX`, `maxX`) control the velocity binning as in `binnedSum`
+
+# Returns
+- If `returnAvg=true`: `Tuple{Vector{Float64},Vector{Float64},Vector{Float64},Float64}` containing:
+  - Bin edges for velocity
+  - Bin centers for velocity
+  - Average per-channel squared angular size σ²(v) (in rad², NaN for empty bins)
+  - Average line-integrated squared angular size σ²tot (in rad²)
+- If `returnAvg=false`: `Vector{Tuple{Vector{Float64},Vector{Float64},Vector{Float64},Float64}}` containing:
+  - For each baseline, a tuple of bin edges, bin centers, per-channel σ²(v), and line-integrated σ²tot
+"""
+function secondMoment(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
+    U::Vector{Float64}, V::Vector{Float64}, PA::Float64, BLRAng::Float64, kwargs...)
+    if size(U) != size(V)
+        throw(ArgumentError("U and V must be the same size, got $(size(U)) and $(size(V))"))
+    end
+    X = m.camera.α.*BLRAng; Y = m.camera.β.*BLRAng
+    function getσ²(v::Array{Float64,},I::Array{Float64,},ΔA::Array{Float64,},x::Array{Float64,},y::Array{Float64},U::Float64,V::Float64,PA::Float64;kwargs...)
+        U′ = cos(PA)*U+sin(PA)*V; V′ = -sin(PA)*U+cos(PA)*V
+        s = (x.*U′ .+ y.*V′)./hypot(U′,V′) #projected position along baseline direction [rad] -- baseline length divides out
+        edges,centers,σ² = binnedVariance(v, s, I.*ΔA; kwargs...)
+        _,_,σ²tot = binnedVariance(v, s, I.*ΔA; bins=1, overflow=true, centered=false) #"one-channel" route: whole line in one bin
+        return (edges,centers,σ²,σ²tot[1])
+    end
+    v = getVariable(m,:v,flatten=true); I = getVariable(m,:I,flatten=true); ΔA = getVariable(m,:ΔA,flatten=true)
+    if isnothing(offAxisInds)
+        offAxisInds = collect(1:length(U))
+    end
+    U = U[offAxisInds]; V = V[offAxisInds]
+    σ²List = [getσ²(v,I,ΔA,X,Y,Ui,Vi,PA;kwargs...) for (Ui,Vi) in zip(U,V)]
+    if returnAvg
+        edges, centers, _, _ = σ²List[1] #get the edges and centers from the first baseline
+        σ²Avg = mean([σ²[3] for σ² in σ²List],dims=1)[1]
+        σ²totAvg = mean([σ²[4] for σ² in σ²List])
+        return (edges,centers,σ²Avg,σ²totAvg)
+    else
+        return σ²List
+    end
+end
+
+"""
     binWeightedMean(m::model, x, yNum, yDen, bins, dx; kwargs...)
 
 Shared helper for the weighted-mean profile options of `getProfile` (`:delay`, `:r`, `:ϕ`):
@@ -301,11 +420,15 @@ Return a profile for the model based on the specified name.
   - `:ϕ`: Returns the mean azimuthal angle (weighted by intensity) as function of velocity
   - `:phase`: Returns the phase profile (integrated phase as function of velocity)
     - Requires `U` [Mλ], `V` [Mλ], `PA` [rad], and `BLRAng` [rad] as keyword arguments
+  - `:moment2`: Returns the per-channel squared angular size of the image along the baseline direction(s) [rad²]
+    - Requires `U` [Mλ], `V` [Mλ], `PA` [rad], and `BLRAng` [rad] as keyword arguments
+    - Use `secondMoment` directly to also obtain the line-integrated size (a scalar per baseline, which does not fit in a profile struct)
   - `Function`: Returns the intensity weighted mean of this function vs. velocity
 - `bins`: Number of bins or bin edges for binning
   - If `Int`: Number of bins with edges equally spaced between min/max velocity
   - If `Vector{Float64}`: Specific bin edges, with number of bins = `length(bins)-1`
-  - Left edge inclusive, right edge exclusive (except last bin which is inclusive)
+  - Bins are left-edge exclusive, right-edge inclusive: a point exactly on an interior edge goes to the bin below it.
+    Points at or below the first edge, or at or above the last edge, are only counted when `overflow=true` (into the first/last bin)
 - `dx`: Integration element for each ring (defaults to `ΔA` in each ring struct if `nothing`)
 - Additional `kwargs` passed to `binModel` include:
   - `overflow=true`: Include overflow bins
@@ -352,14 +475,17 @@ function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{I
             p = (pNum[1], pNum[2], pNum[3]./pDen[3])
         end
     elseif n == :phase
-        edges,centers,avgPhase = phase(m,returnAvg=true;kwargs...)
+        edges,centers,avgPhase = phase(m,returnAvg=true,bins=bins;kwargs...)
         p = (edges, centers, avgPhase)
+    elseif n == :moment2
+        edges,centers,σ²,σ²tot = secondMoment(m,returnAvg=true,bins=bins;kwargs...)
+        p = (edges, centers, σ²)
     elseif isa(name,Function)
         pNum = isnothing(dx) ? binModel(bins,m=m,yVariable=name,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=name,xVariable=:v;kwargs...)
         pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
         p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     else
-        throw(ArgumentError("profile $(name) not recognized -- choose from [:line, :delay, :r, :ϕ] or pass a function that can be applied to model.rings"))
+        throw(ArgumentError("profile $(name) not recognized -- choose from [:line, :delay, :r, :ϕ, :phase, :moment2] or pass a function that can be applied to model.rings"))
     end
     return profile(name=n,binEdges=p[1],binCenters=p[2],binSums=p[3])
 end

@@ -81,6 +81,108 @@ end
     tCenters,Ψt = BLR.getΨt(mP2,501,10/rsDay)
     @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 1.8, atol = 5e-1)
 end
+@testset "second moment profiles" begin
+    #binnedVariance machinery on hand-built arrays
+    edges = [0.0,0.5,1.0]
+    x = [0.1,0.1,0.9]; θ = [1.0,3.0,5.0]; w = [1.0,1.0,2.0]
+    _,_,σ² = BLR.binnedVariance(x,θ,w,bins=edges)
+    @test σ²[1] ≈ 1.0
+    @test σ²[2] ≈ 0.0 #single point in bin -> point source has no size
+    _,_,σ² = BLR.binnedVariance(x,θ,w,bins=[0.0,0.4,0.6,1.0])
+    @test isnan(σ²[2]) #empty bins are NaN, not 0
+    #pass 2 follows binnedSum's edge rules: interior edge point goes to the bin below
+    _,_,σ² = BLR.binnedVariance([0.1,0.5],[0.0,2.0],[1.0,1.0],bins=edges)
+    @test σ²[1] ≈ 1.0 && isnan(σ²[2])
+    #points exactly on the first/last edges (or beyond) only counted with overflow=true
+    _,_,σ² = BLR.binnedVariance([0.0,0.1,1.0,0.9],[0.0,2.0,1.0,3.0],[1.0,1.0,1.0,1.0],bins=edges)
+    @test σ²[1] ≈ 0.0 && σ²[2] ≈ 0.0
+    _,_,σ² = BLR.binnedVariance([-1.0,0.1,2.0,0.9],[0.0,2.0,1.0,3.0],[1.0,1.0,1.0,1.0],bins=edges,overflow=true)
+    @test σ²[1] ≈ 1.0 && σ²[2] ≈ 1.0
+
+    #model-level checks
+    m = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=128,nϕ=256,
+        I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=1.0,
+        f3=1.0,f4=1.0,τ=5.,reflect=false)
+    U = [10.0,30.0]; V = [20.0,-40.0]; PA = 0.7; BLRAng = 1e-10
+    res = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true)
+    @test length(res) == 2
+    edges,centers,σ²,σ²tot = res[1]
+    finite = isfinite.(σ²)
+    @test any(finite)
+    @test all(σ²[finite] .>= 0.0)
+    @test σ²tot > 0.0
+    #angular size has the baseline length divided out -- scaling both U and V leaves σ² unchanged
+    res2 = BLR.secondMoment(m,U=2 .*U,V=2 .*V,PA=PA,BLRAng=BLRAng,bins=101,centered=true)
+    @test all(isapprox.(res2[1][3][finite],σ²[finite],rtol=1e-12))
+    @test isapprox(res2[1][4],σ²tot,rtol=1e-12)
+    #σ² scales as BLRAng²
+    res4 = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=2*BLRAng,bins=101,centered=true)
+    @test all(isapprox.(res4[1][3][finite],4 .*σ²[finite],rtol=1e-10))
+    @test isapprox(res4[1][4],4*σ²tot,rtol=1e-10)
+    #line-integrated size matches an independent direct computation over all points
+    U′ = cos(PA)*U[1]+sin(PA)*V[1]; V′ = -sin(PA)*U[1]+cos(PA)*V[1]
+    s = vec(m.camera.α.*BLRAng.*U′ .+ m.camera.β.*BLRAng.*V′)./hypot(U′,V′)
+    wts = BLR.getVariable(m,:I,flatten=true).*BLR.getVariable(m,:ΔA,flatten=true)
+    vflat = BLR.getVariable(m,:v,flatten=true)
+    mask = isfinite.(vflat) .& isfinite.(s.*wts)
+    s̄ = sum(wts[mask].*s[mask])/sum(wts[mask])
+    σ²direct = sum(wts[mask].*(s[mask].-s̄).^2)/sum(wts[mask])
+    @test isapprox(σ²tot,σ²direct,rtol=1e-10)
+    #law of total variance: line-integrated size exceeds the flux-weighted mean of per-channel sizes
+    resOF = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true,overflow=true)
+    LP = BLR.getProfile(m,:line,bins=101,centered=true,overflow=true)
+    fOF = isfinite.(resOF[1][3])
+    meanChannelSize = sum(LP.binSums[fOF].*resOF[1][3][fOF])/sum(LP.binSums[fOF])
+    @test resOF[1][4] > meanChannelSize #photocenter spread term is the rotation signature
+    #returnAvg mirrors phase conventions
+    edgesAvg,centersAvg,σ²Avg,σ²totAvg = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true,returnAvg=true)
+    @test length(σ²Avg) == length(σ²)
+    @test σ²totAvg ≈ (res[1][4]+res[2][4])/2
+    #getProfile hook
+    p = BLR.getProfile(m,:moment2,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true)
+    @test typeof(p) == BLR.profile
+    @test p.name == :moment2
+    @test all(isapprox.(p.binSums[finite],σ²Avg[finite],rtol=1e-12))
+    BLR.setProfile!(m,p)
+    @test :moment2 ∈ keys(m.profiles)
+    #getProfile forwards its bins argument to phase (centered=false so the bin count is not recomputed)
+    pPhase = BLR.getProfile(m,:phase,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=51,centered=false)
+    @test length(pPhase.binSums) == 51
+end
+
+@testset "second moment analytic ring checks" begin
+    #a thin uniform ring of radius r₀ at inclination i has closed-form projected second moments:
+    #σ²(ψ) = ⟨r²⟩BLRAng²(cos²ψ + cos²i·sin²ψ)/2 with ψ the sky angle from the node line.
+    #⟨r²⟩ comes from the model's intrinsic radii/weights, so these checks are independent of the
+    #camera coordinates and binning machinery that secondMoment uses
+    i60 = 60/180*π; BLRAng = 1e-10
+    mRing = BLR.DiskWindModel(990.,1010.,i60,nr=256,nϕ=512,I=BLR.IsotropicIntensity,v=BLR.vCircularDisk)
+    rFlat = BLR.getVariable(mRing,:r,flatten=true)
+    wFlat = BLR.getVariable(mRing,:I,flatten=true).*BLR.getVariable(mRing,:ΔA,flatten=true)
+    ringMask = isfinite.(rFlat.*wFlat)
+    r̄² = sum(wFlat[ringMask].*rFlat[ringMask].^2)/sum(wFlat[ringMask])
+    A = r̄²*BLRAng^2/2 #variance along the node line (sky major axis)
+    χ = collect(range(0,π,length=61))[1:end-1] #baseline sky angles
+    σ²s = [BLR.secondMoment(mRing,U=[50*cos(c)],V=[50*sin(c)],PA=0.0,BLRAng=BLRAng,bins=11)[1][4] for c in χ]
+    @test isapprox(maximum(σ²s), A, rtol=2e-2)
+    @test isapprox(minimum(σ²s), A*cos(i60)^2, rtol=2e-2)
+    #trace invariance: any two orthogonal baselines sum to ⟨r²⟩BLRAng²(1+cos²i)/2
+    @test all(isapprox.(σ²s[1:30].+σ²s[31:60], A*(1+cos(i60)^2), rtol=1e-2))
+    #rotating the model by PA equals rotating the baselines by -PA
+    σ²PA = BLR.secondMoment(mRing,U=[50*cos(1.0)],V=[50*sin(1.0)],PA=0.7,BLRAng=BLRAng,bins=11)[1][4]
+    σ²rot = BLR.secondMoment(mRing,U=[50*cos(0.3)],V=[50*sin(0.3)],PA=0.0,BLRAng=BLRAng,bins=11)[1][4]
+    @test isapprox(σ²PA, σ²rot, rtol=1e-10)
+    #per-channel: with v ∝ sinφ the isovelocity pair (φ, π-φ) shares its node-line coordinate, so
+    #channel images are two points split ⊥ to the node line: σ⊥(v) = √⟨r²⟩cos(i)√(1-(v/vmax)²)
+    #while σ∥ ≈ 0 (bin-width smearing only)
+    θ₀ = χ[argmax(σ²s)] #node-line direction
+    resP = BLR.secondMoment(mRing,U=[50*cos(θ₀+π/2)],V=[50*sin(θ₀+π/2)],PA=0.0,BLRAng=BLRAng,bins=41,centered=true)[1]
+    resN = BLR.secondMoment(mRing,U=[50*cos(θ₀)],V=[50*sin(θ₀)],PA=0.0,BLRAng=BLRAng,bins=41,centered=true)[1]
+    k0 = argmin(abs.(resP[2])) #channel at line center
+    @test isapprox(sqrt(resP[3][k0]), sqrt(r̄²)*cos(i60)*BLRAng, rtol=2e-2)
+    @test resN[3][k0] < 1e-2*resP[3][k0]
+end
+
 @testset "cached xyz coordinates (getXYZ)" begin
     #disk model: cache populated at construction, NaN-masked consistently by removeNaN!
     mD = BLR.DiskWindModel(500., 5., 1., 30/180*π, nr=32, nϕ=64, scale=:log,
