@@ -80,6 +80,71 @@ end
     tCenters,Ψt = BLR.getΨt(mP2,501,10/rsDay)
     @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 1.8, atol = 5e-1)
 end
+@testset "second moment profiles" begin
+    #binAssignments follows binnedSum's edge rules exactly
+    edges = [0.0,0.5,1.0]
+    @test BLR.binAssignments([0.0,0.1,0.5,0.7,1.0,NaN],edges) == [0,1,1,2,0,0] #interior edge point goes to the bin below, as in binnedSum
+    @test BLR.binAssignments([-1.0,0.1,0.7,2.0,NaN],edges,overflow=true) == [1,1,2,2,0]
+    #binnedMoment machinery on hand-built arrays
+    x = [0.1,0.1,0.9]; θ = [1.0,3.0,5.0]; w = [1.0,1.0,2.0]
+    _,_,μ = BLR.binnedMoment(x,θ,w,n=1,bins=edges)
+    @test μ[1] ≈ 2.0 && μ[2] ≈ 5.0
+    _,_,μ₂ = BLR.binnedMoment(x,θ,w,n=2,bins=edges)
+    @test μ₂[1] ≈ 1.0
+    @test μ₂[2] ≈ 0.0 #single point in bin -> point source has no size
+    _,_,m₂ = BLR.binnedMoment(x,θ,w,n=2,bins=edges,central=false)
+    @test m₂[1] ≈ 5.0 #(1*1² + 1*3²)/2
+    _,_,μ₂ = BLR.binnedMoment(x,θ,w,n=2,bins=[0.0,0.4,0.6,1.0])
+    @test isnan(μ₂[2]) #empty bins are NaN, not 0
+
+    #model-level checks
+    m = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=128,nϕ=256,
+        I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=1.0,
+        f3=1.0,f4=1.0,τ=5.,reflect=false)
+    U = [10.0,30.0]; V = [20.0,-40.0]; PA = 0.7; BLRAng = 1e-10
+    res = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true)
+    @test length(res) == 2
+    edges,centers,σ²,σ²tot = res[1]
+    finite = isfinite.(σ²)
+    @test any(finite)
+    @test all(σ²[finite] .>= 0.0)
+    @test σ²tot > 0.0
+    #angular size has the baseline length divided out -- scaling both U and V leaves σ² unchanged
+    res2 = BLR.secondMoment(m,U=2 .*U,V=2 .*V,PA=PA,BLRAng=BLRAng,bins=101,centered=true)
+    @test all(isapprox.(res2[1][3][finite],σ²[finite],rtol=1e-12))
+    @test isapprox(res2[1][4],σ²tot,rtol=1e-12)
+    #σ² scales as BLRAng²
+    res4 = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=2*BLRAng,bins=101,centered=true)
+    @test all(isapprox.(res4[1][3][finite],4 .*σ²[finite],rtol=1e-10))
+    @test isapprox(res4[1][4],4*σ²tot,rtol=1e-10)
+    #line-integrated size matches an independent direct computation over all points
+    U′ = cos(PA)*U[1]+sin(PA)*V[1]; V′ = -sin(PA)*U[1]+cos(PA)*V[1]
+    s = vec(m.camera.α.*BLRAng.*U′ .+ m.camera.β.*BLRAng.*V′)./hypot(U′,V′)
+    wts = BLR.getVariable(m,:I,flatten=true).*BLR.getVariable(m,:ΔA,flatten=true)
+    vflat = BLR.getVariable(m,:v,flatten=true)
+    mask = isfinite.(vflat) .& isfinite.(s.*wts)
+    s̄ = sum(wts[mask].*s[mask])/sum(wts[mask])
+    σ²direct = sum(wts[mask].*(s[mask].-s̄).^2)/sum(wts[mask])
+    @test isapprox(σ²tot,σ²direct,rtol=1e-10)
+    #law of total variance: line-integrated size exceeds the flux-weighted mean of per-channel sizes
+    resOF = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true,overflow=true)
+    LP = BLR.getProfile(m,:line,bins=101,centered=true,overflow=true)
+    fOF = isfinite.(resOF[1][3])
+    meanChannelSize = sum(LP.binSums[fOF].*resOF[1][3][fOF])/sum(LP.binSums[fOF])
+    @test resOF[1][4] > meanChannelSize #photocenter spread term is the rotation signature
+    #returnAvg mirrors phase conventions
+    edgesAvg,centersAvg,σ²Avg,σ²totAvg = BLR.secondMoment(m,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true,returnAvg=true)
+    @test length(σ²Avg) == length(σ²)
+    @test σ²totAvg ≈ (res[1][4]+res[2][4])/2
+    #getProfile hook
+    p = BLR.getProfile(m,:moment2,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=101,centered=true)
+    @test typeof(p) == BLR.profile
+    @test p.name == :moment2
+    @test all(isapprox.(p.binSums[finite],σ²Avg[finite],rtol=1e-12))
+    BLR.setProfile!(m,p)
+    @test :moment2 ∈ keys(m.profiles)
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin
