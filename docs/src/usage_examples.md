@@ -253,6 +253,31 @@ Which should return something similar to the left panel below. Compared to the o
 
 ![line and phase profiles for disk-wind models](Long2023_phase_line_quickComparison.png)
 
+## Predicting BLR sizes from differential visibility amplitudes
+
+The differential phase profiles above encode the *photocenter* (first image moment) of each velocity channel, but at second order the interferometric signal also contains the *size* (second image moment) of the emission: in the marginally-resolved limit the line visibility amplitude dips below the continuum by ``1 - |V_l| = 2\pi^2|u|^2\sigma_\theta^2``, where ``\sigma_\theta`` is the rms angular extent of the channel image projected along the baseline direction. While 
+this has not yet been measured experimentally, we include the ability to predict this quantity for various models via the [`secondMoment`](@ref BLR.secondMoment) function, both per velocity channel and integrated over the entire line.
+
+Continuing with the disk-wind model and baselines from the example above:
+```julia
+res = BLR.secondMoment(mLAll,bins=101,centered=true,U=U,V=V,PA=PA,BLRAng=BLRAng) #list of (edges, centers, σ², σ²tot) per baseline
+edges, centers, σ², σ²tot = res[1] #σ² [rad²] per velocity channel and integrated over the line, first baseline
+
+rad2μas = 180/π*3600*1e6
+plot(centers.*3e2, sqrt.(σ²).*rad2μas, lw=2, label="",
+    xlabel="Δv [Mm/s]", ylabel="rms size along baseline [μas]")
+```
+The per-channel sizes can also be generated through the usual [`getProfile`](@ref BLR.getProfile) interface with `:moment2` (returning the average across baselines, like `:phase` does), which plugs into `setProfile!` and the plotting recipes:
+```julia
+m2All = BLR.getProfile(mLAll,:moment2,bins=101,centered=true,U=U,V=V,PA=PA,BLRAng=BLRAng)
+```
+The predicted amplitude signal on a given baseline follows directly, e.g. for the first baseline:
+```julia
+absu = hypot(U[1],V[1])*1e6 #baseline length in units of λ
+Vl = 1 .- 2π^2*absu^2 .* σ² #per-channel line visibility amplitude
+```
+Note that the line-integrated size `σ²tot` is *not* the flux-weighted average of the per-channel sizes: by the law of total variance it also contains the spread of the per-channel photocenters about the global centroid, which for a rotation-dominated BLR is comparable to the mean per-channel size. `secondMoment` computes it by placing the whole line in a single channel (the moment analog of averaging the complex visibilities before taking the modulus), so both terms are included automatically.
+
 ## Reproducing the combined model line and delay profiles shown in [Long+2025](https://doi.org/10.3847/1538-4357/adda38) 
 
 The real utility of `BroadLineRegions.jl` is not in its ability to model certain prescriptions for the BLR, but instead the ability to *flexibly combine* them. To demonstrate this we will reproduce the hybrid disk + cloud model line and delay profiles shown in Figure 4 of [Long+2025](https://doi.org/10.3847/1538-4357/adda38). As described in the paper, this model is a combination of a Pancoast style "cloud" model and a simple azimuthally isotropic disk model with a bit of radial inflow. We can generate both submodels and then combine them with simple syntax: 
