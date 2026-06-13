@@ -81,21 +81,22 @@ end
     @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 1.8, atol = 5e-1)
 end
 @testset "second moment profiles" begin
-    #binAssignments follows binnedSum's edge rules exactly
+    #binnedVariance machinery on hand-built arrays
     edges = [0.0,0.5,1.0]
-    @test BLR.binAssignments([0.0,0.1,0.5,0.7,1.0,NaN],edges) == [0,1,1,2,0,0] #interior edge point goes to the bin below, as in binnedSum
-    @test BLR.binAssignments([-1.0,0.1,0.7,2.0,NaN],edges,overflow=true) == [1,1,2,2,0]
-    #binnedMoment machinery on hand-built arrays
     x = [0.1,0.1,0.9]; θ = [1.0,3.0,5.0]; w = [1.0,1.0,2.0]
-    _,_,μ = BLR.binnedMoment(x,θ,w,n=1,bins=edges)
-    @test μ[1] ≈ 2.0 && μ[2] ≈ 5.0
-    _,_,μ₂ = BLR.binnedMoment(x,θ,w,n=2,bins=edges)
-    @test μ₂[1] ≈ 1.0
-    @test μ₂[2] ≈ 0.0 #single point in bin -> point source has no size
-    _,_,m₂ = BLR.binnedMoment(x,θ,w,n=2,bins=edges,central=false)
-    @test m₂[1] ≈ 5.0 #(1*1² + 1*3²)/2
-    _,_,μ₂ = BLR.binnedMoment(x,θ,w,n=2,bins=[0.0,0.4,0.6,1.0])
-    @test isnan(μ₂[2]) #empty bins are NaN, not 0
+    _,_,σ² = BLR.binnedVariance(x,θ,w,bins=edges)
+    @test σ²[1] ≈ 1.0
+    @test σ²[2] ≈ 0.0 #single point in bin -> point source has no size
+    _,_,σ² = BLR.binnedVariance(x,θ,w,bins=[0.0,0.4,0.6,1.0])
+    @test isnan(σ²[2]) #empty bins are NaN, not 0
+    #pass 2 follows binnedSum's edge rules: interior edge point goes to the bin below
+    _,_,σ² = BLR.binnedVariance([0.1,0.5],[0.0,2.0],[1.0,1.0],bins=edges)
+    @test σ²[1] ≈ 1.0 && isnan(σ²[2])
+    #points exactly on the first/last edges (or beyond) only counted with overflow=true
+    _,_,σ² = BLR.binnedVariance([0.0,0.1,1.0,0.9],[0.0,2.0,1.0,3.0],[1.0,1.0,1.0,1.0],bins=edges)
+    @test σ²[1] ≈ 0.0 && σ²[2] ≈ 0.0
+    _,_,σ² = BLR.binnedVariance([-1.0,0.1,2.0,0.9],[0.0,2.0,1.0,3.0],[1.0,1.0,1.0,1.0],bins=edges,overflow=true)
+    @test σ²[1] ≈ 1.0 && σ²[2] ≈ 1.0
 
     #model-level checks
     m = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=128,nϕ=256,
@@ -143,6 +144,9 @@ end
     @test all(isapprox.(p.binSums[finite],σ²Avg[finite],rtol=1e-12))
     BLR.setProfile!(m,p)
     @test :moment2 ∈ keys(m.profiles)
+    #getProfile forwards its bins argument to phase (centered=false so the bin count is not recomputed)
+    pPhase = BLR.getProfile(m,:phase,U=U,V=V,PA=PA,BLRAng=BLRAng,bins=51,centered=false)
+    @test length(pPhase.binSums) == 51
 end
 
 ## NOTE add JET to the test environment, then uncomment

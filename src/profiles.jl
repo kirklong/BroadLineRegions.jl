@@ -11,7 +11,8 @@ Bin the x and y variables into a histogram, where each bin is the sum of the y v
 - `bins::Union{Int,Vector{Float64}}=100`: Number of bins or bin edges for binning
   - If `Int`: Number of bins with edges equally spaced between min/max of x
   - If `Vector{Float64}`: Specific bin edges, with number of bins = `length(bins)-1`
-  - Left edge inclusive, right edge exclusive (except last bin which is inclusive)
+  - Bins are left-edge exclusive, right-edge inclusive: a point exactly on an interior edge goes to the bin below it.
+    Points at or below the first edge, or at or above the last edge, are only counted when `overflow=true` (into the first/last bin)
 - `overflow::Bool=false`: If `true`, include values outside bin range in the first/last bins
 - `centered::Bool=false`: If `true`, shift bin edges to center around middle value
 - `minX::Union{Float64,Nothing}=nothing`: Minimum value of x for binning (defaults to `minimum(x)`)
@@ -67,52 +68,22 @@ function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vect
 end
 
 """
-    binAssignments(x::Array{Float64,}, binEdges::Vector{Float64}; overflow::Bool=false)
-
-Return the bin index each element of x falls in, following the same rules as `binnedSum` (so the two can never disagree).
-
-# Arguments
-- `x::Array{Float64,}`: values to assign to bins
-- `binEdges::Vector{Float64}`: bin edges (number of bins = `length(binEdges)-1`)
-- `overflow::Bool=false`: if `true`, values outside the bin range are assigned to the first/last bins
-
-# Returns
-- `inds::Array{Int,}`: bin index for each element of x, with the same shape as x
-  - `0` means "not in any bin" (out of range with `overflow=false`, or non-finite x)
-"""
-function binAssignments(x::Array{Float64,}, binEdges::Vector{Float64}; overflow::Bool=false)
-    inds = zeros(Int, size(x))
-    for k in eachindex(x)
-        xk = x[k]
-        if isfinite(xk)
-            if xk <= binEdges[1]
-                inds[k] = overflow ? 1 : 0
-            elseif xk >= binEdges[end]
-                inds[k] = overflow ? length(binEdges)-1 : 0
-            else
-                inds[k] = searchsortedfirst(binEdges, xk) - 1
-            end
-        end
-    end
-    return inds
-end
-
-"""
-    binnedMoment(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,}; n=2, central=true,
+    binnedVariance(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,};
             bins=100, overflow=false, kwargs...)
 
-Per-bin weighted moment of θ: bin the x variable as in `binnedSum`, then in each bin compute the w-weighted moment of θ.
+Per-bin weighted variance of θ: bin the x variable as in `binnedSum`, then in each bin compute the
+w-weighted variance ``\\sigma^2 = \\sum_k w_k(\\theta_k-\\mu)^2 / \\sum_k w_k`` with μ the w-weighted mean of θ in that bin.
 
-Central moments are computed with a two-pass algorithm (pass 1: per-bin Σw and Σwθ → per-bin mean μ;
-pass 2: per-bin Σw(θ-μ)ⁿ/Σw) rather than the raw-moment identity μ₂ = m₂ - m₁², which suffers
-catastrophic cancellation when the per-bin mean is large compared to the spread.
+The variance is computed with a two-pass algorithm (pass 1: per-bin Σw and Σwθ → per-bin mean μ;
+pass 2: per-bin Σw(θ-μ)²/Σw) rather than the raw-moment identity σ² = ⟨θ²⟩ - ⟨θ⟩², which suffers
+catastrophic cancellation when the per-bin mean is large compared to the spread (e.g. a few clouds
+clustered tightly far from the bin mean). The two-pass form is also guaranteed non-negative.
+Bin membership in pass 2 follows the same rules as `binnedSum`, so the two can never disagree.
 
 # Arguments
 - `x::Array{Float64,}`: x variable to bin over
-- `θ::Array{Float64,}`: variable to take moments of
+- `θ::Array{Float64,}`: variable to take the variance of
 - `w::Array{Float64,}`: weights (e.g. intensity × area)
-- `n::Int=2`: order of the moment
-- `central::Bool=true`: if `true`, compute the central moment Σw(θ-μ)ⁿ/Σw; if `false`, the raw moment Σwθⁿ/Σw
 - `bins::Union{Int,Vector{Float64}}=100`: number of bins or bin edges, as in `binnedSum`
 - `overflow::Bool=false`: if `true`, include values outside the bin range in the first/last bins
 - Additional `kwargs` (`centered`, `minX`, `maxX`) are passed to `binnedSum`
@@ -121,28 +92,29 @@ catastrophic cancellation when the per-bin mean is large compared to the spread.
 - `Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}`: A tuple containing:
   - `binEdges`: Bin edges for the x variable
   - `binCenters`: Bin centers for the x variable
-  - `μₙ`: per-bin weighted moment of θ (NaN for empty bins; for `n=1` the per-bin mean μ is returned)
+  - `σ²`: per-bin weighted variance of θ (NaN for empty bins)
 """
-function binnedMoment(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,}; n::Int=2, central::Bool=true,
+function binnedVariance(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,};
     bins::Union{Int,Vector{Float64}}=100, overflow::Bool=false, kwargs...)
     binEdges, binCenters, Σw = binnedSum(x, w, bins=bins, overflow=overflow; kwargs...)
     _, _, Σwθ = binnedSum(x, w.*θ, bins=binEdges, overflow=overflow; kwargs...)
     μ = Σwθ./Σw #per-bin weighted mean -- 0/0 = NaN for empty bins
-    if n == 1
-        return (binEdges, binCenters, μ)
-    end
-    if !central
-        _, _, Σwθⁿ = binnedSum(x, w.*θ.^n, bins=binEdges, overflow=overflow; kwargs...)
-        return (binEdges, binCenters, Σwθⁿ./Σw)
-    end
-    inds = binAssignments(x, binEdges, overflow=overflow)
-    μₙ = zeros(length(binCenters))
+    Σwδ² = zeros(length(binCenters))
     for k in eachindex(x)
-        bin = inds[k]
+        xk = x[k]
+        isfinite(xk) || continue
+        bin = 0 #not in any bin -- same edge rules as binnedSum
+        if xk <= binEdges[1]
+            bin = overflow ? 1 : 0
+        elseif xk >= binEdges[end]
+            bin = overflow ? length(binEdges)-1 : 0
+        else
+            bin = searchsortedfirst(binEdges, xk) - 1
+        end
         (bin == 0 || !isfinite(θ[k]) || !isfinite(w[k]) || !isfinite(μ[bin])) && continue
-        μₙ[bin] += w[k]*(θ[k]-μ[bin])^n
+        Σwδ²[bin] += w[k]*(θ[k]-μ[bin])^2
     end
-    return (binEdges, binCenters, μₙ./Σw) #0/0 = NaN for empty bins
+    return (binEdges, binCenters, Σwδ²./Σw) #0/0 = NaN for empty bins
 end
 
 """
@@ -161,7 +133,8 @@ Bin the model into a histogram, where each bin is the integrated value of the yV
 - `bins::Union{Int,Vector{Float64}}`: Number of bins or bin edges for binning
   - If `Int`: Number of bins with edges equally spaced between min/max of xVariable
   - If `Vector{Float64}`: Specific bin edges, with number of bins = `length(bins)-1`
-  - Left edge inclusive, right edge exclusive (except last bin which is inclusive)
+  - Bins are left-edge exclusive, right-edge inclusive: a point exactly on an interior edge goes to the bin below it.
+    Points at or below the first edge, or at or above the last edge, are only counted when `overflow=true` (into the first/last bin)
 - `xVariable::Union{String,Symbol,Function}=:v`: Variable to bin over
   - Must be a valid attribute of `model.rings` or a function that can be applied to `model.rings`
 - `dx::Array{Float64,}`: Integration element for each bin
@@ -339,8 +312,8 @@ function secondMoment(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothin
     function getσ²(v::Array{Float64,},I::Array{Float64,},ΔA::Array{Float64,},x::Array{Float64,},y::Array{Float64},U::Float64,V::Float64,PA::Float64;kwargs...)
         U′ = cos(PA)*U+sin(PA)*V; V′ = -sin(PA)*U+cos(PA)*V
         s = (x.*U′ .+ y.*V′)./hypot(U′,V′) #projected position along baseline direction [rad] -- baseline length divides out
-        edges,centers,σ² = binnedMoment(v, s, I.*ΔA; n=2, central=true, kwargs...)
-        _,_,σ²tot = binnedMoment(v, s, I.*ΔA; n=2, central=true, bins=1, overflow=true, centered=false) #"one-channel" route: whole line in one bin
+        edges,centers,σ² = binnedVariance(v, s, I.*ΔA; kwargs...)
+        _,_,σ²tot = binnedVariance(v, s, I.*ΔA; bins=1, overflow=true, centered=false) #"one-channel" route: whole line in one bin
         return (edges,centers,σ²,σ²tot[1])
     end
     v = getVariable(m,:v,flatten=true); I = getVariable(m,:I,flatten=true); ΔA = getVariable(m,:ΔA,flatten=true)
@@ -382,7 +355,8 @@ Return a profile for the model based on the specified name.
 - `bins`: Number of bins or bin edges for binning
   - If `Int`: Number of bins with edges equally spaced between min/max velocity
   - If `Vector{Float64}`: Specific bin edges, with number of bins = `length(bins)-1`
-  - Left edge inclusive, right edge exclusive (except last bin which is inclusive)
+  - Bins are left-edge exclusive, right-edge inclusive: a point exactly on an interior edge goes to the bin below it.
+    Points at or below the first edge, or at or above the last edge, are only counted when `overflow=true` (into the first/last bin)
 - `dx`: Integration element for each ring (defaults to `ΔA` in each ring struct if `nothing`)
 - Additional `kwargs` passed to `binModel` include:
   - `overflow=true`: Include overflow bins
@@ -415,7 +389,7 @@ function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{I
         pDen = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)
         p = (pNum[1], pNum[2], pNum[3]./pDen[3])
     elseif n == :phase
-        edges,centers,avgPhase = phase(m,returnAvg=true;kwargs...)
+        edges,centers,avgPhase = phase(m,returnAvg=true,bins=bins;kwargs...)
         p = (edges, centers, avgPhase)
     elseif n == :moment2
         edges,centers,σ²,σ²tot = secondMoment(m,returnAvg=true,bins=bins;kwargs...)
