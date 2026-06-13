@@ -52,12 +52,8 @@ Calculate line of sight velocity for cloud in 3D space.
 """
 function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
     v₀ = vCirc(r,rₛ)
-    vXYZ = -1.0.*[v₀*sin(ϕ₀),v₀*cos(ϕ₀),0.0] #match velocity sign conventions such that right side is negative
-    r3D = get_r3D(i,rot,θₒ)
-    vXYZ = r3D*vXYZ
-    if reflect
-        vXYZ = BLR.reflect!(vXYZ,i)
-    end
+    #match velocity sign conventions such that right side is negative; rotate into system coordinates and reflect if needed
+    vXYZ = rotate3D_vector_scalar(-v₀*sin(ϕ₀), -v₀*cos(ϕ₀), 0.0, i, rot, θₒ, reflect)
     return vXYZ[1] #line of sight velocity is x component after rotation (camera is at +x)
 end
 
@@ -93,7 +89,7 @@ Calculate line of sight velocity for cloud in 3D space with potential for ellipt
 """
 function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ::Float64, σΘc::Float64, θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64, 
     r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, ϕ::Float64, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...) 
-    vc = vCirc(r,rₛ)
+    vc = vCirc(r,rₛ) #flip sign so that right side is negative
     vₜ = rand(rng,Normal(0.0,σₜ))*vc
     ρ = 0.0; Θ = 0.0
     if rand(rng) < fEllipse #elliptical orbit, distribution deviating from circular by σρc, σΘc, Pancoast 14 2.5.1
@@ -104,12 +100,8 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
         Θ = fFlow < 0.5 ? rand(rng,Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(rng,Normal(0.0,σΘᵣ)) + θₑ
     end
     vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x, inflow = "negative" velocity at +x, and ϕ is along y at ϕ = 0 when left is rotating towards observer
-    vXYZ = -1.0.*[vx*cos(ϕ₀)+vy*sin(ϕ₀),vx*sin(ϕ₀)+vy*cos(ϕ₀),0.0] #rotate around z by ϕ₀, match velocity sign conventions (right = negative)
-    r3D = get_r3D(i,rot,θₒ) #transform initial coordinates to system coordinates
-    vXYZ = r3D*vXYZ #rotate into system coordinates
-    if reflect
-        vXYZ = BLR.reflect!(vXYZ,i) #reflect across midplane of disk
-    end
+    #rotate around z by ϕ₀, match velocity sign conventions (right = negative), then transform into system coordinates (reflecting across midplane of disk if needed)
+    vXYZ = rotate3D_vector_scalar(-(vx*cos(ϕ₀)+vy*sin(ϕ₀)), -(vx*sin(ϕ₀)+vy*cos(ϕ₀)), 0.0, i, rot, θₒ, reflect)
     return vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3), negative sign to match disk convention left towards observer
 end
 

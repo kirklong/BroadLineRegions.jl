@@ -62,11 +62,17 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
   - `Union{Nothing, Symbol}`
   - `:log` or `:linear` scale
 
+- `x`, `y`, `z`: Cached 3D system coordinates of each point (camera at +x), or `nothing`
+  - `Union{Vector{Float64}, Float64, Nothing}`
+  - Computed once at construction (or lazily by `getXYZ`) so hot loops never recompute `rotate3D`
+  - Values are *post-reflection*: if `reflect` is true the stored coordinates already include it
+  - Default `nothing`; access through `getXYZ(ring)` which fills the cache on first use
+
 # Constructor
 
 ```julia
-ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false, 
-    τ=0.0, η=1.0, Δr=1.0, Δϕ=1.0, scale=nothing, kwargs...)
+ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false,
+    τ=0.0, η=1.0, Δr=1.0, Δϕ=1.0, scale=nothing, x=nothing, y=nothing, z=nothing, kwargs...)
 ```
 
 Required parameters:
@@ -93,12 +99,16 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
     Δr::Float64
     Δϕ::Float64
     scale::Union{Nothing,Symbol}
+    x::Union{V,F,Nothing} #cached 3D system coordinates (post-reflection), nothing until computed -- see getXYZ
+    y::Union{V,F,Nothing}
+    z::Union{V,F,Nothing}
 
     function ring(;kwargs...) #could re-write this to use multiple dispatch? i.e. ring(;r::Float64, i::Float64, e::Float64, v::Float64, I::Float64, ϕ::Float64) etc.
         """
         constructor for ring struct -- takes in kwargs (detailed above) and returns a ring object (detailed above) while checking for errors
         """
         r = nothing; i = nothing; v = nothing; I = nothing; ϕ = nothing; ΔA = nothing; rot = 0.0; θₒ = 0.0; ϕ₀ = nothing; reflect = false; τ = 0.0; η = 1.0; Δr = 1.0; Δϕ = 1.0; scale = nothing
+        x = get(kwargs, :x, nothing); y = get(kwargs, :y, nothing); z = get(kwargs, :z, nothing) #cached coordinates are optional, no message when missing
         try; r = kwargs[:r]; catch; error("r must be provided as kwarg"); end
         try; i = kwargs[:i]; catch; error("i must be provided as kwarg"); end
         try; v = kwargs[:v]; catch; error("v must be provided as kwarg"); end
@@ -202,7 +212,14 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
             @assert τ>=0.0 "τ must be greater than or equal to 0"
         end
 
-        new{Vector{Float64},Float64}(r,i,rot,θₒ,v,I,ϕ,ϕ₀,ΔA,reflect,τ,η,Δr,Δϕ,scale)
+        for (val,name) in ((x,"x"),(y,"y"),(z,"z"))
+            @assert isnothing(val) || typeof(val) == Float64 || typeof(val) == Vector{Float64} "$name must be Float64, Vector{Float64}, or nothing, got $(typeof(val))"
+            if typeof(val) == Vector{Float64}
+                @assert length(val) == length(ϕ) "$name must be the same length as ϕ"
+            end
+        end
+
+        new{Vector{Float64},Float64}(r,i,rot,θₒ,v,I,ϕ,ϕ₀,ΔA,reflect,τ,η,Δr,Δϕ,scale,x,y,z)
     end
 end
 
@@ -354,6 +371,44 @@ end
 meshgrid(x,y) = (reshape(repeat(x,outer=length(y)),length(x),length(y)), reshape(repeat(y,inner=length(x)),length(x),length(y)))
 
 """
+    fillDiskGrid!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β,
+        i, rot, θₒ, M, r3D, rMin, rMax, ηₒ, η₁, αRM, rNorm)
+
+Typed inner pixel loop of the disk-wind `model` constructor (function barrier).
+
+The constructor body is type-unstable (its locals come from `kwargs`), which would box every
+per-pixel value; routing the loop through this concretely-typed helper keeps the raytracing
+allocation-free. Fills the supplied matrices in place; out-of-range pixels
+(`r < rMin` or `r > rMax`, compared after rounding to 9 significant digits) are set to NaN.
+`M` and `r3D` are the precomputed matrices described in `raytrace`; `ηₒ, η₁, αRM, rNorm` are the
+`response` parameters (hoisted from kwargs once instead of splatted per pixel).
+
+Rows are processed in parallel when Julia is started with multiple threads (`julia -t N`).
+Every pixel writes only its own matrix slots and the computation is deterministic, so results
+are bit-identical at any thread count.
+"""
+function fillDiskGrid!(rSystem::Matrix{Float64}, ϕSystem::Matrix{Float64}, ϕ₀::Matrix{Float64}, η::Matrix{Float64},
+        xSystem::Matrix{Float64}, ySystem::Matrix{Float64}, zSystem::Matrix{Float64},
+        α::Matrix{Float64}, β::Matrix{Float64}, i::Float64, rot::Float64, θₒ::Float64,
+        M::Matrix{Float64}, r3D::Matrix{Float64}, rMin::Float64, rMax::Float64,
+        ηₒ::Float64, η₁::Float64, αRM::Float64, rNorm::Float64)
+    rMinR = round(rMin,sigdigits=9); rMaxR = round(rMax,sigdigits=9) #constant over the loop -- hoisted
+    Threads.@threads for ri in axes(α,1)
+        for ϕi in axes(α,2)
+            rt, ϕt, ϕ₀t, xt, yt, zt = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, M, r3D)
+            if round(rt,sigdigits=9) < rMinR || round(rt,sigdigits=9) > rMaxR #exclude portions outside of (rMin, rMax), round because of numerical errors
+                rSystem[ri,ϕi] = NaN; ϕSystem[ri,ϕi] = NaN; ϕ₀[ri,ϕi] = NaN; η[ri,ϕi] = NaN
+                xSystem[ri,ϕi] = NaN; ySystem[ri,ϕi] = NaN; zSystem[ri,ϕi] = NaN
+            else
+                rSystem[ri,ϕi] = rt; ϕSystem[ri,ϕi] = ϕt; ϕ₀[ri,ϕi] = ϕ₀t; η[ri,ϕi] = response(rt, ηₒ, η₁, αRM, rNorm)
+                xSystem[ri,ϕi] = xt; ySystem[ri,ϕi] = yt; zSystem[ri,ϕi] = zt
+            end
+        end
+    end
+    return nothing
+end
+
+"""
     model
 
 A mutable structure to hold many rings and their parameters that model the BLR.
@@ -364,6 +419,10 @@ A mutable structure to hold many rings and their parameters that model the BLR.
 - `profiles::Union{Nothing,Dict{Symbol,profile}}`: Dictionary of profiles (see `profile` struct) with keys as symbols; optional, usually initialized to empty dictionary and filled in with `setProfile!`
 - `camera::Union{Nothing,camera}`: Camera coordinates (α,β) corresponding to each ring used to generate images and in raytracing, see `camera` struct
 - `subModelStartInds::Vector{Int}`: Indices of start of each submodel in list of rings; used to separate out submodels for raytracing or for the recovery of individual models after being combined
+- `cache::Union{Nothing,Dict{Any,Array}}`: Memoized `getVariable` results so repeated profile calculations
+  don't re-gather data from the rings. Managed automatically by the package's own mutating functions;
+  if you mutate ring fields directly, call `reset!(m)` afterwards to invalidate it. Set to `nothing`
+  to disable caching for a model entirely.
 
 # Constructors
 ```julia
@@ -390,6 +449,10 @@ mutable struct model
     profiles::Union{Nothing,Dict{Symbol,profile}}
     camera::Union{Nothing,camera}
     subModelStartInds::Vector{Int} #indices of start of each submodel in list of rings
+    cache::Union{Nothing,Dict{Any,Array}} #memoized getVariable results, keyed by (variable, flatten); set to nothing to disable caching entirely
+    #cache contract: any code that mutates ring fields directly must call reset!(m) (which empties the
+    #cache) before the next getVariable/getProfile call -- the package's own mutating functions
+    #(removeNaN!, raytrace!, zeroDiskObscuredClouds!, removeDiskObscuredClouds!, +) handle this themselves
     #note: move α,β for every point (as currently defined) to new struct -- camera α and β should be user defined and separate
     #also keep track of xyz in this new struct? call it coords and have one field be camera and the other be system
     #or just put it in each ring? probably less cluttered/better...do tomorrow
@@ -398,19 +461,19 @@ mutable struct model
         """
         constructor for model struct -- takes in rings, profiles, camera, and subModelStartInds and returns a model object (detailed above) while checking for errors
         """
-        new(rings,profiles,camera,subModelStartInds)
+        new(rings,profiles,camera,subModelStartInds,Dict{Any,Array}())
     end
 
     function model(rings::Vector{ring{Vector{Float64},Float64}})
         """
         constructor for model struct -- takes in cloud rings and returns a model object (detailed above) while checking for errors
         """
-        r = [ring.r for ring in rings]; ϕ₀ = [ring.ϕ₀ for ring in rings]; i = [ring.i for ring in rings]; rot = [ring.rot for ring in rings]; θₒ = [ring.θₒ for ring in rings]; reflect = [ring.reflect for ring in rings]
-        α = zeros(length(r)); β = zeros(length(r))
-        for (i,(ri,ϕi,ii,roti,θₒi,reflecti)) in enumerate(zip(r,ϕ₀,i,rot,θₒ,reflect))
-            α[i], β[i] = photograph(ri,ϕi,ii,roti,θₒi,reflecti)  #get camera coordinates from physical 
+        α = zeros(length(rings)); β = zeros(length(rings))
+        for (i,r) in enumerate(rings)
+            xyz = getXYZ(r) #cached (or computed once here) system coordinates -- camera is at +x so α = y and β = z (see photograph)
+            α[i] = xyz[2]; β[i] = xyz[3]
         end
-        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
+        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}())
     end
 
     function model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
@@ -451,32 +514,25 @@ mutable struct model
         α = rMesh .* cos.(ϕMesh); β = rMesh .* sin.(ϕMesh) #camera coordinates
         ΔA = scale == :log ? rMesh.^2 .* (Δr * Δϕ) : rMesh .* (Δr * Δϕ) #projected disk area, normalization doesn't matter
         rSystem = zeros(nr,nϕ); ϕSystem = zeros(nr,nϕ); ϕ₀ = zeros(nr,nϕ); η = zeros(nr,nϕ)
+        xSystem = zeros(nr,nϕ); ySystem = zeros(nr,nϕ); zSystem = zeros(nr,nϕ) #3D system coordinate cache (camera at +x)
         θₒ = 0.0; rot = 0.0
-        r3D = get_r3D(i,rot,θₒ) 
-        xyz = [0.0;0.0;0.0]
-        matBuff = zeros(3,3)
-        colBuff = zeros(3)
-        rt = 0.0; ϕt = 0.0; ϕ₀t = 0.0 #preallocate raytracing variables
-        for ri in 1:nr
-            for ϕi in 1:nϕ
-                rt, ϕt, ϕ₀t = raytrace(α[ri,ϕi], β[ri,ϕi], i, rot, θₒ, r3D, xyz, matBuff, colBuff) 
-                ηt = response(rt; kwargs...) #response function
-                # println("RAYTRACE: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
-                # x = β[ri,ϕi]/cos(i); y = α[ri,ϕi]; z = 0.0 #system coordinates from camera coordinates, raytraced back to disk plane
-                # rt = sqrt(x^2 + y^2 + z^2); ϕt = atan(y,x); ϕ₀t = atan(y,x) #convert to polar coordinates
-                # println("OLD WAY: rt = $rt, ϕt = $ϕt, ϕ₀t = $ϕ₀t")
-                # exit()
-                if round(rt,sigdigits=9) < round(rMin,sigdigits=9) || round(rt,sigdigits=9) > round(rMax,sigdigits=9) #exclude portions outside of (rMin, rMax), round because of numerical errors
-                    rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = NaN, NaN, NaN, NaN
-                else
-                    rSystem[ri,ϕi], ϕSystem[ri,ϕi], ϕ₀[ri,ϕi], η[ri,ϕi] = rt, ϕt, ϕ₀t, ηt
-                end
-            end
-        end
+        r3D = get_r3D(i,rot,θₒ)
+        undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)]
+        M_raytrace = undo_tilt * r3D #constant for fixed (i, rot, θₒ) -- precompute once instead of per pixel
+        #response parameters hoisted from kwargs once (per-pixel kwargs splat is slow in this type-unstable scope)
+        ηₒ = Float64(get(kwargs, :ηₒ, 0.5)); η₁ = Float64(get(kwargs, :η₁, 0.5)); αRM = Float64(get(kwargs, :αRM, 0.0)); rNorm = Float64(get(kwargs, :rNorm, 1.0))
+        fillDiskGrid!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β, i, rot, θₒ, M_raytrace, r3D, rMin, rMax, ηₒ, η₁, αRM, rNorm) #typed function barrier does the pixel loop
 
         rSystem = [rSystem[i,:] for i in 1:nr]; ϕSystem = [ϕSystem[i,:] for i in 1:nr]; ΔA = [ΔA[i,:] for i in 1:nr]; ϕ₀ = [ϕ₀[i,:] for i in 1:nr]; η = [η[i,:] for i in 1:nr] #reshape, correct ϕ for other functions (based on ϕ to observer with ϕ = 0 at camera)
-        rings = [ring(r = ri, i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕi, ϕ₀ = ϕ₀i, ΔA = ΔAi, rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=ηi; kwargs...) for (ri,ϕi,ΔAi,ϕ₀i,ηi) in zip(rSystem,ϕSystem,ΔA,ϕ₀,η)]
-        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1])
+        xSystem = [xSystem[i,:] for i in 1:nr]; ySystem = [ySystem[i,:] for i in 1:nr]; zSystem = [zSystem[i,:] for i in 1:nr]
+        #rings are independent of each other, so build them in parallel when Julia has multiple threads
+        #(the I and v functions are evaluated concurrently across rings -- the built-in ones are pure;
+        #custom I/v functions passed to the constructor must be thread-safe to benefit from julia -t N)
+        rings = Vector{ring{Vector{Float64},Float64}}(undef, nr)
+        Threads.@threads for k in 1:nr
+            rings[k] = ring(r = rSystem[k], i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕSystem[k], ϕ₀ = ϕ₀[k], ΔA = ΔA[k], rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=η[k], x=xSystem[k], y=ySystem[k], z=zSystem[k]; kwargs...)
+        end
+        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}())
     end
 
     function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
