@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 """
-    binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins=100, 
-            overflow=false, centered=false, minX=nothing, maxX=nothing)
+    binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins=100,
+            overflow=false, centered=true, minX=nothing, maxX=nothing)
 
 Bin the x and y variables into a histogram, where each bin is the sum of the y values for the corresponding x values.
 
@@ -14,7 +14,7 @@ Bin the x and y variables into a histogram, where each bin is the sum of the y v
   - Bins are left-edge exclusive, right-edge inclusive: a point exactly on an interior edge goes to the bin below it.
     Points at or below the first edge, or at or above the last edge, are only counted when `overflow=true` (into the first/last bin)
 - `overflow::Bool=false`: If `true`, include values outside bin range in the first/last bins
-- `centered::Bool=false`: If `true`, shift bin edges to center around middle value
+- `centered::Bool=true`: If `true`, shift bin edges to center around middle value
 - `minX::Union{Float64,Nothing}=nothing`: Minimum value of x for binning (defaults to `minimum(x)`)
 - `maxX::Union{Float64,Nothing}=nothing`: Maximum value of x for binning (defaults to `maximum(x)`)
 
