@@ -1,5 +1,114 @@
 using KernelAbstractions
 
+function _rt_disk_deproject_scalar(a, b, inc, rot, θₒ, m11, m12, m21, m22,
+        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMin, rMax, ηₒ, η₁, αRM, rNorm)
+    cosr = cos(rot)
+    sinr = sin(rot)
+    cosi = cos(inc)
+    sini = sin(inc)
+    cosθₒ = cos(θₒ)
+    sinθₒ = sin(θₒ)
+    xRing = -(b*cosr - a*cosi*sinr) / (cosi*cosθₒ + cosr*sini*sinθₒ)
+    yRing = (a*(cosi*cosθₒ + sini/cosr*sinθₒ) + b*cosθₒ*sinr/cosr) /
+        (cosi*cosθₒ/cosr + sini*sinθₒ)
+    r = sqrt(xRing*xRing + yRing*yRing)
+    if r < rMin || r > rMax
+        nan = convert(typeof(r), NaN)
+        return nan, nan, nan, nan, nan, nan, nan
+    end
+    ϕ₀ = atan(yRing, xRing)
+    x = r3d11*xRing + r3d12*yRing
+    y = r3d21*xRing + r3d22*yRing
+    z = r3d31*xRing + r3d32*yRing
+    xd = m11*xRing + m12*yRing
+    yd = m21*xRing + m22*yRing
+    ϕ = atan(yd, xd)
+    η = ηₒ + η₁ * (r/rNorm)^αRM
+    return r, ϕ, ϕ₀, η, x, y, z
+end
+
+@kernel function _rt_disk_deproject_kernel!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem,
+        α, β, inc, rot, θₒ, m11, m12, m21, m22, r3d11, r3d12, r3d21, r3d22,
+        r3d31, r3d32, rMin, rMax, ηₒ, η₁, αRM, rNorm)
+    idx = @index(Global)
+    rt, ϕt, ϕ₀t, ηt, xt, yt, zt = _rt_disk_deproject_scalar(α[idx], β[idx], inc, rot, θₒ,
+        m11, m12, m21, m22, r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMin, rMax,
+        ηₒ, η₁, αRM, rNorm)
+    rSystem[idx] = rt
+    ϕSystem[idx] = ϕt
+    ϕ₀[idx] = ϕ₀t
+    η[idx] = ηt
+    xSystem[idx] = xt
+    ySystem[idx] = yt
+    zSystem[idx] = zt
+end
+
+function _rt_disk_deproject!(rSystem::AbstractArray, ϕSystem::AbstractArray, ϕ₀::AbstractArray,
+        η::AbstractArray, xSystem::AbstractArray, ySystem::AbstractArray, zSystem::AbstractArray,
+        α::AbstractArray, β::AbstractArray, inc::Real, rot::Real, θₒ::Real, M::AbstractMatrix,
+        r3D::AbstractMatrix, rMin::Real, rMax::Real, ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real;
+        backend=KernelAbstractions.CPU())
+    size(rSystem) == size(α) == size(β) || throw(DimensionMismatch("disk deprojection arrays must have matching sizes"))
+    kernel! = _rt_disk_deproject_kernel!(backend)
+    event = kernel!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β, inc, rot, θₒ,
+        M[1,1], M[1,2], M[2,1], M[2,2], r3D[1,1], r3D[1,2], r3D[2,1], r3D[2,2],
+        r3D[3,1], r3D[3,2], round(rMin, sigdigits=9), round(rMax, sigdigits=9),
+        ηₒ, η₁, αRM, rNorm; ndrange=length(α))
+    event !== nothing && wait(event)
+    return rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem
+end
+
+_rt_v_circular_disk_scalar(r, ϕ, inc, rₛ) = -sqrt(rₛ/(2*r)) * sin(inc) * sin(ϕ)
+
+@kernel function _rt_v_circular_disk_kernel!(v, r, ϕ, inc, rₛ)
+    idx = @index(Global)
+    v[idx] = _rt_v_circular_disk_scalar(r[idx], ϕ[idx], inc, rₛ)
+end
+
+function _rt_v_circular_disk!(v::AbstractArray, r::AbstractArray, ϕ::AbstractArray, inc::Real;
+        rₛ=1.0, backend=KernelAbstractions.CPU())
+    size(v) == size(r) == size(ϕ) || throw(DimensionMismatch("velocity arrays must have matching sizes"))
+    kernel! = _rt_v_circular_disk_kernel!(backend)
+    event = kernel!(v, r, ϕ, inc, rₛ; ndrange=length(v))
+    event !== nothing && wait(event)
+    return v
+end
+
+function _rt_disk_wind_i_scalar(r, ϕ, inc, f1, f2, f3, f4, α)
+    sinϕ = sin(ϕ)
+    cosϕ = cos(ϕ)
+    sini = sin(inc)
+    cosi = cos(inc)
+    pre = sqrt(1 / (2 * r^3))
+    term12 = (3*sini^2) * cosϕ * (sqrt(2)*f1*cosϕ + f2/2*sinϕ)
+    term3 = (-f3*3*sini*cosi) * cosϕ
+    term4 = sqrt(2)*f4*cosi^2
+    return r^(-α) * abs(pre * (term12 + term3 + term4))
+end
+
+@kernel function _rt_disk_wind_i_kernel!(I, r, ϕ, inc, f1, f2, f3, f4, α, rMin, rMax)
+    idx = @index(Global)
+    rv = r[idx]
+    if rv >= rMin && rv <= rMax
+        I[idx] = _rt_disk_wind_i_scalar(rv, ϕ[idx], inc, f1, f2, f3, f4, α)
+    elseif isnan(rv)
+        I[idx] = rv
+    else
+        I[idx] = zero(eltype(I))
+    end
+end
+
+function _rt_disk_wind_i!(I::AbstractArray, r::AbstractArray, ϕ::AbstractArray, inc::Real,
+        f1::Real, f2::Real, f3::Real, f4::Real, α::Real, rMin::Real, rMax::Real;
+        backend=KernelAbstractions.CPU())
+    size(I) == size(r) == size(ϕ) || throw(DimensionMismatch("intensity arrays must have matching sizes"))
+    kernel! = _rt_disk_wind_i_kernel!(backend)
+    event = kernel!(I, r, ϕ, inc, f1, f2, f3, f4, α, round(rMin, sigdigits=9),
+        round(rMax, sigdigits=9); ndrange=length(I))
+    event !== nothing && wait(event)
+    return I
+end
+
 struct _RaytraceGridArrays{T<:Real,V<:AbstractVector{T},I<:AbstractVector{Int}}
     rMin::V
     rMax::V

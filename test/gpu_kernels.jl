@@ -1,5 +1,75 @@
 using KernelAbstractions
 
+function _test_same_nan_approx(actual, expected; atol=1e-12, rtol=0.0)
+    @test size(actual) == size(expected)
+    for idx in eachindex(actual, expected)
+        if isnan(expected[idx])
+            @test isnan(actual[idx])
+        else
+            @test isapprox(actual[idx], expected[idx]; atol=atol, rtol=rtol)
+        end
+    end
+end
+
+function _disk_field_values(m, sym)
+    out = Matrix{Float64}(undef, length(m.rings), length(m.rings[1].r))
+    for (idx, ring) in enumerate(m.rings)
+        out[idx, :] .= getfield(ring, sym)
+    end
+    return vec(out)
+end
+
+@testset "disk construction kernels" begin
+    rMin = 300.0
+    rMax = 900.0
+    inc = 0.4
+    nr = 16
+    nϕ = 32
+    f1 = 1.0
+    f2 = 0.7
+    f3 = 0.2
+    f4 = 0.9
+    αsrc = 1.2
+    ηₒ = 0.4
+    η₁ = 0.6
+    αRM = 0.1
+    rNorm = 700.0
+    m = BLR.DiskWindModel(rMin, rMax, inc, nr=nr, nϕ=nϕ, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=f1, f2=f2, f3=f3, f4=f4,
+        α=αsrc, ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, reflect=false)
+
+    r3D = BLR.get_r3D(inc, 0.0, 0.0)
+    undoTilt = [sin(inc) 0.0 -cos(inc); 0.0 1.0 0.0; cos(inc) 0.0 sin(inc)]
+    M = undoTilt * r3D
+    rSystem = similar(m.camera.α)
+    ϕSystem = similar(m.camera.α)
+    ϕ₀ = similar(m.camera.α)
+    η = similar(m.camera.α)
+    xSystem = similar(m.camera.α)
+    ySystem = similar(m.camera.α)
+    zSystem = similar(m.camera.α)
+    BLR._rt_disk_deproject!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem,
+        m.camera.α, m.camera.β, inc, 0.0, 0.0, M, r3D, rMin, rMax, ηₒ, η₁, αRM, rNorm;
+        backend=KernelAbstractions.CPU())
+
+    _test_same_nan_approx(rSystem, _disk_field_values(m, :r))
+    _test_same_nan_approx(ϕSystem, _disk_field_values(m, :ϕ))
+    _test_same_nan_approx(ϕ₀, _disk_field_values(m, :ϕ₀))
+    _test_same_nan_approx(η, _disk_field_values(m, :η))
+    _test_same_nan_approx(xSystem, _disk_field_values(m, :x))
+    _test_same_nan_approx(ySystem, _disk_field_values(m, :y))
+    _test_same_nan_approx(zSystem, _disk_field_values(m, :z))
+
+    v = similar(rSystem)
+    BLR._rt_v_circular_disk!(v, rSystem, ϕSystem, inc; backend=KernelAbstractions.CPU())
+    _test_same_nan_approx(v, _disk_field_values(m, :v))
+
+    I = similar(rSystem)
+    BLR._rt_disk_wind_i!(I, rSystem, ϕSystem, inc, f1, f2, f3, f4, αsrc, rMin, rMax;
+        backend=KernelAbstractions.CPU())
+    _test_same_nan_approx(I, _disk_field_values(m, :I))
+end
+
 @testset "raytrace bin-assign kernels" begin
     disk(; r1=300.0, r2=900.0, nr=8, nϕ=16, inc=0.4, τ=0.4) =
         BLR.DiskWindModel(r1, r2, inc, nr=nr, nϕ=nϕ, scale=:linear,
