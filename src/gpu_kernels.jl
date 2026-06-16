@@ -77,3 +77,20 @@ function _rt_bin_assign(ma::ModelArrays, gridArrays::_RaytraceGridArrays; backen
     keys = similar(ma.I, Int, length(ma.I))
     return _rt_bin_assign!(keys, ma, gridArrays; backend=backend)
 end
+
+_rt_sort_depth(x) = isfinite(x) ? x : -Inf
+
+function _rt_sortperm_by_key_depth(keys::AbstractVector{Int}, x::AbstractVector)
+    length(keys) == length(x) || throw(DimensionMismatch("keys has length $(length(keys)) but x has length $(length(x))"))
+    depthOrder = sortperm(eachindex(keys); by=i -> _rt_sort_depth(x[i]), rev=true, alg=MergeSort)
+    keyOrder = sortperm(keys[depthOrder]; alg=MergeSort)
+    return depthOrder[keyOrder]
+end
+
+function _rt_sortperm_by_key_depth(ma::ModelArrays, keys::AbstractVector{Int})
+    return _rt_sortperm_by_key_depth(keys, ma.x)
+end
+
+function _rt_sorted_key_depth_pairs(keys::AbstractVector{Int}, x::AbstractVector, perm::AbstractVector{Int})
+    return [(keys[i], _rt_sort_depth(x[i])) for i in perm]
+end

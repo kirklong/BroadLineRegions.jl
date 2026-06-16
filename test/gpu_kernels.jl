@@ -29,5 +29,19 @@ using KernelAbstractions
         @test keys == ref
         @test all(0 .<= keys .<= length(pixels))
         @test count(==(0), keys) == count(p -> p.discrete && BLR._rt_find_pixel(p, grids) == 0, points)
+
+        perm = BLR._rt_sortperm_by_key_depth(ma, keys)
+        refPerm = sortperm(1:length(points); by=i -> (ref[i], -BLR._rt_sort_depth(points[i].x)), alg=MergeSort)
+        @test perm == refPerm
+        @test BLR._rt_sorted_key_depth_pairs(keys, ma.x, perm) ==
+              BLR._rt_sorted_key_depth_pairs(ref, [p.x for p in points], refPerm)
     end
+
+    keys = [2, 1, 2, 1, 0, 2, 0]
+    x = [10.0, 4.0, 11.0, 6.0, 3.0, NaN, 9.0]
+    perm = BLR._rt_sortperm_by_key_depth(keys, x)
+    @test keys[perm] == [0, 0, 1, 1, 2, 2, 2]
+    @test x[perm[1:2]] == [9.0, 3.0]
+    @test x[perm[3:4]] == [6.0, 4.0]
+    @test isequal(x[perm[7]], NaN)
 end
