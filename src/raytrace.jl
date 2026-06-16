@@ -199,26 +199,14 @@ and adjusting the disk intensity according to the specified ratio.
 """
 function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,rotate3D::Function=rotate3D_scalar)
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
-    startInds = m.subModelStartInds #start indices of submodels
     if !isCombined
         @warn "did not detect combined model so nothing to zero -- returning unaltered input model"
         return m
     end
-    if length(startInds) > 2
-        #zero disk obscured clouds recursively combining two at a time
-        mList = [deepcopy(m) for i=1:length(startInds)]
-        for (i,m) in enumerate(mList)
-            s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
-            m.rings = m.rings[s:e]
-        end
-        mFinal = mList[1]
-        for i=2:length(mList)
-            mFinal = mFinal + mList[i]
-            mFinal = zeroDiskObscuredClouds!(mFinal,rotate3D)
-        end
-        m = mFinal
-        return mFinal
-    end
+    # The logic below classifies rings by type (disk = vector ϕ/r, cloud = scalar),
+    # not by submodel, so it handles any number of submodels (disk + N cloud groups)
+    # in one pass. (The old `length(startInds) > 2` recursion sliced rings without
+    # slicing the camera/subModelStartInds and called itself positionally — broken.)
     diskFlagRing = [!(typeof(r.ϕ) == Float64 && typeof(r.r) == Float64) for r in m.rings]
     iDisk = m.rings[diskFlagRing][1].i
     for ring in m.rings[diskFlagRing]
@@ -267,26 +255,16 @@ Note that this is a mutating operation and the input model will be modified in p
 """
 function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
     isCombined = length(m.subModelStartInds) > 1 #check if model is combined
-    startInds = m.subModelStartInds #start indices of submodels
     if !isCombined
         @warn "did not detect combined model so nothing to remove -- returning unaltered input model"
         return m
     end
-    if length(startInds) > 2
-        #remove disk obscured clouds recursively combining two at a time
-        mList = [deepcopy(m) for i=1:length(startInds)]
-        for (i,m) in enumerate(mList)
-            s = startInds[i]; e = i == length(startInds) ? length(m.rings) : startInds[i+1]-1
-            m.rings = m.rings[s:e]
-        end
-        mFinal = mList[1]
-        for i=2:length(mList)
-            mFinal = mFinal + mList[i]
-            mFinal = removeDiskObscuredClouds!(mFinal,rotate3D)
-        end
-        return mFinal
-    end
+    # Classifies rings by type (disk vs cloud), not submodel, so any number of
+    # submodels works in one pass. (The old `length(startInds) > 2` recursion sliced
+    # rings without the camera/subModelStartInds and was logically redundant.)
     removeFlag = falses(length(m.rings))
+    diskRingInds = [i for i in 1:length(m.rings) if !(typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64)]
+    cloudRingInds = [i for i in 1:length(m.rings) if typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64]
     αβStartInds = zeros(Int64,length(m.rings))
     currentαβInd = 1
     for (i,ring) in enumerate(m.rings)
@@ -306,16 +284,15 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
             ind += 1
         else
             stride = length(ring.ϕ)
-            diskFlag[ind:ind+stride] .= true
+            diskFlag[ind:ind+stride-1] .= true
             ind += stride
         end
     end
     diskα = m.camera.α[diskFlag]; diskβ = m.camera.β[diskFlag]
     rDisk = sqrt.(diskα.^2 .+ diskβ.^2)
     rMinDisk = minimum(rDisk); rMaxDisk = maximum(rDisk)
-    rUnique = unique(r -> round(r,sigdigits=12),sqrt.(m.camera.α.^2 .+ m.camera.β.^2))
+    rUnique = unique(r -> round(r,sigdigits=12), rDisk)
     ϕList = [m.rings[i].ϕ for i in 1:length(m.rings)]
-    cloudRingInds = [i for i in 1:length(m.rings) if typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64]
     for i in cloudRingInds #check if r inside rMin/max, then find closest disk cell, then compare xs and flag for removal if xCloud behind xDisk
         xyzSys = rotate3D === rotate3D_scalar ? getXYZ(m.rings[i]) : rotate3D(m.rings[i].r,m.rings[i].ϕ₀,m.rings[i].i,m.rings[i].rot,m.rings[i].θₒ,m.rings[i].reflect) #cached system coordinates xyz unless a custom rotate3D was passed
         xCloud = xyzSys[1]
@@ -323,7 +300,8 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
         rCam = sqrt(α^2 + β^2)
         ϕCam = atan(β,α)
         if (rCam > rMinDisk) && (rCam < rMaxDisk)
-            rDiskInd = argmin(abs.(rCam .- rUnique))
+            rDiskPos = argmin(abs.(rCam .- rUnique))
+            rDiskInd = diskRingInds[rDiskPos]
             ϕDiskInd = argmin(abs.(ϕCam .- ϕList[rDiskInd]))
             xDisk = rotate3D === rotate3D_scalar ? getXYZ(m.rings[rDiskInd])[1][ϕDiskInd] : rotate3D(m.rings[rDiskInd].r[ϕDiskInd],m.rings[rDiskInd].ϕ₀[ϕDiskInd],m.rings[rDiskInd].i,m.rings[rDiskInd].rot,m.rings[rDiskInd].θₒ,m.rings[rDiskInd].reflect)[1] #system coordinates xyz (cached x vector indexed at this point unless a custom rotate3D was passed)
             if xCloud < xDisk #cloud behind disk
@@ -364,7 +342,7 @@ with extraneous points removed. Note that this function will mutate the input mo
 
 # Arguments
 - `m::model`: Model to raytrace
-- `IRatios::Union{Float64,Array{Float64,}}=1.0`: Intensity ratios for each submodel
+- `IRatios::Union{Float64,Array{Float64,}}=1.0`: Global emissivity weights for each submodel
   - If `Float64`, applies to all submodels equally
   - If array, applies to each submodel individually (must match number of submodels)
   - Used when combining models with different intensity functions if they aren't properly normalized
@@ -376,6 +354,409 @@ with extraneous points removed. Note that this function will mutate the input mo
 # Returns
 - `m::model`: Model with raytraced points
 """
+
+struct _RaytracePoint
+    submodel::Int
+    ring::Int
+    col::Int
+    α::Float64
+    β::Float64
+    rCam::Float64
+    ϕCam::Float64
+    x::Float64
+    r::Float64
+    ϕ::Float64
+    ϕ₀::Float64
+    i::Float64
+    rot::Float64
+    θₒ::Float64
+    v::Float64
+    I::Float64
+    ΔA::Float64
+    τ::Float64
+    η::Float64
+    reflect::Bool
+    discrete::Bool
+    τ_Δv::Float64
+end
+
+struct _RaytracePixel
+    ring::Int
+    col::Int
+    α::Float64
+    β::Float64
+    rCam::Float64
+    ϕCam::Float64
+    ΔA::Float64
+end
+
+struct _RaytraceGrid
+    submodel::Int
+    ringinds::Vector{Int}
+    outinds::Vector{Int}
+    rMin::Vector{Float64}
+    rMax::Vector{Float64}
+    Δϕ::Float64
+    nϕ::Int
+    localToPixel::Dict{Tuple{Int,Int},Int}
+end
+
+_rt_point_length(r::ring) = r.I isa AbstractVector ? length(r.I) : 1
+_rt_point_value(x, col::Int) = x isa AbstractVector ? x[col] : x
+_rt_wrap_π(ϕ::Float64) = atan(sin(ϕ), cos(ϕ))
+
+function _rt_iratio_vector(IRatios::Float64, nSubmodels::Int)
+    return fill(IRatios, nSubmodels)
+end
+
+function _rt_iratio_vector(IRatios::Array{Float64}, nSubmodels::Int)
+    if ndims(IRatios) != 1 || length(IRatios) != nSubmodels
+        throw(ArgumentError("IRatios must be a Float64 or a vector with one entry per submodel; got size $(size(IRatios)) for $nSubmodels submodels"))
+    end
+    return vec(IRatios)
+end
+
+function _rt_submodel_ring_range(m::model, submodel::Int)
+    start = m.subModelStartInds[submodel]
+    stop = submodel == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[submodel+1]-1
+    return start:stop
+end
+
+function _rt_submodel_camera_range(camStartInds::Vector{Int}, m::model, submodel::Int)
+    start = camStartInds[submodel]
+    stop = submodel == length(camStartInds) ? length(m.camera.α) : camStartInds[submodel+1]-1
+    return start:stop
+end
+
+function _rt_is_discrete(m::model, submodel::Int)
+    return m.rings[m.subModelStartInds[submodel]].ϕ isa Float64
+end
+
+function _rt_submodel_rspan(m::model, camStartInds::Vector{Int}, submodel::Int)
+    cr = _rt_submodel_camera_range(camStartInds, m, submodel)
+    rCam = sqrt.(m.camera.α[cr].^2 .+ m.camera.β[cr].^2)
+    return minimum(rCam), maximum(rCam)
+end
+
+function _rt_ring_edges(ring::ring, rCam::Float64)
+    ΔrUp = ring.scale == :log ? rCam*(exp(ring.Δr)-1) : ring.Δr
+    ΔrDown = ring.scale == :log ? min(rCam, rCam*(1-1/exp(ring.Δr))) : min(rCam, ring.Δr)
+    return rCam - ΔrDown/2, rCam + ΔrUp/2
+end
+
+function _rt_ϕ_col(ϕ::Float64, Δϕ::Float64, nϕ::Int)
+    shifted = mod(_rt_wrap_π(ϕ) - (-π - Δϕ/2), 2π)
+    col = floor(Int, shifted/Δϕ) + 1
+    return col > nϕ ? 1 : col
+end
+
+function _rt_make_vector!(r::ring, field::Symbol, n::Int)
+    val = getfield(r, field)
+    if !(val isa AbstractVector)
+        setfield!(r, field, fill(val, n))
+    end
+end
+
+function _rt_prepare_output_ring!(r::ring)
+    n = _rt_point_length(r)
+    for field in (:r, :i, :rot, :θₒ, :v, :I, :ϕ, :ϕ₀, :ΔA, :reflect, :τ, :η)
+        _rt_make_vector!(r, field, n)
+    end
+    if isnothing(r.x) || !(r.x isa AbstractVector)
+        r.x = [rotate3D_scalar(r.r[j], r.ϕ₀[j], r.i[j], r.rot[j], r.θₒ[j], r.reflect[j])[1] for j in 1:n]
+    end
+    if isnothing(r.y) || !(r.y isa AbstractVector)
+        r.y = [rotate3D_scalar(r.r[j], r.ϕ₀[j], r.i[j], r.rot[j], r.θₒ[j], r.reflect[j])[2] for j in 1:n]
+    end
+    if isnothing(r.z) || !(r.z isa AbstractVector)
+        r.z = [rotate3D_scalar(r.r[j], r.ϕ₀[j], r.i[j], r.rot[j], r.θₒ[j], r.reflect[j])[3] for j in 1:n]
+    end
+    r.I .= NaN
+    return r
+end
+
+function _rt_set_point!(r::ring, col::Int, res)
+    r.I[col] = res.I
+    r.v[col] = res.v
+    r.r[col] = res.r
+    r.ϕ[col] = res.ϕ
+    r.ϕ₀[col] = res.ϕ₀
+    r.i[col] = res.i
+    r.rot[col] = res.rot
+    r.θₒ[col] = res.θₒ
+    r.τ[col] = res.τ
+    r.η[col] = res.η
+    r.reflect[col] = res.reflect
+    r.x[col] = res.x
+    r.y[col] = res.y
+    r.z[col] = res.z
+end
+
+function _rt_copy_cloud_point(p::_RaytracePoint, Ieff::Float64)
+    return ring(r=p.r, i=p.i, rot=p.rot, θₒ=p.θₒ, v=p.v, I=Ieff, ϕ=p.ϕ, ϕ₀=p.ϕ₀,
+        ΔA=p.ΔA, reflect=p.reflect, τ=p.τ, η=p.η, Δr=1.0, Δϕ=1.0, scale=nothing,
+        x=p.x, y=p.α, z=p.β)
+end
+
+function _rt_mask_ring!(r::ring, mask::AbstractVector{Bool})
+    for field in (:r, :i, :rot, :θₒ, :v, :I, :ϕ, :ϕ₀, :ΔA, :reflect, :τ, :η, :x, :y, :z)
+        val = getfield(r, field)
+        if val isa AbstractVector
+            setfield!(r, field, val[mask])
+        end
+    end
+    return r
+end
+
+function _rt_rebuild_camera(rings::Vector{ring})
+    α = Float64[]
+    β = Float64[]
+    subStarts = [1]
+    offset = 1
+    while offset <= length(rings)
+        nPer = _rt_point_length(rings[offset])
+        stop = offset
+        while stop < length(rings) && _rt_point_length(rings[stop+1]) == nPer
+            stop += 1
+        end
+        for col in 1:nPer
+            for ringInd in offset:stop
+                r = rings[ringInd]
+                push!(α, Float64(_rt_point_value(r.y, col)))
+                push!(β, Float64(_rt_point_value(r.z, col)))
+            end
+        end
+        offset = stop + 1
+        offset <= length(rings) && push!(subStarts, offset)
+    end
+    return α, β, subStarts
+end
+
+function _rt_compact_rings(rings::Vector{ring})
+    compact = ring[]
+    for r in rings
+        if r.I isa AbstractVector
+            mask = isfinite.(r.I)
+            any(mask) && push!(compact, _rt_mask_ring!(r, mask))
+        elseif isfinite(r.I)
+            push!(compact, r)
+        end
+    end
+    return compact
+end
+
+function _rt_flatten_points(m::model, camStartInds::Vector{Int})
+    points = _RaytracePoint[]
+    sizehint!(points, length(m.camera.α))
+    for s in 1:length(m.subModelStartInds)
+        rr = _rt_submodel_ring_range(m, s)
+        cr = _rt_submodel_camera_range(camStartInds, m, s)
+        discrete = _rt_is_discrete(m, s)
+        nRings = length(rr)
+        nPer = _rt_point_length(m.rings[first(rr)])
+        camOffset = first(cr) - 1
+        for col in 1:nPer
+            for (localRing, ringInd) in enumerate(rr)
+                ring = m.rings[ringInd]
+                camInd = camOffset + (col-1)*nRings + localRing
+                α = Float64(m.camera.α[camInd])
+                β = Float64(m.camera.β[camInd])
+                rVal = Float64(_rt_point_value(ring.r, col))
+                ϕ₀Val = Float64(_rt_point_value(ring.ϕ₀, col))
+                iVal = Float64(_rt_point_value(ring.i, col))
+                rotVal = Float64(_rt_point_value(ring.rot, col))
+                θₒVal = Float64(_rt_point_value(ring.θₒ, col))
+                reflectVal = Bool(_rt_point_value(ring.reflect, col))
+                xVal = if !isnothing(ring.x)
+                    Float64(_rt_point_value(ring.x, col))
+                else
+                    rotate3D_scalar(rVal, ϕ₀Val, iVal, rotVal, θₒVal, reflectVal)[1]
+                end
+                vVal = Float64(_rt_point_value(ring.v, col))
+                τVal = Float64(_rt_point_value(ring.τ, col))
+                τ_Δv = if ring.τ isa AbstractVector && nPer > 1
+                    v2 = col == 1 ? Float64(_rt_point_value(ring.v, min(col+1, nPer))) : Float64(_rt_point_value(ring.v, col-1))
+                    abs((vVal + v2)/2)
+                else
+                    Inf
+                end
+                push!(points, _RaytracePoint(
+                    s, ringInd, col, α, β, hypot(α, β), atan(β, α), xVal, rVal,
+                    Float64(_rt_point_value(ring.ϕ, col)), ϕ₀Val, iVal, rotVal, θₒVal, vVal,
+                    Float64(_rt_point_value(ring.I, col)), Float64(_rt_point_value(ring.ΔA, col)),
+                    τVal, Float64(_rt_point_value(ring.η, col)), reflectVal, discrete, τ_Δv))
+            end
+        end
+    end
+    return points
+end
+
+function _rt_build_output(m::model, camStartInds::Vector{Int})
+    continuous = [s for s in 1:length(m.subModelStartInds) if !_rt_is_discrete(m, s)]
+    sort!(continuous, by=s -> _rt_submodel_rspan(m, camStartInds, s)[1])
+    grids = _RaytraceGrid[]
+    pixels = _RaytracePixel[]
+    outRings = ring[]
+    αout = Float64[]
+    βout = Float64[]
+    subStarts = Int[]
+    covered = Tuple{Vector{Float64},Vector{Float64}}[]
+
+    for s in continuous
+        rr = collect(_rt_submodel_ring_range(m, s))
+        nRings = length(rr)
+        nϕ = _rt_point_length(m.rings[rr[1]])
+        camOffset = first(_rt_submodel_camera_range(camStartInds, m, s)) - 1
+        selected = Int[]
+        selectedLocal = Int[]
+        rMinList = Float64[]
+        rMaxList = Float64[]
+        for (localRing, ringInd) in enumerate(rr)
+            camInd = camOffset + localRing
+            rCam = hypot(m.camera.α[camInd], m.camera.β[camInd])
+            rMin, rMax = _rt_ring_edges(m.rings[ringInd], rCam)
+            alreadyCovered = any(any((rCam .>= cov[1]) .& (rCam .<= cov[2])) for cov in covered)
+            if !alreadyCovered
+                push!(selected, ringInd)
+                push!(selectedLocal, localRing)
+                push!(rMinList, rMin)
+                push!(rMaxList, rMax)
+            end
+        end
+        isempty(selected) && continue
+        push!(subStarts, length(outRings)+1)
+        outinds = Int[]
+        for ringInd in selected
+            push!(outRings, _rt_prepare_output_ring!(deepcopy(m.rings[ringInd])))
+            push!(outinds, length(outRings))
+        end
+        localToPixel = Dict{Tuple{Int,Int},Int}()
+        for col in 1:nϕ
+            for (idx, localRing) in enumerate(selectedLocal)
+                ringInd = selected[idx]
+                outRing = outinds[idx]
+                camInd = camOffset + (col-1)*nRings + localRing
+                push!(αout, Float64(m.camera.α[camInd]))
+                push!(βout, Float64(m.camera.β[camInd]))
+                pixelInd = length(pixels) + 1
+                localToPixel[(idx, col)] = pixelInd
+                push!(pixels, _RaytracePixel(outRing, col, αout[end], βout[end], hypot(αout[end], βout[end]),
+                    atan(βout[end], αout[end]), Float64(_rt_point_value(m.rings[ringInd].ΔA, col))))
+            end
+        end
+        push!(covered, (rMinList, rMaxList))
+        push!(grids, _RaytraceGrid(s, selected, outinds, rMinList, rMaxList, m.rings[selected[1]].Δϕ, nϕ, localToPixel))
+    end
+    return grids, pixels, outRings, αout, βout, subStarts
+end
+
+function _rt_find_pixel(p::_RaytracePoint, grids::Vector{_RaytraceGrid})
+    for grid in grids
+        ringPos = findfirst(k -> p.rCam >= grid.rMin[k] && p.rCam <= grid.rMax[k], eachindex(grid.rMin))
+        isnothing(ringPos) && continue
+        col = _rt_ϕ_col(p.ϕCam, grid.Δϕ, grid.nϕ)
+        pix = get(grid.localToPixel, (ringPos, col), 0)
+        pix != 0 && return pix
+    end
+    return 0
+end
+
+function _rt_scan_bucket(points::Vector{_RaytracePoint}, inds::Vector{Int}, IRatios::Vector{Float64}, outputΔA::Float64, τCutOff::Float64)
+    finiteInds = [idx for idx in inds if isfinite(points[idx].I) && isfinite(points[idx].x)]
+    isempty(finiteInds) && return nothing
+    order = sort(finiteInds, by=idx -> points[idx].x, rev=true)
+    τvals = [points[idx].τ for idx in order]
+    τ_Δv = [points[idx].τ_Δv for idx in order]
+    if !(all(isinf, τ_Δv) || length(unique(τvals)) <= length(order))
+        error("velocity-dependent optical depths not yet implemented -- pass τ as a float when creating models if you want to use raytracing")
+    end
+    weights = [points[idx].I * IRatios[points[idx].submodel] * points[idx].ΔA / outputΔA for idx in order]
+    areas = [points[idx].ΔA for idx in order]
+    firstPoint = points[order[1]]
+    new_τ = firstPoint.τ
+    new_I = weights[1]
+    new_v = firstPoint.v * new_I
+    new_r = firstPoint.r * new_I
+    new_ϕ = firstPoint.ϕ * new_I
+    new_ϕ₀ = firstPoint.ϕ₀ * new_I
+    new_i = firstPoint.i * new_I
+    new_rot = firstPoint.rot * new_I
+    new_θₒ = firstPoint.θₒ * new_I
+    new_η = firstPoint.η * new_I
+    new_x = firstPoint.x * new_I
+    new_y = firstPoint.α * new_I
+    new_z = firstPoint.β * new_I
+    new_reflect = firstPoint.reflect
+    j = 2
+    while j <= length(order)
+        # fraction of the rear tile obscured by the largest tile in front of it:
+        # obscuredFrac = A_rear / A_front_max. When >1 the rear tile is larger than
+        # everything in front, so only A_front_max/A_rear = 1/obscuredFrac of it is
+        # covered (attenuated); the rest peeks around at full brightness. Recomputed
+        # per tile (not once at j=2).
+        obscuredFrac = areas[j]/maximum(@view areas[1:j-1])
+        (new_τ < τCutOff || obscuredFrac > 1.0) || break
+        p = points[order[j]]
+        if obscuredFrac > 1.0
+            obscured_I = weights[j]/obscuredFrac          # covered part, attenuated
+            unobscured_I = weights[j] - obscured_I        # peeking part, full strength
+            tmp_I = exp(-new_τ)*obscured_I + unobscured_I
+        else
+            tmp_I = exp(-new_τ)*weights[j]
+        end
+        new_v += p.v * tmp_I
+        new_r += p.r * tmp_I
+        new_ϕ += p.ϕ * tmp_I
+        new_ϕ₀ += p.ϕ₀ * tmp_I
+        new_i += p.i * tmp_I
+        new_rot += p.rot * tmp_I
+        new_θₒ += p.θₒ * tmp_I
+        new_η += p.η * tmp_I
+        new_x += p.x * tmp_I
+        new_y += p.α * tmp_I
+        new_z += p.β * tmp_I
+        new_I += tmp_I
+        new_τ += p.τ
+        j += 1
+    end
+    den = new_I == 0.0 ? 1.0 : new_I
+    return (I=new_I, v=new_v/den, r=new_r/den, ϕ=new_ϕ/den, ϕ₀=new_ϕ₀/den,
+        i=new_i/den, rot=new_rot/den, θₒ=new_θₒ/den, τ=new_τ, η=new_η/den,
+        x=new_x/den, y=new_y/den, z=new_z/den, reflect=new_reflect)
+end
+
+function _rt_attenuate_free_clouds(points::Vector{_RaytracePoint}, freeInds::Vector{Int}, IRatios::Vector{Float64}, τCutOff::Float64)
+    isempty(freeInds) && return ring[]
+    radii = [sqrt(points[idx].ΔA/π) for idx in freeInds]
+    cellSize = 2*maximum(radii)
+    cellSize = cellSize == 0.0 ? 1.0 : cellSize
+    cells = Dict{Tuple{Int,Int},Vector{Int}}()
+    for (pos, idx) in enumerate(freeInds)
+        p = points[idx]
+        key = (floor(Int, p.α/cellSize), floor(Int, p.β/cellSize))
+        push!(get!(cells, key, Int[]), pos)
+    end
+    out = ring[]
+    for (pos, idx) in enumerate(freeInds)
+        p = points[idx]
+        key = (floor(Int, p.α/cellSize), floor(Int, p.β/cellSize))
+        τfront = 0.0
+        for di in -1:1, dj in -1:1
+            for otherPos in get(cells, (key[1]+di, key[2]+dj), Int[])
+                otherPos == pos && continue
+                q = points[freeInds[otherPos]]
+                dist = hypot(p.α - q.α, p.β - q.β)
+                if dist < radii[pos] + radii[otherPos] && (q.x > p.x || (q.x == p.x && otherPos < pos))
+                    τfront += q.τ
+                end
+            end
+        end
+        τfront > τCutOff && continue
+        push!(out, _rt_copy_cloud_point(p, p.I * IRatios[p.submodel] * exp(-τfront)))
+    end
+    return out
+end
+
 function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff::Float64=1.0,raytraceFreeClouds=false)
     if m.subModelStartInds == [1]
         @warn "raytrace! called on a model with no submodels -- maybe you already raytraced? Returning unaltered model."
@@ -383,467 +764,55 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
     elseif m.camera.raytraced
         @warn "raytrace! called on a model that has already been raytraced -- returning unaltered model."
         return m
-    else
-        @info "raytracing model with $(length(m.subModelStartInds)) submodels"
-        #1 model with coarsest grid becomes the new "base" model -- if tie pick the one with most points? 
-        #2 any models with smaller grid are added to corresponding larger grid model, if they are outside of the larger grid keep original small grid in those places and put them to back of array + set startInds to still show combined
-        #3 work from +x camera backwards until τ ~ 1, adding intensity to each pixel as needed
-        #4 if τ is fixed assume it applies at all wavelengths, else if τ is a function of wavelength check for spatial and wavelength overlap
-        #5 remove extra points from final model if they are obscured 
-
-        #1 detect grid sizes, ranges, types
-        gridInfo = Array{Tuple{Float64,Float64,Int}}(undef,length(m.subModelStartInds)) #contains (rMin,rMax,gridType) for each submodel, where gridType is 0 for continuous (i.e. disk) and 1 for discrete (i.e. cloud)
-        camStartInds = getFlattenedCameraIndices(m) #flattened camera indices for each submodel
-        for i in 1:length(m.subModelStartInds) 
-            discrete = typeof(m.rings[m.subModelStartInds[i]].ϕ) == Float64 #if cloud/discrete model, each ring contains just a single point, otherwise each ring contains a grid of points
-            camStartInd = camStartInds[i] #flattened camera index for this submodel
-            camEndInd = i == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[i+1]-1 #flattened camera index for the next submodel
-            αSegment = m.camera.α[camStartInd:camEndInd]
-            βSegment = m.camera.β[camStartInd:camEndInd]
-
-            rCamSegment = sqrt.(αSegment.^2 .+ βSegment.^2) #camera coordinates
-            rMin = minimum(rCamSegment)
-            rMax = maximum(rCamSegment)
-            if discrete
-                gridInfo[i] = (rMin,rMax,1)
-            else
-                gridInfo[i] = (rMin,rMax,0)
-            end
-        end
-        contCounter = sum([gridInfo[i][3]!=1 for i in 1:length(m.subModelStartInds)]) #number of continuous models
-        overlaps = []
-        baseModel = nothing #initialize
-        if contCounter >= 1
-            for i in 1:length(m.subModelStartInds)
-                if gridInfo[i][3] == 0
-                    #check if this model is inside any of the continuous models
-                    for j in 1:length(m.subModelStartInds)
-                        if gridInfo[j][3] == 0 && i != j
-                            if (gridInfo[i][1] >= gridInfo[j][1] && gridInfo[i][1] <= gridInfo[j][2]) || (gridInfo[i][2] <= gridInfo[j][2] && gridInfo[i][2] >= gridInfo[j][1])
-                                #continuous models have some overlap -- whose grid do we use?
-                                if (j,i) ∉ overlaps #only add unique pairs
-                                    push!(overlaps, (i,j))
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            #2 combine models if necessary
-            baseModelInd = 1
-            if length(overlaps) > 0 # set base model ind to be the one with smallest rMin
-                innerInd = 0 
-                rMin = Inf
-                for (i,j) in overlaps
-                    if gridInfo[i][1] < gridInfo[j][1] && gridInfo[i][1] < rMin
-                        innerInd = i
-                        rMin = gridInfo[i][1]
-                    elseif gridInfo[j][1] < gridInfo[i][1] && gridInfo[j][1] < rMin
-                        innerInd = j
-                        rMin = gridInfo[j][1]
-                    end
-                end
-                baseModelInd = innerInd
-            end
-            baseModelRings = deepcopy(m.rings[m.subModelStartInds[baseModelInd]:m.subModelStartInds[baseModelInd+1]-1])
-            camStartInd = camStartInds[baseModelInd] #flattened camera index for this submodel
-            camEndInd = baseModelInd == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[baseModelInd+1]-1 #flattened camera index for the next submodel
-            baseModelα = deepcopy(m.camera.α[camStartInd:camEndInd])
-            baseModelβ = deepcopy(m.camera.β[camStartInd:camEndInd])
-            baseModel_rCam = sqrt.(baseModelα.^2 .+ baseModelβ.^2) #camera coordinates
-            baseModel_rUnique = unique(r -> round(r,sigdigits=9),baseModel_rCam) #unique radii in camera coordinates
-            baseModel_ϕCam = atan.(baseModelβ,baseModelα) #camera coordinates
-            
-            baseCam = camera(baseModelα,baseModelβ,false) #camera object for base model
-            baseModel = model(baseModelRings,Dict{Symbol,profile}(),baseCam,[1]) #initialize new model object with base model rings
-            baseModel.cache = nothing #disable getVariable memoization -- raytracing mutates rings then re-gathers, cache would go stale (removeNaN! re-enables at the end)
-            base_r = getVariable(baseModel,:r,flatten=true)
-            base_i = getVariable(baseModel,:i,flatten=true)
-            base_ϕ = getVariable(baseModel,:ϕ,flatten=true)
-            base_ϕ₀ = getVariable(baseModel,:ϕ₀,flatten=true)    
-            base_v = getVariable(baseModel,:v,flatten=true)
-            base_I = getVariable(baseModel,:I,flatten=true)
-            base_τ = getVariable(baseModel,:τ,flatten=true)
-            base_η = getVariable(baseModel,:η,flatten=true)
-            
-            #plan: go through each ring of the base model and check all submodels for their overlaps, push to list
-            #then raytrace from +x backwards until τ ~ 1, adding intensity to each pixel as needed in base model, with intensity ratios if supplied 
-            #for indices that get added to base model, mark them for removal by setting I = 0
-            #after going through base model, check if there are any other continuous models that overlap with each other (not base model) and repeat this process
-            #when all overlaps have been checked, remove all rings and camera points that are marked for removal
-            #create new model with combined rings and camera points, going from smallest to largest rMin 
-            for i in 1:length(baseModel_rCam)
-                #check if any other submodels overlap with our base model between this ring and the next
-                #rCam and ϕCam are the centers of camera pixels, use Δr and Δϕ to calculate edges
-                rCam = baseModel_rCam[i]
-                ϕCam = baseModel_ϕCam[i]
-                Δr_base = getVariable(baseModel,:Δr)
-                Δϕ_base = getVariable(baseModel,:Δϕ)
-                ring,col = getRingFromFlattenedInd(baseModel,i) #get ring and column for this pixel     
-                ΔrUp = baseModelRings[ring].scale == :log ? rCam*(exp(Δr_base[ring])-1) : Δr_base[ring] #log scale
-                ΔrDown = m.rings[ring].scale == :log ? minimum([rCam,rCam*(1-1/exp(Δr_base[ring]))]) : minimum([rCam,Δr_base[ring]]) #if first ring, then use scale to calculate what "should be" the next inner ring and take minimum of that and the current radius (so don't go through zero)
-                Δϕ = Δϕ_base[ring] #always linear in ϕ
-                rMin = rCam - ΔrDown/2
-                rMax = rCam + ΔrUp/2
-                ϕMin = atan(sin(ϕCam - Δϕ/2), cos(ϕCam - Δϕ/2)) #azimuthal angle of lower boundary of pixel
-                ϕMax = atan(sin(ϕCam + Δϕ/2), cos(ϕCam + Δϕ/2)) #correct for periodicity / make sure angular coordinates are the same   
-                i_i = length(base_i) < length(base_I) ? baseModelRings[ring].i : base_i[i] #inclination angle of this point
-                θₒi = baseModelRings[ring].θₒ #opening angle of this point
-                reflecti = baseModelRings[ring].reflect #reflection flag of this point
-                roti = (length(baseModelRings[ring].rot) < length(baseModelRings[ring].I) || length(baseModelRings[ring].I) == 1) ? baseModelRings[ring].rot : baseModelRings[ring].rot[i] #rotation of this point
-                xList = [rotate3D(base_r[i],base_ϕ₀[i],i_i,roti,θₒi,reflecti)[1]] #x coordinate in physical space of pixel
-                IList = [base_I[i]]; vList = [base_v[i]]; ϕList = [base_ϕ[i]]; rList = [base_r[i]]; ΔAList = [baseModelRings[ring].ΔA[col]]; #initialize lists for intensities, velocities, azimuthal angles, radii, and areas
-                iList = length(base_i) < length(base_I) ? [baseModelRings[ring].i] : [base_i[i]]; 
-                τList = length(base_τ) < length(base_I) ? [baseModelRings[ring].τ] : [base_τ[i]]; ηList = length(base_η) < length(base_I) ? [baseModelRings[ring].η] : [base_η[i]]; #initialize lists for intensities, velocities, azimuthal angles, radii, inclinations, and optical depths
-                Δv = i == 1 ? (base_v[i]+base_v[i+1])/2 : (base_v[i]+base_v[i-1])/2 #calculate Δv as average of neighboring points
-                if length(base_τ) < length(base_I)
-                    τ_ΔvList = [Inf] 
-                else
-                    τ_ΔvList = [abs(Δv)]
-                end
-                #check if any other submodels have points within this pixel
-                for j in 1:length(m.subModelStartInds) 
-                    if j != baseModelInd
-                        endInd = j == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[j+1]-1 #end index of submodel
-                        subModel = model(m.rings[m.subModelStartInds[j]:endInd],nothing,nothing,[j]) #submodel to check
-                        subModel.cache = nothing #per-pixel temporary -- don't pay cache bookkeeping (and rings mutate between pixels)
-                        camStartInd = camStartInds[j] #flattened camera index for this submodel
-                        camEndInd = j == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[j+1]-1 #flattened camera index for the next submodel
-                        αSegment = m.camera.α[camStartInd:camEndInd]
-                        βSegment = m.camera.β[camStartInd:camEndInd]
-                        rCamSegment = sqrt.(αSegment.^2 .+ βSegment.^2) #camera coordinates
-                        ϕCamSegment = atan.(βSegment,αSegment) #camera coordinates
-                        sub_r = getVariable(subModel,:r,flatten=true)
-                        sub_ϕ = getVariable(subModel,:ϕ,flatten=true)
-                        sub_v = getVariable(subModel,:v,flatten=true)
-                        sub_I = getVariable(subModel,:I,flatten=true)
-                        sub_θₒ = getVariable(subModel,:θₒ,flatten=true)
-                        sub_reflect = getVariable(subModel,:reflect,flatten=true)
-                        sub_ϕ₀ = getVariable(subModel,:ϕ₀,flatten=true)
-                        sub_i = getVariable(subModel,:i,flatten=true)
-                        sub_rot = getVariable(subModel,:rot,flatten=true)
-                        sub_τ = getVariable(subModel,:τ,flatten=true)
-                        sub_η = getVariable(subModel,:η,flatten=true)
-                        #check if any of the camera points are within this pixel                        
-                        for k in 1:length(rCamSegment)
-                            ϕMin_k = copy(ϕMin); ϕMax_k = copy(ϕMax) #copy to avoid modifying original
-                            rCam_k = rCamSegment[k]
-                            ϕCam_k = ϕCamSegment[k]
-                            #check if this camera point is within the pixel
-                            if (αSegment[k] < 0.0) && (sign(ϕMin)!=sign(ϕMax)) && (baseModelα[i] < 0.0) #at ±π boundary in both submodel and base model
-                                if sign(ϕCam_k) == 1 #top left qudrant, need to change sign of ϕMax 
-                                    ϕMax_k = ϕMax + 2π #now ϕMax and ϕMin are both positive, with ϕMax extended across the ±π boundary
-                                else #bottom right quadrant, need to change sign of ϕMin
-                                    ϕMin_k = ϕMin - 2π #now ϕMax and ϕMin are both negative, with ϕMin extended across the ±π boundary
-                                end
-                            end
-                            if (rCam_k >= rMin && rCam_k <= rMax) && (ϕCam_k >= ϕMin_k && ϕCam_k <= ϕMax_k) 
-                                subRing, subCol = getRingFromFlattenedInd(subModel,k)
-                                #check if this camera point is within the ring
-                                discrete = gridInfo[j][3] == 1 #if cloud/discrete model, each ring contains just a single point, otherwise each ring contains a grid of points
-                                sub_ik = length(sub_i) < length(sub_I) ? subModel.rings[subRing].i : sub_i[k] #inclination angle of this point
-                                sub_θₒk = length(sub_θₒ) < length(sub_I) ? subModel.rings[subRing].θₒ : sub_θₒ[k] #opening angle of this point
-                                sub_reflectk = typeof(sub_reflect[subRing]) == Float64 ? Bool(sub_reflect[subRing]) : sub_reflect[subRing] #reflection flag of this point
-                                sub_rotk = length(sub_rot) < length(sub_I) ? subModel.rings[subRing].rot : sub_rot[k] #rotation of this point
-                                x = rotate3D(sub_r[k],sub_ϕ₀[k],sub_ik,sub_rotk,sub_θₒk,sub_reflectk)[1]  #x coordinate in physical space of pixel
-                                push!(xList,x) #add to list of x coordinates
-                                ΔARatio = subModel.rings[subRing].ΔA[subCol] / baseModelRings[ring].ΔA[col] #ratio of area of this point to area of base model point
-                                Itmp = typeof(IRatios) == Float64 ? sub_I[k]*IRatios*ΔARatio : sub_I[k]*IRatios[j]*ΔARatio #apply intensity ratio if supplied, regardless apply ratio based on area change
-                                push!(IList,Itmp) #add to list of intensities
-                                push!(vList,sub_v[k]) #add to list of velocities
-                                push!(ϕList,sub_ϕ[k]) #add to list of azimuthal angles
-                                push!(rList,sub_r[k]) #add to list of radii
-                                push!(ΔAList,subModel.rings[subRing].ΔA[subCol]) #add to list of areas
-
-                                #i, τ, and η are at minimum defined for each ring, but not always defined for each point in the ring, so check and add accordingly
-                                if length(sub_i) < length(sub_I)
-                                    push!(iList,subModel.rings[subRing].i) #add to list of inclinations
-                                else
-                                    push!(iList,sub_i[k]) #add to list of inclinations
-                                end
-                                if length(sub_τ) < length(sub_I)
-                                    push!(τList,subModel.rings[subRing].τ) #add to list of optical depths
-                                    push!(τ_ΔvList,Inf)
-                                else
-                                    push!(τList,sub_τ[k]) #add to list of optical depths
-                                    Δv = k == 1 ? (sub_v[k]+sub_v[k+1])/2 : (sub_v[k]+sub_v[k-1])/2 #calculate Δv as average of neighboring points
-                                    push!(τ_ΔvList,abs(Δv))
-                                end
-                                if length(sub_η) < length(sub_I)
-                                    push!(ηList,subModel.rings[subRing].η) #add to list of η values
-                                else
-                                    push!(ηList,sub_η[k]) #add to list of η values
-                                end
-                                if typeof(m.rings[m.subModelStartInds[j]+subRing-1].I) == Float64 #single point, can't index
-                                    m.rings[m.subModelStartInds[j]+subRing-1].I = NaN 
-                                else
-                                    m.rings[m.subModelStartInds[j]+subRing-1].I[subCol] = NaN #mark for removal -- all I = 0.0 points removed after pass
-                                end                            
-                            end
-                        end
-                    end
-                end
-                #lists now contain all points in submodels that overlap with basemodel pixel -- combine them!
-                if length(IList) > 1 #any extra points?
-                    tmpxList = [isnan(xList[i]) ? -Inf : xList[i] for i in 1:length(xList)] #replace NaNs with -Inf so they are sorted to the end
-                    order = sortperm(tmpxList,rev=true) #sort by x coordinate, +x is closest to camera
-                    NaNList = isnan.(IList) #NaN flag = do nothing, marked for removal
-                    start = findfirst(!,NaNList) #find first point where we need to do something
-                    if !isnothing(start) #if there are any points we need to combine
-                        new_τ = τList[order][1]
-                        new_I = IList[order][1]; new_v = vList[order][1]*new_I; new_ϕ = ϕList[order][1]*new_I; new_r = rList[order][1]*new_I; new_i = iList[order][1]*new_I; new_η = ηList[order][1]*new_I #take first point as the "base" point 
-                        j = 2
-                        #number of unique possible τ values is number of continuous models + number of clouds 
-                        nPossibleUnique_τ = sum(gridInfo[i][3] == 0 for i in 1:length(m.subModelStartInds))
-                        for k in 1:length(m.subModelStartInds)
-                            if gridInfo[k][3] == 1
-                                endInd = k == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[k+1]-1 #end index of submodel
-                                nPossibleUnique_τ += k == length(m.subModelStartInds) ? length(m.rings)-m.subModelStartInds[k] : m.subModelStartInds[k+1]-m.subModelStartInds[k] #add number of discrete points in this submodel
-                            end
-                        end
-                        if all(τ_ΔvList .== Inf) || length(unique(τList)) <= nPossibleUnique_τ #if all τ are the same or τ is a single value, we can just add points until τ ~ 1
-                            obscuredFrac = ΔAList[order][j]/maximum(ΔAList[order][1:j-1]) #fraction of area of this tile obscured by those in front of it, i.e. how much of the point is visible -- if < 1 fully covered by previous tile(s)
-                            while (new_τ < τCutOff || obscuredFrac > 1.0) && j <= length(order) #3: add points until τ ~ 1 
-                                if !isnan(IList[order][j]) && !isnan(xList[order][j]) #skip points that are marked for removal or unphysical points (r = NaN)
-                                    if obscuredFrac > 1.0
-                                        obscured_I = IList[order][j]/obscuredFrac
-                                        unobscured_I = IList[order][j]-obscured_I
-                                        tmp_I = exp(-new_τ)*obscured_I #add the part that is obscured
-                                        tmp_I += IList[order][j]*unobscured_I #add unboscured intensity from previous point without attenuation 
-                                    else
-                                        tmp_I = exp(-new_τ)*IList[order][j] #assume new intensity is added to previous one in chunks, no absorption in between 
-                                    end
-                                    new_v += vList[order][j]*tmp_I 
-                                    new_r += rList[order][j]*tmp_I 
-                                    new_ϕ += ϕList[order][j]*tmp_I
-                                    new_i += iList[order][j]*tmp_I 
-                                    new_η += ηList[order][j]*tmp_I
-                                    new_I += tmp_I #add intensity
-                                    new_τ += τList[order][j] #new optical depth after adding this point 
-                                end
-                                j += 1
-                            end
-                            den = new_I == 0.0 ? 1.0 : new_I #avoid division by zero
-                            new_v /= den #average velocity
-                            new_r /= den #average radius
-                            new_ϕ /= den #average azimuthal angle
-                            new_i /= den #average inclination
-                            new_η /= den #average η
-                        else #4: think about how to do this properly...
-                            error("velocity-dependent optical depths not yet implemented -- pass τ as a float when creating models if you want to use raytracing")
-                        end      
-                        baseModel.rings[ring].I[col] = new_I #set intensity
-                        baseModel.rings[ring].v[col] = new_v #set velocity
-                        baseModel.rings[ring].ϕ[col] = new_ϕ #set azimuthal angle
-                        baseModel.rings[ring].r[col] = new_r #set radius
-                        if typeof(baseModel.rings[ring].i) == Float64 #if i is a single value, need to fill all rings with vectors then replace point with new_i
-                            for r in 1:length(baseModel.rings)
-                                baseModel.rings[r].i = fill(baseModel.rings[r].i,length(baseModel.rings[r].I)) #fill with vector of same length as I
-                            end
-                            base_i = getVariable(baseModel,:i,flatten=true) #get new base_i after filling
-                        end
-                        baseModel.rings[ring].i[col] = new_i #set inclination
-                        if typeof(baseModel.rings[ring].τ) == Float64 #if τ is a single value, fill with vector then replace point with new_τ
-                            for r in 1:length(baseModel.rings)
-                                baseModel.rings[r].τ = fill(baseModel.rings[r].τ,length(baseModel.rings[r].I)) #fill with vector of same length as I
-                            end
-                            base_τ = getVariable(baseModel,:τ,flatten=true) #get new base_τ after filling
-                        end
-                        baseModel.rings[ring].τ[col] = new_τ #set optical depth
-                        if typeof(baseModel.rings[ring].η) == Float64 #if η is a single value, fill with vector then replace point with new_η
-                            for r in 1:length(baseModel.rings)
-                                baseModel.rings[r].η = fill(baseModel.rings[r].η,length(baseModel.rings[r].I)) #fill with vector of same length as I
-                            end
-                            base_η = getVariable(baseModel,:η,flatten=true) #get new base_η after filling
-                        end
-                        baseModel.rings[ring].η[col] = new_η #set η
-                    end
-                end
-            end
-            #set all base model rings in original model to NaN so they can be removed later
-            endInd = baseModelInd == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[baseModelInd+1]-1 #ring index for the next submodel
-            for ring in m.rings[m.subModelStartInds[baseModelInd]:endInd]
-                ring.I .= NaN #mark for removal
-            end
-            #call raytrace again with new "model" that is sum of all models with overlaps but not overlapping base model
-            if length(overlaps) > 1 
-                for (i,j) in overlaps #both continuous models 
-                    #check if i or j is the base model, if so skip it
-                    if i != baseModelInd && j != baseModelInd
-                    #i is new "base" model, check for all other models that overlap with it 
-                        endInd = i = length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[i+1]-1 #flattened camera index for the next submodel
-                        camera_i = camera(m.camera.α[camStartInds[i]:endInd],m.camera.β[camStartInds[i]:endInd],false) #camera α coordinates for submodel i
-                        endInd = j == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[j+1]-1 #flattened camera index for the next submodel
-                        camera_j = camera(m.camera.α[camStartInds[j]:endInd],m.camera.β[camStartInds[j]:endInd],false) #camera α coordinates for submodel j
-                        endInd = i == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[i+1]-1 #ring index for the next submodel
-                        subModelI = model(m.rings[m.subModelStartInds[i]:endInd],nothing,camera_i,[1]) #submodel i to check
-                        subModelI.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
-                        endInd = j == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[j+1]-1 #ring index for the next submodel
-                        subModelI += model(m.rings[m.subModelStartInds[j]:endInd],nothing,camera_j,[1]) #add j to check
-                        IRatiosTmp = deepcopy(IRatios[i,j])
-                        for ii in 1:length(m.subModelStartInds) #check all submodels for overlaps with submodel i
-                            if ii != i && ii != j #not same pair
-                                if ii != baseModelInd #not base model
-                                    endInd = ii = length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[ii+1]-1 #flattened camera index for the next submodel
-                                    camera_ii = camera(m.camera.α[camStartInds[ii]:endInd],m.camera.β[camStartInds[ii]:endInd],false) #camera α coordinates for submodel ii
-                                    endInd = ii == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[ii+1]-1 #ring index for the next submodel
-                                    if gridInfo[ii][3] == 1 #discrete model
-                                        rMin = minimum([gridInfo[i][1],gridInfo[j][1]]) #minimum radius of continuous models i and j
-                                        rMax = maximum([gridInfo[i][2],gridInfo[j][2]]) #maximum radius of continuous models i and j
-                                        subModel_ii = model(m.rings[m.subModelStartInds[ii]:endInd],nothing,camera_ii,[1]) #submodel ii to check
-                                        subModel_ii.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
-                                        for (jj,ring) in enumerate(subModel_ii.rings)
-                                            rtmp = sqrt(subModel_ii.camera.α[jj]^2 + subModel_ii.camera.β[jj]^2) #camera coordinates
-                                            if rtmp <= rMin || rtmp >= rMax #free floating cloud, mark for "deletion" (still in original model m, but don't want to add duplicates in this step)
-                                                subModel_ii.rings[jj].I .= NaN #mark for removal
-                                            else
-                                                original_model_index = m.subModelStartInds[ii] + jj - 1 #original model index
-                                                m.rings[original_model_index].I .= NaN #mark original model index for removal, because it will be added to subModelI and then the new base model
-                                            end
-                                        end
-                                    end
-                                    subModelI += subModel_ii #add submodel ii to submodel i
-                                    push!(IRatios,IRatiosTmp[jj]) #add multiplier for jj
-                                end
-                            end
-                        end
-                        subModelI = raytrace!(subModelI;IRatios=IRatiosTmp,τCutOff=τCutOff) #raytrace submodel i
-                        #remove NaN points from submodel i
-                        subModelI = removeNaN!(subModelI) 
-                        #add submodel i to base model
-                        baseModel += subModelI #baseModel now has every continuous model + overlapping clouds, just need to add back in non-overlapping clouds
-                    end
-                end
-            end
-        end
-
-        #raytrace discrete models that don't overlap with any continuous models (last thing left to check)
-        nLeft = 0; firstSubModel = 0
-        for i in 1:length(m.subModelStartInds)
-            if gridInfo[i][3] == 1 
-                if firstSubModel == 0 #first discrete model found, set firstSubModel to i
-                    firstSubModel = i
-                end
-                nLeft += 1 #count number of discrete models left
-            end
-        end
-        if nLeft > 0
-            endInd = firstSubModel == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[firstSubModel+1]-1 #flattened camera index for the next submodel
-            camtmp = camera(m.camera.α[camStartInds[firstSubModel]:endInd],m.camera.β[camStartInds[firstSubModel]:endInd],false) #camera α coordinates for first discrete model
-            endInd = firstSubModel == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[firstSubModel+1]-1 #ring index for the next submodel
-            subModel = model(m.rings[m.subModelStartInds[firstSubModel]:endInd],nothing,camtmp,[1]) #submodel to check
-            subModel.cache = nothing #rings shared with m and mutated during raytracing -- no memoization
-            for i in firstSubModel:length(m.subModelStartInds) 
-                if (gridInfo[i][3] == 1) && (i > firstSubModel) #not first discrete model, check for overlaps
-                    endInd = i == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[i+1]-1 #flattened camera index for the next submodel
-                    camtmp = camera(m.camera.α[camStartInds[i]:endInd],m.camera.β[camStartInds[i]:endInd],false) #camera α coordinates for submodel i
-                    endInd = i == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[i+1]-1 #ring index for the next submodel
-                    subModel += model(m.rings[m.subModelStartInds[i]:endInd],nothing,camtmp,[1]) #add to list of discrete models 
-                end
-            end
-            if raytraceFreeClouds
-                αSubModel = subModel.camera.α
-                βSubModel = subModel.camera.β
-                ΔASubModel = getVariable(subModel,:ΔA)
-                ΔrSubModel = sqrt.(ΔASubModel./π) #assume circular clouds on camera
-                sub_r = getVariable(subModel,:r)
-                sub_ϕ = getVariable(subModel,:ϕ)
-                sub_v = getVariable(subModel,:v)
-                sub_I = getVariable(subModel,:I)
-                sub_θₒ = getVariable(subModel,:θₒ)
-                sub_reflect = getVariable(subModel,:reflect)
-                sub_ϕ₀ = getVariable(subModel,:ϕ₀)
-                sub_i = getVariable(subModel,:i)
-                sub_rot = getVariable(subModel,:rot)
-                sub_τ = getVariable(subModel,:τ)
-                sub_η = getVariable(subModel,:η)
-
-                for i in 1:length(αSubModel)
-                    αi = αSubModel[i]
-                    βi = βSubModel[i]
-                    Δri = ΔrSubModel[i]
-                    xList = [rotate3D(sub_r[i],sub_ϕ₀[i],sub_i[i],sub_rot[i],sub_θₒ[i],sub_reflect[i])[1]] #x coordinate in physical space of pixel
-                    IList = [sub_I[i]]; vList = [sub_v[i]]; ϕList = [sub_ϕ[i]]; rList = [sub_r[i]]; iList = [sub_i[i]]; τList = [sub_τ[i]]; ηList = [sub_η[i]] #initialize lists for intensities, velocities, azimuthal angles, radii, inclinations, and optical depths
-                    for j in i:length(αSubModel)
-                        αj = αSubModel[j]
-                        βj = βSubModel[j]
-                        Δrj = ΔrSubModel[j]
-                        dist = sqrt((αi-αj)^2 + (βi-βj)^2) #distance between points
-                        if dist < (Δri + Δrj) #are they touching?
-                            #calculate new α, β, and I
-                            push!(xList,rotate3D(sub_r[j],sub_ϕ₀[j],sub_i[j],sub_rot[j],sub_θₒ[j],sub_reflect[j])[1]) #add x coordinate of j to list
-                            ΔARatio = subModel.rings[j].ΔA[1] / subModel.rings[i].ΔA[1] #ratio of area of this point to area of base model point
-                            Itmp = sub_I[j]*IRatios*ΔARatio #apply intensity ratio if supplied, regardless apply ratio based on area change
-                            push!(IList,Itmp) #add to list of intensities
-                            push!(vList,sub_v[j]) #add velocity of j to list
-                            push!(ϕList,sub_ϕ[j]) #add azimuthal angle of j to list
-                            push!(rList,sub_r[j]) #add radius of j to list
-                            push!(iList,sub_i[j]) #add inclination of j to list
-                            push!(τList,sub_τ[j]) #add optical depth of j to list
-                            push!(ηList,sub_η[j]) #add η of j to list
-                            #mark for deletion
-                            subModel.rings[i].I[1] = NaN #mark for removal -- all I = 0.0 points removed after pass
-                        end
-                    end
-                    if length(xList) > 1 
-                        order = sortperm(xList,rev=true) #sort by x coordinate, +x is closest to camera
-                        NaNList = isnan.(IList) #NaN flag = do nothing, marked for removal
-                        start = findfirst(!,NaNList) #find first point where we need to do something
-                        if !isnothing(start) 
-                            new_τ = τList[order][1]
-                            new_I = IList[order][1]; new_v = vList[order][1]*new_I; new_ϕ = ϕList[order][1]*new_I; new_r = rList[order][1]*new_I; new_i = iList[order][1]*new_I; new_η = ηList[order][1]*new_I #take first point as the "base" point 
-                            j = 2
-                            while new_τ < τCutOff && j <= length(order) #3: add points until τ ~ 1
-                                if !isnan(IList[order][j]) && !isnan(xList[order][j]) #skip points that are marked for removal
-                                    tmp_I = exp(-new_τ)*IList[order][j] #assume new intensity is added to previous one in chunks, no absorption 
-                                    new_v += vList[order][j]*tmp_I 
-                                    new_r += rList[order][j]*tmp_I 
-                                    new_ϕ += ϕList[order][j]*tmp_I
-                                    new_i += iList[order][j]*tmp_I 
-                                    new_η += ηList[order][j]*tmp_I
-                                    new_I += tmp_I #add intensity
-                                    new_τ += τlist[order][j] #new optical depth after adding this point 
-                                end
-                                j += 1
-                            end
-                            new_v /= new_I #average velocity
-                            new_r /= new_I #average radius
-                            new_ϕ /= new_I #average azimuthal angle
-                            new_i /= new_I
-                            new_η /= new_I #average η
-                            subModel.rings[i].I = new_I #set intensity
-                            subModel.rings[i].v = new_v #set velocity
-                            subModel.rings[i].ϕ = new_ϕ #set azimuthal angle
-                            subModel.rings[i].r = new_r #set radius
-                            subModel.rings[i].i = new_i #set inclination
-                            subModel.rings[i].τ = new_τ #set optical depth
-                            subModel.rings[i].η = new_η #set η
-                            m.rings[m.subModelStartInds[firstSubModel]+i-1].I = NaN #mark original model index for removal because any leftover point will be combined in last step
-                        end
-                    end
-                end
-            else
-                #mark original model indices for removal, because they will be added to base model in final step
-                for i in 1:length(subModel.rings)
-                    subModel.rings[i] = deepcopy(subModel.rings[i]) #no modifications, so need to preserve original model state (will be overwritten in final step)
-                    m.rings[m.subModelStartInds[firstSubModel]+i-1].I = NaN 
-                end
-            end
-            if isnothing(baseModel)
-                baseModel = subModel #if no base model = only cloud models so set it to subModel
-            else
-                baseModel += subModel #add free-floating clouds to base model
-            end
-        end
-        for i in 1:length(m.subModelStartInds) #5: add back in non-overlapping points
-            camEndInd = i == length(m.subModelStartInds) ? length(m.camera.α) : camStartInds[i+1]-1 #flattened camera index for the next submodel
-            camtmp = camera(m.camera.α[camStartInds[i]:camEndInd],m.camera.β[camStartInds[i]:camEndInd],true) #camera α coordinates for submodel i
-            endInd = i == length(m.subModelStartInds) ? length(m.rings) : m.subModelStartInds[i+1]-1 #end index of submodel
-            baseModel += model(m.rings[m.subModelStartInds[i]:endInd],nothing,camtmp,[1]) #add submodel i to base model
-        end
-        #5: cleanup redundant points and return
-        return removeNaN!(baseModel) 
     end
+
+    @info "raytracing model with $(length(m.subModelStartInds)) submodels"
+    nSubmodels = length(m.subModelStartInds)
+    IR = _rt_iratio_vector(IRatios, nSubmodels)
+    camStartInds = getFlattenedCameraIndices(m)
+    points = _rt_flatten_points(m, camStartInds)
+    grids, pixels, outRings, αout, βout, subStarts = _rt_build_output(m, camStartInds)
+
+    buckets = [Int[] for _ in pixels]
+    freeInds = Int[]
+    for (idx, p) in enumerate(points)
+        pix = _rt_find_pixel(p, grids)
+        if pix == 0
+            p.discrete && isfinite(p.I) && push!(freeInds, idx)
+        else
+            push!(buckets[pix], idx)
+        end
+    end
+
+    for (pixInd, bucket) in enumerate(buckets)
+        res = _rt_scan_bucket(points, bucket, IR, pixels[pixInd].ΔA, τCutOff)
+        isnothing(res) && continue
+        pix = pixels[pixInd]
+        _rt_set_point!(outRings[pix.ring], pix.col, res)
+        outRings[pix.ring].y[pix.col] = pix.α
+        outRings[pix.ring].z[pix.col] = pix.β
+    end
+
+    freeRings = if raytraceFreeClouds
+        _rt_attenuate_free_clouds(points, freeInds, IR, τCutOff)
+    else
+        [_rt_copy_cloud_point(points[idx], points[idx].I * IR[points[idx].submodel]) for idx in freeInds]
+    end
+    if !isempty(freeRings)
+        push!(subStarts, length(outRings)+1)
+        for r in freeRings
+            push!(outRings, r)
+            xyz = getXYZ(r)
+            push!(αout, xyz[2])
+            push!(βout, xyz[3])
+        end
+    end
+    outRings = _rt_compact_rings(outRings)
+    if isempty(outRings)
+        error("raytrace! produced an empty model")
+    end
+    αout, βout, subStarts = _rt_rebuild_camera(outRings)
+    out = model(outRings, Dict{Symbol,profile}(), camera(αout, βout, true), subStarts)
+    out.cache = Dict{Any,Array}()
+    return out
 end
-            
-            
