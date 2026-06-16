@@ -392,6 +392,8 @@ end
     end
 end
 
+include("raytrace_reference.jl")
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin
