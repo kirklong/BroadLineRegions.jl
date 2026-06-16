@@ -393,6 +393,7 @@ end
 end
 
 include("raytrace_reference.jl")
+include("gpu_arrays.jl")
 
 ## NOTE add JET to the test environment, then uncomment
 # using JET

@@ -3,6 +3,7 @@ module BroadLineRegions
 const BLR = BroadLineRegions
 include("structs.jl")
 include("util.jl")
+include("gpu_arrays.jl")
 include("lightcurve.jl")
 include("profiles.jl")
 include("intensity.jl")
