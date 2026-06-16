@@ -757,7 +757,8 @@ function _rt_attenuate_free_clouds(points::Vector{_RaytracePoint}, freeInds::Vec
     return out
 end
 
-function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff::Float64=1.0,raytraceFreeClouds=false)
+function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff::Float64=1.0,raytraceFreeClouds=false,
+        backend=nothing,T=Float64)
     if m.subModelStartInds == [1]
         @warn "raytrace! called on a model with no submodels -- maybe you already raytraced? Returning unaltered model."
         return m
@@ -769,9 +770,13 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
     @info "raytracing model with $(length(m.subModelStartInds)) submodels"
     nSubmodels = length(m.subModelStartInds)
     IR = _rt_iratio_vector(IRatios, nSubmodels)
+    if !isnothing(backend)
+        return _rt_backend_raytrace(m, IR, τCutOff, raytraceFreeClouds, backend; T=T)
+    end
+
     camStartInds = getFlattenedCameraIndices(m)
     points = _rt_flatten_points(m, camStartInds)
-    grids, pixels, outRings, αout, βout, subStarts = _rt_build_output(m, camStartInds)
+    grids, pixels, outRings, _, _, subStarts = _rt_build_output(m, camStartInds)
 
     buckets = [Int[] for _ in pixels]
     freeInds = Int[]
@@ -798,21 +803,5 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
     else
         [_rt_copy_cloud_point(points[idx], points[idx].I * IR[points[idx].submodel]) for idx in freeInds]
     end
-    if !isempty(freeRings)
-        push!(subStarts, length(outRings)+1)
-        for r in freeRings
-            push!(outRings, r)
-            xyz = getXYZ(r)
-            push!(αout, xyz[2])
-            push!(βout, xyz[3])
-        end
-    end
-    outRings = _rt_compact_rings(outRings)
-    if isempty(outRings)
-        error("raytrace! produced an empty model")
-    end
-    αout, βout, subStarts = _rt_rebuild_camera(outRings)
-    out = model(outRings, Dict{Symbol,profile}(), camera(αout, βout, true), subStarts)
-    out.cache = Dict{Any,Array}()
-    return out
+    return _rt_finalize_model(outRings, subStarts, freeRings)
 end

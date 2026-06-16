@@ -8,6 +8,7 @@ const BLR = BroadLineRegions
 
 BLR.gpu(ma::BLR.ModelArrays) = Adapt.adapt(CUDA.CuArray, ma)
 BLR.gpu(m::BLR.model; T=Float32) = BLR.gpu(BLR.flatten(m; T=T))
+BLR._rt_backend_adapt(x, ma::BLR.ModelArrays{T,<:CUDA.CuVector{T}}) where {T<:Real} = Adapt.adapt(CUDA.CuArray, x)
 
 BLR._rt_sortperm_by_key_depth(keys::CUDA.CuVector{Int}, x::CUDA.CuVector) = begin
     depth = ifelse.(isfinite.(x), x, convert(eltype(x), -Inf))

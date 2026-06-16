@@ -193,6 +193,10 @@ function _rt_scan_output(n::Int; T=Float64)
     )
 end
 
+_rt_backend_model_arrays(m::model, ::KernelAbstractions.CPU; T=Float64) = flatten(m; T=T)
+_rt_backend_model_arrays(m::model, backend; T=Float64) = gpu(m; T=T)
+_rt_backend_adapt(x, ma::ModelArrays) = x
+
 @kernel function _rt_segmented_scan_kernel!(outI, outv, outr, outϕ, outϕ₀, outi, outrot, outθₒ,
         outτ, outη, outx, outy, outz, outreflect, outactive, perm, keys, outputΔA, IRatios,
         τ_Δv, submodel, segmentStarts, segmentStops, r, ϕ, ϕ₀, i, rot, θₒ, v, I, ΔA, τ, η,
@@ -306,6 +310,7 @@ function _rt_segmented_scan!(out::_RaytraceScanOutput, ma::ModelArrays, keys::Ab
         backend=KernelAbstractions.CPU())
     nPixels = length(scan.outputΔA)
     length(out.I) == nPixels || throw(DimensionMismatch("scan output has length $(length(out.I)) but there are $nPixels pixels"))
+    nPixels == 0 && return out
     kernel! = _rt_segmented_scan_kernel!(backend)
     event = kernel!(out.I, out.v, out.r, out.ϕ, out.ϕ₀, out.i, out.rot, out.θₒ,
         out.τ, out.η, out.x, out.y, out.z, out.reflect, out.active, perm, keys,
@@ -314,4 +319,65 @@ function _rt_segmented_scan!(out::_RaytraceScanOutput, ma::ModelArrays, keys::Ab
         ma.ΔA, ma.τ, ma.η, ma.x, ma.α, ma.β, ma.reflect, τCutOff; ndrange=nPixels)
     event !== nothing && wait(event)
     return out
+end
+
+function _rt_scan_output_result(out::_RaytraceScanOutput, pixInd::Int)
+    return (I=out.I[pixInd], v=out.v[pixInd], r=out.r[pixInd], ϕ=out.ϕ[pixInd],
+        ϕ₀=out.ϕ₀[pixInd], i=out.i[pixInd], rot=out.rot[pixInd], θₒ=out.θₒ[pixInd],
+        τ=out.τ[pixInd], η=out.η[pixInd], x=out.x[pixInd], y=out.y[pixInd],
+        z=out.z[pixInd], reflect=out.reflect[pixInd])
+end
+
+function _rt_apply_scan_output!(outRings::Vector{ring}, pixels::Vector{_RaytracePixel}, out::_RaytraceScanOutput)
+    for pixInd in eachindex(pixels)
+        out.active[pixInd] || continue
+        pix = pixels[pixInd]
+        _rt_set_point!(outRings[pix.ring], pix.col, _rt_scan_output_result(out, pixInd))
+        outRings[pix.ring].y[pix.col] = pix.α
+        outRings[pix.ring].z[pix.col] = pix.β
+    end
+    return outRings
+end
+
+function _rt_finalize_model(outRings::Vector{ring}, subStarts::Vector{Int}, freeRings)
+    if !isempty(freeRings)
+        push!(subStarts, length(outRings)+1)
+        append!(outRings, freeRings)
+    end
+    outRings = _rt_compact_rings(outRings)
+    isempty(outRings) && error("raytrace! produced an empty model")
+    αout, βout, subStarts = _rt_rebuild_camera(outRings)
+    out = model(outRings, Dict{Symbol,profile}(), camera(αout, βout, true), subStarts)
+    out.cache = Dict{Any,Array}()
+    return out
+end
+
+function _rt_backend_raytrace(m::model, IR::Vector{Float64}, τCutOff::Float64, raytraceFreeClouds::Bool,
+        backend; T=Float64)
+    camStartInds = getFlattenedCameraIndices(m)
+    points = _rt_flatten_points(m, camStartInds)
+    grids, pixels, outRings, _, _, subStarts = _rt_build_output(m, camStartInds)
+
+    ma = _rt_backend_model_arrays(m, backend; T=T)
+    gridArrays = _rt_backend_adapt(_rt_grid_arrays(grids; T=T), ma)
+    keys = _rt_bin_assign(ma, gridArrays; backend=backend)
+    perm = _rt_sortperm_by_key_depth(ma, keys)
+
+    keysCPU = Adapt.adapt(Array, keys)
+    permCPU = Adapt.adapt(Array, perm)
+    scan = _rt_backend_adapt(_rt_scan_arrays(m, keysCPU, permCPU, pixels, IR; T=T), ma)
+    scanOut = _rt_backend_adapt(_rt_scan_output(length(pixels); T=T), ma)
+    _rt_segmented_scan!(scanOut, ma, keys, perm, scan; τCutOff=T(τCutOff), backend=backend)
+    _rt_apply_scan_output!(outRings, pixels, Adapt.adapt(Array, scanOut))
+
+    freeInds = Int[]
+    for (idx, p) in enumerate(points)
+        keysCPU[idx] == 0 && p.discrete && isfinite(p.I) && push!(freeInds, idx)
+    end
+    freeRings = if raytraceFreeClouds
+        _rt_attenuate_free_clouds(points, freeInds, IR, τCutOff)
+    else
+        [_rt_copy_cloud_point(points[idx], points[idx].I * IR[points[idx].submodel]) for idx in freeInds]
+    end
+    return _rt_finalize_model(outRings, subStarts, freeRings)
 end

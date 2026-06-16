@@ -16,6 +16,13 @@ using KernelAbstractions
         disk() + clouds(50, 102) + clouds(50, 103, μ=850.0),
     )
 
+    model_builders = (
+        () -> disk() + clouds(80, 101),
+        () -> clouds(80, 101) + disk(),
+        () -> disk(r1=250.0, r2=700.0, nr=6, nϕ=12) + disk(r1=500.0, r2=1000.0, nr=6, nϕ=12),
+        () -> disk() + clouds(50, 102) + clouds(50, 103, μ=850.0),
+    )
+
     for m in models
         camStartInds = BLR.getFlattenedCameraIndices(m)
         points = BLR._rt_flatten_points(m, camStartInds)
@@ -94,4 +101,23 @@ using KernelAbstractions
     @test x[perm[1:2]] == [9.0, 3.0]
     @test x[perm[3:4]] == [6.0, 4.0]
     @test isequal(x[perm[7]], NaN)
+
+    for build in model_builders
+        refModel = BLR.raytrace!(build(); τCutOff=1.0)
+        backendModel = BLR.raytrace!(build(); τCutOff=1.0, backend=KernelAbstractions.CPU())
+        for sym in (:I, :v, :r, :ϕ, :ϕ₀, :τ)
+            @test BLR.getVariable(backendModel, sym, flatten=true) == BLR.getVariable(refModel, sym, flatten=true)
+        end
+        @test backendModel.subModelStartInds == refModel.subModelStartInds
+        @test backendModel.camera.α == refModel.camera.α
+        @test backendModel.camera.β == refModel.camera.β
+    end
+
+    ref32Model = BLR.raytrace!(model_builders[1](); IRatios=[1.0, 0.25], τCutOff=1.0)
+    backend32Model = BLR.raytrace!(model_builders[1](); IRatios=[1.0, 0.25], τCutOff=1.0,
+        backend=KernelAbstractions.CPU(), T=Float32)
+    for sym in (:I, :v, :r)
+        @test all(isapprox.(BLR.getVariable(backend32Model, sym, flatten=true),
+            BLR.getVariable(ref32Model, sym, flatten=true), rtol=1e-4))
+    end
 end
