@@ -1,5 +1,6 @@
 #!/usr/bin/env julia
 using Random
+using Random123
 
 """
     ring{V,F} <: AbstractRing{V,F}
@@ -649,8 +650,42 @@ function cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Floa
     return model(rings)
 end
 
+const _PHILOX_CLOUD_KEY2 = 0x9e3779b97f4a7c15
+
+function _philox_cloud_rng(seed::Integer, cloudInd::Integer)
+    rng = Philox4x(UInt64, (seed % UInt64, _PHILOX_CLOUD_KEY2))
+    set_counter!(rng, (zero(UInt64), cloudInd % UInt64, zero(UInt64), zero(UInt64)))
+    return rng
+end
+
+function _drawPhiloxCloud(cloudInd::Integer, seed::Integer; μ::Float64=500., β::Float64=1.0,
+        F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0,
+        ξ::Float64=1.0, i::Float64=0.0, I::Union{Function,Float64}=IsotropicIntensity,
+        v::Union{Function,Float64}=vCircularCloud, kwargs...)
+    rng = _philox_cloud_rng(seed, cloudInd)
+    ϕ₀ = rand(rng) * 2π
+    θ = acos(cos(θₒ) + (1 - cos(θₒ)) * rand(rng)^γ)
+    rot = rand(rng) * 2π
+    return drawCloud(i=i, θₒ=θ, rot=rot, ϕ₀=ϕ₀, μ=μ, F=F, β=β, rₛ=rₛ,
+        θₒSystem=θₒ, I=I, v=v, ξ=ξ, rng=rng; kwargs...)
+end
+
+function _philox_cloud_rings(nClouds::Int64, seed::Integer; parallel::Bool=true, kwargs...)
+    rings = Vector{ring{Vector{Float64},Float64}}(undef, nClouds)
+    if parallel
+        Threads.@threads for j in 1:nClouds
+            rings[j] = _drawPhiloxCloud(j, seed; kwargs...)
+        end
+    else
+        for j in 1:nClouds
+            rings[j] = _drawPhiloxCloud(j, seed; kwargs...)
+        end
+    end
+    return rings
+end
+
 """
-    cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, rng::AbstractRNG=Random.GLOBAL_RNG, kwargs...)
+    cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, rng::Union{AbstractRNG,Symbol}=Random.GLOBAL_RNG, seed::Union{Nothing,Integer}=nothing, parallel::Bool=true, kwargs...)
 
 Uses the model constructor to create a cloud model of the BLR similar to Pancoast+ 2011 and 2014.
 
@@ -666,7 +701,9 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `i::Float64=0.0`: Inclination angle of system (rad)
 - `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function
 - `v::Union{Function,Float64}=vCircularCloud`: Velocity function
-- `rng::AbstractRNG=Random.GLOBAL_RNG`: Random number generator
+- `rng::Union{AbstractRNG,Symbol}=Random.GLOBAL_RNG`: Random number generator. The default `AbstractRNG` path preserves the legacy sequential draw order; `rng=:philox` uses independent counter-based per-cloud streams.
+- `seed::Union{Nothing,Integer}=nothing`: Required when `rng=:philox`. For legacy seeded models, pass `rng=MersenneTwister(seed)`.
+- `parallel::Bool=true`: Whether to use threaded cloud generation for the `rng=:philox` path.
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 
 # Returns
@@ -677,7 +714,19 @@ Similar to other `cloudModel` method but here random values are generated for `�
 while keeping `i` constant for the system.
 """
 function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, 
-    I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud, rng::AbstractRNG=Random.GLOBAL_RNG, kwargs...)
+    I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud,
+    rng::Union{AbstractRNG,Symbol}=Random.GLOBAL_RNG, seed::Union{Nothing,Integer}=nothing,
+    parallel::Bool=true, kwargs...)
+    if rng === :philox
+        seed === nothing && throw(ArgumentError("cloudModel(...; rng=:philox) requires an explicit integer seed"))
+        rings = _philox_cloud_rings(nClouds, seed; parallel=parallel, μ=μ, β=β, F=F, rₛ=rₛ,
+            θₒ=θₒ, γ=γ, ξ=ξ, i=i, I=I, v=v, kwargs...)
+        return model(rings)
+    elseif rng isa Symbol
+        throw(ArgumentError("unsupported cloudModel rng symbol: $rng"))
+    elseif seed !== nothing
+        throw(ArgumentError("seed is only used with rng=:philox; pass rng=MersenneTwister(seed) for the legacy path"))
+    end
     ϕ₀ = rand(rng,nClouds).*2π
     θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(rng,nClouds).^γ) #θₒ for each cloud, from eqn 14
     rot = rand(rng,nClouds).*2π
