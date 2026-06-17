@@ -1,4 +1,141 @@
 using KernelAbstractions
+using KernelAbstractions: @atomic
+
+function _rt_uniform_bin_index(xi, edges, nbins::Int, overflow::Bool)
+    isfinite(xi) || return 0
+    if xi <= edges[1]
+        return overflow ? 1 : 0
+    elseif xi >= edges[nbins+1]
+        return overflow ? nbins : 0
+    else
+        x0 = edges[1]
+        invΔ = nbins / (edges[nbins+1] - x0)
+        bin = clamp(floor(Int, (xi - x0) * invΔ) + 1, 1, nbins)
+        while bin > 1 && xi <= edges[bin]
+            bin -= 1
+        end
+        while bin < nbins && xi > edges[bin+1]
+            bin += 1
+        end
+        return bin
+    end
+end
+
+@kernel function _rt_weighted_histogram_kernel!(out, x, y, edges, overflow, nbins)
+    idx = @index(Global)
+    xi = x[idx]
+    yi = y[idx]
+    if isfinite(xi) && isfinite(yi)
+        bin = _rt_uniform_bin_index(xi, edges, nbins, overflow)
+        bin != 0 && @atomic out[bin] += yi
+    end
+end
+
+function _rt_weighted_histogram!(out::AbstractVector, x::AbstractArray, y::AbstractArray,
+        edges::AbstractVector; overflow::Bool=false, backend=KernelAbstractions.CPU())
+    length(out) == length(edges) - 1 || throw(DimensionMismatch("histogram output must have length length(edges)-1"))
+    length(x) == length(y) || throw(DimensionMismatch("histogram inputs must have matching lengths"))
+    fill!(out, zero(eltype(out)))
+    kernel! = _rt_weighted_histogram_kernel!(backend)
+    event = kernel!(out, x, y, edges, overflow, length(out); ndrange=length(x))
+    event !== nothing && wait(event)
+    return out
+end
+
+@kernel function _rt_weighted_product_histogram_kernel!(out, x, y1, y2, edges, overflow, nbins)
+    idx = @index(Global)
+    xi = x[idx]
+    yi = y1[idx] * y2[idx]
+    if isfinite(xi) && isfinite(yi)
+        bin = _rt_uniform_bin_index(xi, edges, nbins, overflow)
+        bin != 0 && @atomic out[bin] += yi
+    end
+end
+
+function _rt_weighted_product_histogram!(out::AbstractVector, x::AbstractArray, y1::AbstractArray,
+        y2::AbstractArray, edges::AbstractVector; overflow::Bool=false, backend=KernelAbstractions.CPU())
+    length(out) == length(edges) - 1 || throw(DimensionMismatch("histogram output must have length length(edges)-1"))
+    length(x) == length(y1) == length(y2) || throw(DimensionMismatch("histogram inputs must have matching lengths"))
+    fill!(out, zero(eltype(out)))
+    kernel! = _rt_weighted_product_histogram_kernel!(backend)
+    event = kernel!(out, x, y1, y2, edges, overflow, length(out); ndrange=length(x))
+    event !== nothing && wait(event)
+    return out
+end
+
+_rt_line_profile!(out::AbstractVector, ma::ModelArrays, edges::AbstractVector;
+    overflow::Bool=false, backend=KernelAbstractions.CPU()) =
+    _rt_weighted_product_histogram!(out, ma.v, ma.I, ma.ΔA, edges; overflow=overflow, backend=backend)
+
+@kernel function _rt_weighted_mean_pass1_kernel!(sumW, sumWθ, x, θ, w, edges, overflow, nbins)
+    idx = @index(Global)
+    xi = x[idx]
+    θi = θ[idx]
+    wi = w[idx]
+    if isfinite(xi) && isfinite(wi)
+        bin = _rt_uniform_bin_index(xi, edges, nbins, overflow)
+        if bin != 0
+            @atomic sumW[bin] += wi
+            wθ = wi * θi
+            isfinite(wθ) && @atomic sumWθ[bin] += wθ
+        end
+    end
+end
+
+@kernel function _rt_finalize_mean_kernel!(μ, sumW, sumWθ)
+    idx = @index(Global)
+    μ[idx] = sumWθ[idx] / sumW[idx]
+end
+
+@kernel function _rt_weighted_variance_pass2_kernel!(sumWδ², x, θ, w, μ, edges, overflow, nbins)
+    idx = @index(Global)
+    xi = x[idx]
+    θi = θ[idx]
+    wi = w[idx]
+    if isfinite(xi) && isfinite(θi) && isfinite(wi)
+        bin = _rt_uniform_bin_index(xi, edges, nbins, overflow)
+        if bin != 0 && isfinite(μ[bin])
+            δ = θi - μ[bin]
+            @atomic sumWδ²[bin] += wi * δ * δ
+        end
+    end
+end
+
+@kernel function _rt_finalize_variance_kernel!(σ², sumWδ², sumW)
+    idx = @index(Global)
+    σ²[idx] = sumWδ²[idx] / sumW[idx]
+end
+
+function _rt_weighted_variance!(σ²::AbstractVector, sumW::AbstractVector, sumWθ::AbstractVector,
+        μ::AbstractVector, sumWδ²::AbstractVector, x::AbstractArray, θ::AbstractArray,
+        w::AbstractArray, edges::AbstractVector; overflow::Bool=false, backend=KernelAbstractions.CPU())
+    nbins = length(edges) - 1
+    length(σ²) == length(sumW) == length(sumWθ) == length(μ) == length(sumWδ²) == nbins ||
+        throw(DimensionMismatch("variance outputs must all have length length(edges)-1"))
+    length(x) == length(θ) == length(w) || throw(DimensionMismatch("variance inputs must have matching lengths"))
+    fill!(sumW, zero(eltype(sumW)))
+    fill!(sumWθ, zero(eltype(sumWθ)))
+    fill!(μ, zero(eltype(μ)))
+    fill!(sumWδ², zero(eltype(sumWδ²)))
+    fill!(σ², zero(eltype(σ²)))
+
+    pass1! = _rt_weighted_mean_pass1_kernel!(backend)
+    event = pass1!(sumW, sumWθ, x, θ, w, edges, overflow, nbins; ndrange=length(x))
+    event !== nothing && wait(event)
+
+    mean! = _rt_finalize_mean_kernel!(backend)
+    event = mean!(μ, sumW, sumWθ; ndrange=nbins)
+    event !== nothing && wait(event)
+
+    pass2! = _rt_weighted_variance_pass2_kernel!(backend)
+    event = pass2!(sumWδ², x, θ, w, μ, edges, overflow, nbins; ndrange=length(x))
+    event !== nothing && wait(event)
+
+    final! = _rt_finalize_variance_kernel!(backend)
+    event = final!(σ², sumWδ², sumW; ndrange=nbins)
+    event !== nothing && wait(event)
+    return σ²
+end
 
 function _rt_disk_deproject_scalar(a, b, inc, rot, θₒ, m11, m12, m21, m22,
         r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMin, rMax, ηₒ, η₁, αRM, rNorm)

@@ -19,6 +19,50 @@ function _disk_field_values(m, sym)
     return vec(out)
 end
 
+@testset "profile histogram kernels" begin
+    edges = collect(range(-2.0, stop=3.0, length=38))
+    rng = MersenneTwister(99)
+    x = vcat(-2.0 .+ 5.0 .* rand(rng, 10_000), copy(edges), [NaN, Inf, -Inf, -3.0, 4.0])
+    y = vcat(rand(rng, 10_000), ones(length(edges)), ones(5))
+    for overflow in (false, true)
+        out = zeros(length(edges)-1)
+        BLR._rt_weighted_histogram!(out, x, y, edges; overflow=overflow, backend=KernelAbstractions.CPU())
+        ref = BLR.binnedSum(x, y, bins=edges, overflow=overflow)[3]
+        @test all(isapprox.(out, ref; rtol=1e-12, atol=1e-12))
+    end
+
+    disk = BLR.DiskWindModel(300.0, 900.0, 0.4, nr=16, nϕ=32, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,
+        α=1.2, reflect=false)
+    clouds = BLR.cloudModel(300, μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.0, rng=MersenneTwister(12))
+    m = disk + clouds
+    lineEdges = collect(range(-0.08, stop=0.08, length=41))
+    ma = BLR.flatten(m)
+    lp = zeros(length(lineEdges)-1)
+    BLR._rt_line_profile!(lp, ma, lineEdges; overflow=true, backend=KernelAbstractions.CPU())
+    refLP = BLR.getProfile(m, :line, bins=lineEdges, centered=false, overflow=true).binSums
+    @test all(isapprox.(lp, refLP; rtol=1e-12, atol=1e-12))
+
+    θ = ma.α .* 1e-10
+    w = ma.I .* ma.ΔA
+    σ² = zeros(length(lineEdges)-1)
+    sumW = similar(σ²)
+    sumWθ = similar(σ²)
+    μ = similar(σ²)
+    sumWδ² = similar(σ²)
+    BLR._rt_weighted_variance!(σ², sumW, sumWθ, μ, sumWδ², ma.v, θ, w, lineEdges;
+        overflow=true, backend=KernelAbstractions.CPU())
+    refσ² = BLR.binnedVariance(ma.v, θ, w, bins=lineEdges, overflow=true)[3]
+    for idx in eachindex(σ², refσ²)
+        if isnan(refσ²[idx])
+            @test isnan(σ²[idx])
+        else
+            @test isapprox(σ²[idx], refσ²[idx]; rtol=1e-10, atol=1e-30)
+        end
+    end
+end
+
 @testset "disk construction kernels" begin
     rMin = 300.0
     rMax = 900.0
