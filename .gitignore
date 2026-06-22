@@ -1,0 +1,14 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/Manifest.toml
+/deps/deps.jl
+/docs/build
+/docs/Manifest.toml
+/test/coverage/Manifest.toml
+tmpPlots/
+# local-only working files (not for the public repo)
+plans/
+benchmark/
+logo.jl
+logo.svg
