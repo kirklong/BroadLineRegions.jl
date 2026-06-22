@@ -34,3 +34,10 @@ Random = "1.10, 1.11"
 Random123 = "1.7.1"
 RecipesBase = "1.2, 1.3"
 Test = "1.10, 1.11"
+StableRNGs = "1"
+
+[extras]
+StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
+
+[targets]
+test = ["StableRNGs"]
