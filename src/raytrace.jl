@@ -630,15 +630,20 @@ function _rt_find_pixel(p::_RaytracePoint, grids::Vector{_RaytraceGrid})
     return 0
 end
 
+# Velocity-dependent optical depth (τ stored per point so it can vary with the line-of-sight Δv
+# between overlapping contributors) is not yet implemented in the combiner. `τ_Δv` carries `Inf`
+# for the ordinary velocity-independent (scalar-τ) case and a finite value otherwise (see
+# `_rt_flatten_points` / `_rt_tau_delta_v`). Both the CPU scan and the GPU/backend path call this
+# guard so the unimplemented feature errors consistently rather than silently producing wrong
+# numbers -- it is the single reachable hook for when velocity-dependent τ is added.
+const _RT_VELOCITY_τ_MSG = "velocity-dependent optical depths not yet implemented -- pass τ as a float when creating models if you want to use raytracing"
+_rt_velocity_dependent_τ(τ_Δv) = any(isfinite, τ_Δv)
+
 function _rt_scan_bucket(points::Vector{_RaytracePoint}, inds::Vector{Int}, IRatios::Vector{Float64}, outputΔA::Float64, τCutOff::Float64)
     finiteInds = [idx for idx in inds if isfinite(points[idx].I) && isfinite(points[idx].x)]
     isempty(finiteInds) && return nothing
     order = sort(finiteInds, by=idx -> points[idx].x, rev=true)
-    τvals = [points[idx].τ for idx in order]
-    τ_Δv = [points[idx].τ_Δv for idx in order]
-    if !(all(isinf, τ_Δv) || length(unique(τvals)) <= length(order))
-        error("velocity-dependent optical depths not yet implemented -- pass τ as a float when creating models if you want to use raytracing")
-    end
+    _rt_velocity_dependent_τ(points[idx].τ_Δv for idx in order) && error(_RT_VELOCITY_τ_MSG)
     weights = [points[idx].I * IRatios[points[idx].submodel] * points[idx].ΔA / outputΔA for idx in order]
     areas = [points[idx].ΔA for idx in order]
     firstPoint = points[order[1]]
@@ -728,7 +733,8 @@ end
 
 """
     raytrace!(m::model; IRatios::Union{Float64,Array{Float64,}}=1.0,
-            τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
+            τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false,
+            backend=nothing, T=Float64)
 
 Perform raytracing for a model, combining overlapping components along line of sight.
 
@@ -752,11 +758,16 @@ with extraneous points removed. Note that this function will mutate the input mo
 - `raytraceFreeClouds::Bool=false`: Whether to raytrace free clouds (cloud-cloud raytracing)
   - If `false`, clouds are only raytraced if they overlap with a continuous model
   - If `true`, clouds will be checked for overlap with other clouds and raytraced accordingly
+- `backend=nothing`: Optional `KernelAbstractions` backend to run the bin→sort→scan on a device.
+  - If `nothing`, uses the CPU implementation.
+  - Pass `CUDABackend()` (with CUDA.jl loaded) to run on the GPU; see also [`gpu`](@ref BLR.gpu).
+- `T=Float64`: Element type for the device arrays when `backend` is set (use `Float32` on GeForce GPUs for speed).
 
 # Returns
 - `m::model`: Model with raytraced points
 """
-function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff::Float64=1.0,raytraceFreeClouds=false)
+function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff::Float64=1.0,raytraceFreeClouds=false,
+        backend=nothing,T=Float64)
     if m.subModelStartInds == [1]
         @warn "raytrace! called on a model with no submodels -- maybe you already raytraced? Returning unaltered model."
         return m
@@ -768,9 +779,13 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
     @info "raytracing model with $(length(m.subModelStartInds)) submodels"
     nSubmodels = length(m.subModelStartInds)
     IR = _rt_iratio_vector(IRatios, nSubmodels)
+    if !isnothing(backend)
+        return _rt_backend_raytrace(m, IR, τCutOff, raytraceFreeClouds, backend; T=T)
+    end
+
     camStartInds = getFlattenedCameraIndices(m)
     points = _rt_flatten_points(m, camStartInds)
-    grids, pixels, outRings, αout, βout, subStarts = _rt_build_output(m, camStartInds)
+    grids, pixels, outRings, _, _, subStarts = _rt_build_output(m, camStartInds)
 
     buckets = [Int[] for _ in pixels]
     freeInds = Int[]
@@ -797,21 +812,5 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
     else
         [_rt_copy_cloud_point(points[idx], points[idx].I * IR[points[idx].submodel]) for idx in freeInds]
     end
-    if !isempty(freeRings)
-        push!(subStarts, length(outRings)+1)
-        for r in freeRings
-            push!(outRings, r)
-            xyz = getXYZ(r)
-            push!(αout, xyz[2])
-            push!(βout, xyz[3])
-        end
-    end
-    outRings = _rt_compact_rings(outRings)
-    if isempty(outRings)
-        error("raytrace! produced an empty model")
-    end
-    αout, βout, subStarts = _rt_rebuild_camera(outRings)
-    out = model(outRings, Dict{Symbol,profile}(), camera(αout, βout, true), subStarts)
-    out.cache = Dict{Any,Array}()
-    return out
+    return _rt_finalize_model(outRings, subStarts, freeRings)
 end

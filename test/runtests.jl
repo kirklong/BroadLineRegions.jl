@@ -81,6 +81,84 @@ end
     tCenters,Ψt = BLR.getΨt(mP2,501,10/rsDay)
     @test isapprox(tCenters[findmax(Ψt)[2]]*rsDay, 1.8, atol = 5e-1)
 end
+
+function _cloud_field_tuple(m)
+    return (
+        BLR.getVariable(m, :r, flatten=true),
+        BLR.getVariable(m, :ϕ, flatten=true),
+        BLR.getVariable(m, :ϕ₀, flatten=true),
+        BLR.getVariable(m, :rot, flatten=true),
+        BLR.getVariable(m, :θₒ, flatten=true),
+        BLR.getVariable(m, :x, flatten=true),
+        BLR.getVariable(m, :y, flatten=true),
+        BLR.getVariable(m, :z, flatten=true),
+        BLR.getVariable(m, :I, flatten=true),
+        BLR.getVariable(m, :v, flatten=true),
+    )
+end
+
+function _ks_statistic(x, y)
+    xs = sort(x)
+    ys = sort(y)
+    i = 1
+    j = 1
+    nx = length(xs)
+    ny = length(ys)
+    d = 0.0
+    while i <= nx || j <= ny
+        if j > ny || (i <= nx && xs[i] <= ys[j])
+            v = xs[i]
+        else
+            v = ys[j]
+        end
+        while i <= nx && xs[i] <= v
+            i += 1
+        end
+        while j <= ny && ys[j] <= v
+            j += 1
+        end
+        d = max(d, abs((i - 1) / nx - (j - 1) / ny))
+    end
+    return d
+end
+
+@testset "Philox cloud generator" begin
+    args = (; μ=500.0, β=0.8, F=0.25, θₒ=40/180*π, i=20/180*π,
+        γ=2.0, ξ=0.3, I=BLR.cloudIntensity, v=BLR.vCircularCloud, κ=-0.2, τ=0.0)
+
+    rng1 = MersenneTwister(123)
+    mt = BLR.cloudModel(256; rng=rng1, args...)
+    rng2 = MersenneTwister(123)
+    ϕ₀ = rand(rng2, 256) .* 2π
+    θ = acos.(cos(args.θₒ) .+ (1 - cos(args.θₒ)) .* rand(rng2, 256).^args.γ)
+    rot = rand(rng2, 256) .* 2π
+    mtRef = BLR.cloudModel(ϕ₀, ones(256) .* args.i, rot, θ, args.θₒ, args.ξ;
+        rₛ=1.0, μ=args.μ, β=args.β, F=args.F, I=args.I, v=args.v,
+        rng=rng2, κ=args.κ, τ=args.τ)
+    @test _cloud_field_tuple(mt) == _cloud_field_tuple(mtRef)
+
+    philox1 = BLR.cloudModel(512; rng=:philox, seed=9876, parallel=true, args...)
+    philox2 = BLR.cloudModel(512; rng=:philox, seed=9876, parallel=true, args...)
+    philoxSeq = BLR.cloudModel(512; rng=:philox, seed=9876, parallel=false, args...)
+    philoxOther = BLR.cloudModel(512; rng=:philox, seed=9877, parallel=false, args...)
+    @test _cloud_field_tuple(philox1) == _cloud_field_tuple(philox2)
+    @test _cloud_field_tuple(philox1) == _cloud_field_tuple(philoxSeq)
+    @test _cloud_field_tuple(philox1)[1] != _cloud_field_tuple(philoxOther)[1]
+
+    ringsRev = [BLR._drawPhiloxCloud(j, 9876; args...) for j in 512:-1:1]
+    philoxRev = BLR.model(reverse(ringsRev))
+    @test _cloud_field_tuple(philoxSeq) == _cloud_field_tuple(philoxRev)
+
+    mtR = BLR.getVariable(BLR.cloudModel(4096; rng=MersenneTwister(4321), args...), :r, flatten=true)
+    philoxR = BLR.getVariable(BLR.cloudModel(4096; rng=:philox, seed=4321, parallel=false, args...), :r, flatten=true)
+    d = _ks_statistic(mtR, philoxR)
+    @test d < 1.63 * sqrt((length(mtR) + length(philoxR)) / (length(mtR) * length(philoxR)))
+
+    @test_throws ArgumentError BLR.cloudModel(4; rng=:philox, args...)
+    @test_throws ArgumentError BLR.cloudModel(4; rng=:unknown, args...)
+    @test_throws ArgumentError BLR.cloudModel(4; rng=MersenneTwister(1), seed=1, args...)
+end
+
 @testset "second moment profiles" begin
     #binnedVariance machinery on hand-built arrays
     edges = [0.0,0.5,1.0]
@@ -322,7 +400,7 @@ end
         append!(ηRef, r.η isa Number ? (r.η for _ in 1:n) : r.η)
     end
     ΨRef = map(1:length(tEdges)-1) do j
-        mask = (dRef .>= tEdges[j]) .& (dRef .< tEdges[j+1])
+        mask = (dRef .> tEdges[j]) .& (dRef .<= tEdges[j+1]) #binnedSum convention (left-exclusive)
         s = sum(iRef[mask].*aRef[mask])
         s > 0 ? s : 1e-30 #replicate getΨt's empty-bin floor
     end
@@ -368,7 +446,8 @@ end
         tEdges = collect(range(0.0, stop=1500.0, length=9))
         Ψ = BLR.getΨ(m, vEdges, tEdges)
         for i in 1:length(vEdges)-1, j in 1:length(tEdges)-1
-            mask = (v .>= vEdges[i]) .& (v .< vEdges[i+1]) .& (d .>= tEdges[j]) .& (d .< tEdges[j+1])
+            #binnedSum convention: left-exclusive / right-inclusive interior edges (> left, <= right)
+            mask = (v .> vEdges[i]) .& (v .<= vEdges[i+1]) .& (d .> tEdges[j]) .& (d .<= tEdges[j+1])
             s = sum(I[mask].*ΔA[mask])
             expected = s > 0 ? s : 1e-30
             @test isapprox(Ψ[i,j], expected, rtol=1e-12)
@@ -377,12 +456,12 @@ end
         for ovf in (false, true)
             Ψt = BLR.getΨt(m, tEdges, ovf)
             ref = map(1:length(tEdges)-1) do j
-                mask = (d .>= tEdges[j]) .& (d .< tEdges[j+1])
+                mask = (d .> tEdges[j]) .& (d .<= tEdges[j+1])
                 s = sum(I[mask].*ΔA[mask])
                 s > 0 ? s : 1e-30
             end
             if ovf
-                sU = sum(I[(d .< tEdges[1])].*ΔA[(d .< tEdges[1])])
+                sU = sum(I[(d .<= tEdges[1])].*ΔA[(d .<= tEdges[1])])
                 sO = sum(I[(d .>= tEdges[end])].*ΔA[(d .>= tEdges[end])])
                 ref[1] += sU > 0 ? sU : 1e-30
                 ref[end] += sO > 0 ? sO : 1e-30
@@ -393,6 +472,16 @@ end
 end
 
 include("raytrace_reference.jl")
+include("gpu_arrays.jl")
+include("gpu_kernels.jl")
+
+# GPU correctness tests are opt-in: they need a CUDA device and the CUDA.jl weak dependency in the
+# active environment. Run with `BLR_TEST_CUDA=1` from an env that has CUDA.jl available.
+if get(ENV, "BLR_TEST_CUDA", "0") == "1"
+    include("gpu_cuda.jl")
+else
+    @info "skipping GPU correctness tests (set BLR_TEST_CUDA=1 with CUDA.jl available to run them)"
+end
 
 ## NOTE add JET to the test environment, then uncomment
 # using JET

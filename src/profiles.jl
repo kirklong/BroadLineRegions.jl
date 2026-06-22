@@ -1,5 +1,25 @@
 #!/usr/bin/env julia
 """
+    constructBinEdges(bins::Int, minX::Float64, maxX::Float64, centered::Bool) -> Vector{Float64}
+
+Build the uniform velocity-bin edges for an integer bin count, given the (NaN-resolved) data range
+`minX`/`maxX`. Shared by `binnedSum` and the GPU-resident profile path so the two cannot diverge on
+the `centered` edge convention.
+"""
+function constructBinEdges(bins::Int, minX::Float64, maxX::Float64, centered::Bool)
+    if centered
+        middle = (maxX+minX)/2
+        Δ = (maxX-minX)/bins
+        nBins = 2*ceil(Int,(maxX-(middle+Δ/2))/Δ) + 1
+        maxX = (middle + Δ/2) + nBins/2*Δ
+        minX = (middle - Δ/2) - nBins/2*Δ
+        return collect(range(minX,stop=maxX,length=nBins+1))
+    else
+        return collect(range(minX,stop=maxX,length=bins+1))
+    end
+end
+
+"""
     binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins=100,
             overflow=false, centered=true, minX=nothing, maxX=nothing)
 
@@ -34,16 +54,7 @@ function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vect
         if isnothing(maxX)
             maxX = isnan(maximum(x)) ? maximum(i for i in x if !isnan(i)) : maximum(x)
         end
-        if centered
-            middle = (maxX+minX)/2
-            Δ = (maxX-minX)/bins
-            nBins = 2*ceil(Int,(maxX-(middle+Δ/2))/Δ) + 1
-            maxX = (middle + Δ/2) + nBins/2*Δ
-            minX = (middle - Δ/2) - nBins/2*Δ
-            binEdges = collect(range(minX,stop=maxX,length=nBins+1))
-        else
-            binEdges = collect(range(minX,stop=maxX,length=bins+1))
-        end
+        binEdges = constructBinEdges(bins, minX, maxX, centered)
     else
         binEdges = bins
     end
