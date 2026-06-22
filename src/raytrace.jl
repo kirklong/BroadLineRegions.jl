@@ -324,37 +324,6 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
     return m
 end
 
-"""
-    raytrace!(m::model; IRatios::Union{Float64,Array{Float64,}}=1.0, 
-            τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
-
-Perform raytracing for a model, combining overlapping components along line of sight.
-
-!!! warning "Slow"
-    This function not very performant and can take a long time to combine large models.
-    Consider using [`removeDiskObscuredClouds!`](@ref BLR.removeDiskObscuredClouds!) for
-    simple disk obscuration removal if you do not need full raytracing.
-
-This function should be called after combining all relevant models (i.e. `mCombined = m1 + m2 + m3...`).
-It performs raytracing in discrete steps (no absorption, only adding intensity in chunks along 
-the line of sight until maximum optical depth `τ` is reached) and generates a new model object 
-with extraneous points removed. Note that this function will mutate the input model objects.
-
-# Arguments
-- `m::model`: Model to raytrace
-- `IRatios::Union{Float64,Array{Float64,}}=1.0`: Global emissivity weights for each submodel
-  - If `Float64`, applies to all submodels equally
-  - If array, applies to each submodel individually (must match number of submodels)
-  - Used when combining models with different intensity functions if they aren't properly normalized
-- `τCutOff::Float64=1.0`: Maximum optical depth to raytrace to (stops when `τ > τCutOff`)
-- `raytraceFreeClouds::Bool=false`: Whether to raytrace free clouds (cloud-cloud raytracing)
-  - If `false`, clouds are only raytraced if they overlap with a continuous model
-  - If `true`, clouds will be checked for overlap with other clouds and raytraced accordingly
-
-# Returns
-- `m::model`: Model with raytraced points
-"""
-
 struct _RaytracePoint
     submodel::Int
     ring::Int
@@ -757,6 +726,36 @@ function _rt_attenuate_free_clouds(points::Vector{_RaytracePoint}, freeInds::Vec
     return out
 end
 
+"""
+    raytrace!(m::model; IRatios::Union{Float64,Array{Float64,}}=1.0,
+            τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
+
+Perform raytracing for a model, combining overlapping components along line of sight.
+
+!!! warning "Slow"
+    This function not very performant and can take a long time to combine large models.
+    Consider using [`removeDiskObscuredClouds!`](@ref BLR.removeDiskObscuredClouds!) for
+    simple disk obscuration removal if you do not need full raytracing.
+
+This function should be called after combining all relevant models (i.e. `mCombined = m1 + m2 + m3...`).
+It performs raytracing in discrete steps (no absorption, only adding intensity in chunks along
+the line of sight until maximum optical depth `τ` is reached) and generates a new model object
+with extraneous points removed. Note that this function will mutate the input model objects.
+
+# Arguments
+- `m::model`: Model to raytrace
+- `IRatios::Union{Float64,Array{Float64,}}=1.0`: Global emissivity weights for each submodel
+  - If `Float64`, applies to all submodels equally
+  - If array, applies to each submodel individually (must match number of submodels)
+  - Used when combining models with different intensity functions if they aren't properly normalized
+- `τCutOff::Float64=1.0`: Maximum optical depth to raytrace to (stops when `τ > τCutOff`)
+- `raytraceFreeClouds::Bool=false`: Whether to raytrace free clouds (cloud-cloud raytracing)
+  - If `false`, clouds are only raytraced if they overlap with a continuous model
+  - If `true`, clouds will be checked for overlap with other clouds and raytraced accordingly
+
+# Returns
+- `m::model`: Model with raytraced points
+"""
 function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff::Float64=1.0,raytraceFreeClouds=false)
     if m.subModelStartInds == [1]
         @warn "raytrace! called on a model with no submodels -- maybe you already raytraced? Returning unaltered model."
