@@ -36,22 +36,24 @@ end
     ΨAccumulate!(Ψ, v, delays, I, ΔA, vEdges, tEdges)
 
 Single-pass accumulation for `getΨ` (function barrier): one sweep over all points, locating each
-point's (velocity, delay) bin with `searchsortedlast`, instead of building a boolean mask per bin
-pair (the old approach was O(nbins² × npoints) in time and memory traffic).
+point's (velocity, delay) bin instead of building a boolean mask per bin pair (the old approach was
+O(nbins² × npoints) in time and memory traffic).
 
-Bin assignment is identical to the original `>= left, < right` comparisons: interior edges are
-left-inclusive, values at the right-most edge are excluded, NaN velocities/delays never land in a
-bin (`searchsortedlast` sorts them past the end), and `+0.0` normalization keeps `-0.0` on the same
-side as the old IEEE `>=` comparisons. NaN intensities/areas accumulate into their bin so the final
-floor maps the poisoned bin to 1e-30, exactly as before.
+Bin assignment uses the **same convention as `binnedSum`** (`searchsortedfirst`): interior edges are
+left-EXCLUSIVE / right-inclusive — a point exactly on an interior edge goes to the bin below it — and
+points at or below the first edge or at or above the last edge are dropped (Ψ has no overflow bins).
+NaN velocities/delays never land in a bin; NaN intensities/areas still accumulate into their bin so
+the final floor maps the poisoned bin to 1e-30. This matches the line profile and every other
+`binnedSum`-based observable, so a shared edge set bins identically everywhere.
 """
 function ΨAccumulate!(Ψ::Matrix{Float64}, v, delays, I, ΔA, vEdges::AbstractVector{Float64}, tEdges::AbstractVector{Float64})
     nV = length(vEdges)-1; nT = length(tEdges)-1
     @inbounds for (vi, di, Ii, Ai) in zip(v, delays, I, ΔA)
-        bv = searchsortedlast(vEdges, vi + 0.0)
-        (1 <= bv <= nV) || continue
-        bt = searchsortedlast(tEdges, di + 0.0)
-        (1 <= bt <= nT) || continue
+        (isfinite(vi) && isfinite(di)) || continue
+        (vi <= vEdges[1] || vi >= vEdges[end]) && continue   # binnedSum convention, no overflow bins
+        (di <= tEdges[1] || di >= tEdges[end]) && continue
+        bv = searchsortedfirst(vEdges, vi) - 1
+        bt = searchsortedfirst(tEdges, di) - 1
         Ψ[bv, bt] += Ii*Ai
     end
     return Ψ
@@ -101,21 +103,22 @@ end
     ΨtAccumulate!(Ψt, delays, I, ΔA, tEdges) -> (sUnder, sOver)
 
 Single-pass accumulation for `getΨt` (function barrier -- the gathered arrays are not inferrable in
-the caller). Same conventions as `ΨAccumulate!`; additionally collects the underflow/overflow sums
-(`delays < tEdges[1]` / `delays >= tEdges[end]`, NaN in neither) in the same sweep.
+the caller). Same `binnedSum` (`searchsortedfirst`, left-exclusive interior edge) convention as
+`ΨAccumulate!`; additionally collects the underflow/overflow sums (`delays <= tEdges[1]` /
+`delays >= tEdges[end]`, NaN in neither) in the same sweep, matching `binnedSum`'s `overflow=true`
+edge-bin folding.
 """
 function ΨtAccumulate!(Ψt::Vector{Float64}, delays, I, ΔA, tEdges::AbstractVector{Float64})
     nT = length(tEdges)-1
     sUnder = 0.0; sOver = 0.0
     @inbounds for (di, Ii, Ai) in zip(delays, I, ΔA)
         isnan(di) && continue #NaN delays belong to neither a bin nor the overflow buckets (as before)
-        bt = searchsortedlast(tEdges, di + 0.0) #+0.0: -0.0 -> +0.0 so isless-based search matches the old >=/< comparisons
-        if bt < 1
+        if di <= tEdges[1]
             sUnder += Ii*Ai
-        elseif bt > nT
+        elseif di >= tEdges[end]
             sOver += Ii*Ai
         else
-            Ψt[bt] += Ii*Ai
+            Ψt[searchsortedfirst(tEdges, di) - 1] += Ii*Ai
         end
     end
     return sUnder, sOver

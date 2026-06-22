@@ -108,7 +108,7 @@ function prepare_gpu_resident(nr, nphi, ncloud, ::Type{T}) where {T<:Real}
     m = mkmodel(nr, nphi, ncloud)
     cam_start_inds = BLR.getFlattenedCameraIndices(m)
     grids, pixels = BLR._rt_build_output(m, cam_start_inds)[1:2]
-    ma = BLR.gpu(m; T=T)
+    ma = BLR.gpu(m; T=T).ma
     grid_arrays = Adapt.adapt(CUDA.CuArray, BLR._rt_grid_arrays(grids; T=T))
 
     keys = BLR._rt_bin_assign(ma, grid_arrays; backend=backend)

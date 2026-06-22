@@ -661,15 +661,20 @@ function _rt_find_pixel(p::_RaytracePoint, grids::Vector{_RaytraceGrid})
     return 0
 end
 
+# Velocity-dependent optical depth (τ stored per point so it can vary with the line-of-sight Δv
+# between overlapping contributors) is not yet implemented in the combiner. `τ_Δv` carries `Inf`
+# for the ordinary velocity-independent (scalar-τ) case and a finite value otherwise (see
+# `_rt_flatten_points` / `_rt_tau_delta_v`). Both the CPU scan and the GPU/backend path call this
+# guard so the unimplemented feature errors consistently rather than silently producing wrong
+# numbers -- it is the single reachable hook for when velocity-dependent τ is added.
+const _RT_VELOCITY_τ_MSG = "velocity-dependent optical depths not yet implemented -- pass τ as a float when creating models if you want to use raytracing"
+_rt_velocity_dependent_τ(τ_Δv) = any(isfinite, τ_Δv)
+
 function _rt_scan_bucket(points::Vector{_RaytracePoint}, inds::Vector{Int}, IRatios::Vector{Float64}, outputΔA::Float64, τCutOff::Float64)
     finiteInds = [idx for idx in inds if isfinite(points[idx].I) && isfinite(points[idx].x)]
     isempty(finiteInds) && return nothing
     order = sort(finiteInds, by=idx -> points[idx].x, rev=true)
-    τvals = [points[idx].τ for idx in order]
-    τ_Δv = [points[idx].τ_Δv for idx in order]
-    if !(all(isinf, τ_Δv) || length(unique(τvals)) <= length(order))
-        error("velocity-dependent optical depths not yet implemented -- pass τ as a float when creating models if you want to use raytracing")
-    end
+    _rt_velocity_dependent_τ(points[idx].τ_Δv for idx in order) && error(_RT_VELOCITY_τ_MSG)
     weights = [points[idx].I * IRatios[points[idx].submodel] * points[idx].ΔA / outputΔA for idx in order]
     areas = [points[idx].ΔA for idx in order]
     firstPoint = points[order[1]]

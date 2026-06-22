@@ -63,6 +63,110 @@ end
     end
 end
 
+@testset "transfer function kernels" begin
+    disk = BLR.DiskWindModel(300.0, 900.0, 0.4, nr=12, nϕ=24, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,
+        α=1.2, τ=0.4, reflect=false)
+    clouds = BLR.cloudModel(200, μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1, rng=MersenneTwister(31))
+    m = BLR.raytrace!(disk + clouds)   # realistic usage: transfer functions run on a raytraced model
+    ma = BLR.flatten(m)
+
+    # delay kernel τ = η(r − x); equals getVariable(m, BLR.t) to rounding (the unified W1 convention)
+    delays = BLR._rt_transfer_delays(ma; backend=KernelAbstractions.CPU())
+    @test delays ≈ ma.η .* (ma.r .- ma.x)
+    @test all(isapprox.(delays, BLR.getVariable(m, BLR.t, flatten=true); rtol=1e-9, atol=1e-9))
+
+    finV = filter(isfinite, ma.v); finT = filter(isfinite, delays)
+    vEdges = collect(range(minimum(finV), maximum(finV), length=21))
+    tEdges = collect(range(minimum(finT), maximum(finT), length=16))
+
+    # 2D Ψ(v,t): kernel vs the CPU accumulator on identical inputs (binning correctness, pre-floor)
+    Ψ = zeros(length(vEdges)-1, length(tEdges)-1)
+    BLR._rt_psi2d!(Ψ, ma.v, delays, ma.I, ma.ΔA, vEdges, tEdges; backend=KernelAbstractions.CPU())
+    Ψref = zeros(size(Ψ))
+    BLR.ΨAccumulate!(Ψref, ma.v, delays, ma.I, ma.ΔA, vEdges, tEdges)
+    @test Ψ ≈ Ψref
+
+    # 1D Ψ(t) + overflow buckets vs ΨtAccumulate!
+    Ψt = zeros(length(tEdges)-1); under = zeros(1); over = zeros(1)
+    BLR._rt_psit!(Ψt, under, over, delays, ma.I, ma.ΔA, tEdges; backend=KernelAbstractions.CPU())
+    Ψtref = zeros(length(tEdges)-1)
+    sU, sO = BLR.ΨtAccumulate!(Ψtref, delays, ma.I, ma.ΔA, tEdges)
+    @test Ψt ≈ Ψtref
+    @test under[1] ≈ sU
+    @test over[1] ≈ sO
+
+    # unified convention: the transfer functions now bin EXACTLY like binnedSum, including values
+    # sitting on edges (left-exclusive interior; boundary points fold into overflow). Construct
+    # delays on every edge + interior + out-of-range and compare the kernel AND ΨtAccumulate! to
+    # binnedSum directly.
+    tE = collect(0.0:1.0:6.0)
+    dExact = vcat(copy(tE), [0.5, 5.5, -1.0, 7.0])
+    wExact = collect(1.0:length(dExact)); Ae = ones(length(dExact))
+    refNoOvf = BLR.binnedSum(dExact, wExact .* Ae; bins=tE, overflow=false)[3]
+    refOvf = BLR.binnedSum(dExact, wExact .* Ae; bins=tE, overflow=true)[3]
+
+    ΨtK = zeros(length(tE)-1); uK = zeros(1); oK = zeros(1)
+    BLR._rt_psit!(ΨtK, uK, oK, dExact, wExact, Ae, tE; backend=KernelAbstractions.CPU())
+    @test ΨtK ≈ refNoOvf                                   # interior bins (kernel)
+    assembled = copy(ΨtK); assembled[1] += uK[1]; assembled[end] += oK[1]
+    @test assembled ≈ refOvf                               # overflow folding (kernel)
+
+    ΨtA = zeros(length(tE)-1)
+    sU, sO = BLR.ΨtAccumulate!(ΨtA, dExact, wExact, Ae, tE)
+    @test ΨtA ≈ refNoOvf                                   # interior bins (CPU transfer fn)
+    asmA = copy(ΨtA); asmA[1] += sU; asmA[end] += sO
+    @test asmA ≈ refOvf                                    # overflow folding (CPU transfer fn)
+end
+
+@testset "resident-model observables (CPU backend)" begin
+    nanapprox(a, b; rtol=1e-8, atol=1e-10) = length(a) == length(b) && all(
+        (isnan(b[i]) ? isnan(a[i]) : isapprox(a[i], b[i]; rtol=rtol, atol=atol)) for i in eachindex(a, b))
+
+    disk = BLR.DiskWindModel(300.0, 900.0, 0.4, nr=12, nϕ=24, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,
+        α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0, τ=0.4, reflect=false)
+    clouds = BLR.cloudModel(200, μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1, rng=MersenneTwister(41))
+    m = BLR.raytrace!(disk + clouds)
+    rm = BLR.resident(m; backend=KernelAbstractions.CPU())
+    @test rm isa BLR.ResidentModel
+
+    U = [40.0, -12.0]; V = [5.0, 33.0]; PA = 0.6; BLRAng = 1e-11
+    for bins in (60, collect(range(-0.06, 0.06, length=41)))
+        for sym in (:line, :r, :ϕ)
+            ref = BLR.getProfile(m, sym; bins=bins)
+            got = BLR.getProfile(rm, sym; bins=bins)
+            @test got.binEdges ≈ ref.binEdges
+            @test nanapprox(got.binSums, ref.binSums; rtol=1e-10)
+        end
+        # :delay uses the unified η(r−x) delay (matches getΨt); ≈ host getProfile(:delay) to ~1e-8
+        @test nanapprox(BLR.getProfile(rm, :delay; bins=bins).binSums, BLR.getProfile(m, :delay; bins=bins).binSums)
+        for sym in (:phase, :moment2)
+            ref = BLR.getProfile(m, sym; bins=bins, U=U, V=V, PA=PA, BLRAng=BLRAng)
+            got = BLR.getProfile(rm, sym; bins=bins, U=U, V=V, PA=PA, BLRAng=BLRAng)
+            @test nanapprox(got.binSums, ref.binSums; rtol=1e-8)
+        end
+    end
+
+    fv = filter(isfinite, BLR.getVariable(m, :v, flatten=true))
+    fd = filter(isfinite, BLR.getVariable(m, BLR.t, flatten=true))
+    vEdges = collect(range(minimum(fv), maximum(fv), length=16))
+    tEdges = collect(range(minimum(fd), maximum(fd), length=21))
+    for overflow in (false, true)
+        @test nanapprox(BLR.getΨt(rm, tEdges, overflow), BLR.getΨt(m, tEdges, overflow); rtol=1e-8)
+    end
+    @test nanapprox(vec(BLR.getΨ(rm, vEdges, tEdges)), vec(BLR.getΨ(m, vEdges, tEdges)); rtol=1e-8)
+
+    refS = BLR.secondMoment(m; U=U, V=V, PA=PA, BLRAng=BLRAng, returnAvg=true, bins=60)
+    gotS = BLR.secondMoment(rm; U=U, V=V, PA=PA, BLRAng=BLRAng, returnAvg=true, bins=60)
+    @test isapprox(refS[4], gotS[4]; rtol=1e-8)           # line-integrated size scalar
+    @test nanapprox(gotS[3], refS[3]; rtol=1e-8)          # per-channel σ²(v)
+
+    @test_throws ArgumentError BLR.getProfile(rm, :line; bins=60, dx=ones(2, 2))
+end
+
 @testset "disk construction kernels" begin
     rMin = 300.0
     rMax = 900.0
@@ -234,4 +338,16 @@ end
         @test all(isapprox.(BLR.getVariable(backend32Model, sym, flatten=true),
             BLR.getVariable(ref32Model, sym, flatten=true), rtol=1e-4))
     end
+
+    # velocity-dependent optical depth (per-point τ vector) is unimplemented and must error the
+    # same way on the default CPU scan and the backend scan -- not silently produce wrong numbers.
+    velModel() = begin
+        d = disk()
+        for r in d.rings
+            r.τ = fill(0.4, length(r.I))
+        end
+        d + clouds(40, 109)
+    end
+    @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0)
+    @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0, backend=KernelAbstractions.CPU())
 end

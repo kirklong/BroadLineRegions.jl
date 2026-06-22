@@ -400,7 +400,7 @@ end
         append!(ηRef, r.η isa Number ? (r.η for _ in 1:n) : r.η)
     end
     ΨRef = map(1:length(tEdges)-1) do j
-        mask = (dRef .>= tEdges[j]) .& (dRef .< tEdges[j+1])
+        mask = (dRef .> tEdges[j]) .& (dRef .<= tEdges[j+1]) #binnedSum convention (left-exclusive)
         s = sum(iRef[mask].*aRef[mask])
         s > 0 ? s : 1e-30 #replicate getΨt's empty-bin floor
     end
@@ -446,7 +446,8 @@ end
         tEdges = collect(range(0.0, stop=1500.0, length=9))
         Ψ = BLR.getΨ(m, vEdges, tEdges)
         for i in 1:length(vEdges)-1, j in 1:length(tEdges)-1
-            mask = (v .>= vEdges[i]) .& (v .< vEdges[i+1]) .& (d .>= tEdges[j]) .& (d .< tEdges[j+1])
+            #binnedSum convention: left-exclusive / right-inclusive interior edges (> left, <= right)
+            mask = (v .> vEdges[i]) .& (v .<= vEdges[i+1]) .& (d .> tEdges[j]) .& (d .<= tEdges[j+1])
             s = sum(I[mask].*ΔA[mask])
             expected = s > 0 ? s : 1e-30
             @test isapprox(Ψ[i,j], expected, rtol=1e-12)
@@ -455,12 +456,12 @@ end
         for ovf in (false, true)
             Ψt = BLR.getΨt(m, tEdges, ovf)
             ref = map(1:length(tEdges)-1) do j
-                mask = (d .>= tEdges[j]) .& (d .< tEdges[j+1])
+                mask = (d .> tEdges[j]) .& (d .<= tEdges[j+1])
                 s = sum(I[mask].*ΔA[mask])
                 s > 0 ? s : 1e-30
             end
             if ovf
-                sU = sum(I[(d .< tEdges[1])].*ΔA[(d .< tEdges[1])])
+                sU = sum(I[(d .<= tEdges[1])].*ΔA[(d .<= tEdges[1])])
                 sO = sum(I[(d .>= tEdges[end])].*ΔA[(d .>= tEdges[end])])
                 ref[1] += sU > 0 ? sU : 1e-30
                 ref[end] += sO > 0 ? sO : 1e-30
@@ -473,6 +474,14 @@ end
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
+
+# GPU correctness tests are opt-in: they need a CUDA device and the CUDA.jl weak dependency in the
+# active environment. Run with `BLR_TEST_CUDA=1` from an env that has CUDA.jl available.
+if get(ENV, "BLR_TEST_CUDA", "0") == "1"
+    include("gpu_cuda.jl")
+else
+    @info "skipping GPU correctness tests (set BLR_TEST_CUDA=1 with CUDA.jl available to run them)"
+end
 
 ## NOTE add JET to the test environment, then uncomment
 # using JET

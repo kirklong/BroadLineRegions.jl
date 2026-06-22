@@ -13,5 +13,6 @@ include("transfer.jl")
 include("operators.jl")
 include("raytrace.jl")
 include("gpu_kernels.jl")
+include("gpu_observables.jl")
 export BLR
 end #module BroadLineRegions

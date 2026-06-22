@@ -137,6 +137,87 @@ function _rt_weighted_variance!(σ²::AbstractVector, sumW::AbstractVector, sumW
     return σ²
 end
 
+# Reverberation delay τ = η·(r − x) (the general `tCloud` form; equals `tDisk` to rounding for a flat
+# ring). One thread per point; reproduces `getVariable(m, t)` for the resident pipeline without a
+# host round-trip. See the W1 unified-delay note (combined models already use this form).
+@kernel function _rt_transfer_delays_kernel!(delays, η, r, x)
+    idx = @index(Global)
+    delays[idx] = η[idx] * (r[idx] - x[idx])
+end
+
+function _rt_transfer_delays!(delays::AbstractArray, η::AbstractArray, r::AbstractArray,
+        x::AbstractArray; backend=KernelAbstractions.CPU())
+    size(delays) == size(η) == size(r) == size(x) || throw(DimensionMismatch("delay arrays must have matching sizes"))
+    kernel! = _rt_transfer_delays_kernel!(backend)
+    event = kernel!(delays, η, r, x; ndrange=length(delays))
+    event !== nothing && wait(event)
+    return delays
+end
+
+_rt_transfer_delays(ma::ModelArrays; backend=KernelAbstractions.CPU()) =
+    _rt_transfer_delays!(similar(ma.r), ma.η, ma.r, ma.x; backend=backend)
+
+# 2D transfer function Ψ(v, t): single-pass atomic accumulation of I·ΔA into (velocity, delay) bins,
+# uniform edges only, matching getΨ's `ΨAccumulate!` (binnedSum left-exclusive interior edges, no
+# overflow bins so boundary points are dropped, NaN v/delay dropped, NaN weights poison their bin so
+# the caller's `>0 ? Ψ : 1e-30` floor maps them to 1e-30).
+@kernel function _rt_psi2d_kernel!(Ψ, v, delays, I, ΔA, vEdges, tEdges, nV, nT)
+    idx = @index(Global)
+    bv = _rt_uniform_bin_index(v[idx], vEdges, nV, false)
+    bt = _rt_uniform_bin_index(delays[idx], tEdges, nT, false)
+    if bv != 0 && bt != 0
+        @atomic Ψ[bv + (bt - 1) * nV] += I[idx] * ΔA[idx]
+    end
+end
+
+function _rt_psi2d!(Ψ::AbstractMatrix, v::AbstractArray, delays::AbstractArray, I::AbstractArray,
+        ΔA::AbstractArray, vEdges::AbstractVector, tEdges::AbstractVector;
+        backend=KernelAbstractions.CPU())
+    nV = length(vEdges) - 1
+    nT = length(tEdges) - 1
+    size(Ψ) == (nV, nT) || throw(DimensionMismatch("Ψ must be ($nV, $nT)"))
+    length(v) == length(delays) == length(I) == length(ΔA) || throw(DimensionMismatch("Ψ inputs must have matching lengths"))
+    fill!(Ψ, zero(eltype(Ψ)))
+    Ψflat = reshape(Ψ, nV * nT)
+    kernel! = _rt_psi2d_kernel!(backend)
+    event = kernel!(Ψflat, v, delays, I, ΔA, vEdges, tEdges, nV, nT; ndrange=length(v))
+    event !== nothing && wait(event)
+    return Ψ
+end
+
+# 1D transfer function Ψ(t): I·ΔA binned by delay (uniform edges, same binnedSum convention as getΨt),
+# with optional overflow accumulation of under-/over-range weight into the first/last bin. `under`/
+# `over` are length-1 device arrays so the single sweep also collects the overflow sums.
+@kernel function _rt_psit_kernel!(Ψt, under, over, delays, I, ΔA, tEdges, nT)
+    idx = @index(Global)
+    di = delays[idx]
+    if !isnan(di)
+        w = I[idx] * ΔA[idx]
+        if di <= tEdges[1]
+            @atomic under[1] += w
+        elseif di >= tEdges[nT+1]
+            @atomic over[1] += w
+        else
+            @atomic Ψt[_rt_uniform_bin_index(di, tEdges, nT, false)] += w
+        end
+    end
+end
+
+function _rt_psit!(Ψt::AbstractVector, under::AbstractVector, over::AbstractVector,
+        delays::AbstractArray, I::AbstractArray, ΔA::AbstractArray, tEdges::AbstractVector;
+        backend=KernelAbstractions.CPU())
+    nT = length(tEdges) - 1
+    length(Ψt) == nT || throw(DimensionMismatch("Ψt must have length length(tEdges)-1"))
+    length(delays) == length(I) == length(ΔA) || throw(DimensionMismatch("Ψt inputs must have matching lengths"))
+    fill!(Ψt, zero(eltype(Ψt)))
+    fill!(under, zero(eltype(under)))
+    fill!(over, zero(eltype(over)))
+    kernel! = _rt_psit_kernel!(backend)
+    event = kernel!(Ψt, under, over, delays, I, ΔA, tEdges, nT; ndrange=length(delays))
+    event !== nothing && wait(event)
+    return Ψt, under, over
+end
+
 function _rt_disk_deproject_scalar(a, b, inc, rot, θₒ, m11, m12, m21, m22,
         r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMin, rMax, ηₒ, η₁, αRM, rNorm)
     cosr = cos(rot)
@@ -260,7 +341,6 @@ Adapt.@adapt_structure _RaytraceGridArrays
 struct _RaytraceScanArrays{T<:Real,V<:AbstractVector{T},I<:AbstractVector{Int}}
     outputΔA::V
     IRatios::V
-    τ_Δv::V
     submodel::I
     segmentStarts::I
     segmentStops::I
@@ -420,10 +500,12 @@ function _rt_scan_arrays(m::model, keys::AbstractVector{Int}, perm::AbstractVect
             segmentStops[key] = pos
         end
     end
+    # Same guard as the CPU scan (`_rt_scan_bucket`): velocity-dependent optical depth is not yet
+    # implemented, so error host-side before launching any kernel (kernels cannot `error`).
+    _rt_velocity_dependent_τ(_rt_tau_delta_v(m, T)) && error(_RT_VELOCITY_τ_MSG)
     return _RaytraceScanArrays{T,Vector{T},Vector{Int}}(
         T.([p.ΔA for p in pixels]),
         T.(IRatios),
-        _rt_tau_delta_v(m, T),
         _rt_submodel_indices(m),
         segmentStarts,
         segmentStops,
@@ -440,12 +522,13 @@ function _rt_scan_output(n::Int; T=Float64)
 end
 
 _rt_backend_model_arrays(m::model, ::KernelAbstractions.CPU; T=Float64) = flatten(m; T=T)
-_rt_backend_model_arrays(m::model, backend; T=Float64) = gpu(m; T=T)
+_rt_backend_model_arrays(m::model, backend; T=Float64) =
+    error("no device ModelArrays transfer defined for backend $(typeof(backend)); load the matching extension (e.g. `using CUDA` for CUDABackend)")
 _rt_backend_adapt(x, ma::ModelArrays) = x
 
 @kernel function _rt_segmented_scan_kernel!(outI, outv, outr, outϕ, outϕ₀, outi, outrot, outθₒ,
         outτ, outη, outx, outy, outz, outreflect, outactive, perm, keys, outputΔA, IRatios,
-        τ_Δv, submodel, segmentStarts, segmentStops, r, ϕ, ϕ₀, i, rot, θₒ, v, I, ΔA, τ, η,
+        submodel, segmentStarts, segmentStops, r, ϕ, ϕ₀, i, rot, θₒ, v, I, ΔA, τ, η,
         x, α, β, reflect, τCutOff)
     pix = @index(Global)
     start = segmentStarts[pix]
@@ -560,7 +643,7 @@ function _rt_segmented_scan!(out::_RaytraceScanOutput, ma::ModelArrays, keys::Ab
     kernel! = _rt_segmented_scan_kernel!(backend)
     event = kernel!(out.I, out.v, out.r, out.ϕ, out.ϕ₀, out.i, out.rot, out.θₒ,
         out.τ, out.η, out.x, out.y, out.z, out.reflect, out.active, perm, keys,
-        scan.outputΔA, scan.IRatios, scan.τ_Δv, scan.submodel, scan.segmentStarts,
+        scan.outputΔA, scan.IRatios, scan.submodel, scan.segmentStarts,
         scan.segmentStops, ma.r, ma.ϕ, ma.ϕ₀, ma.i, ma.rot, ma.θₒ, ma.v, ma.I,
         ma.ΔA, ma.τ, ma.η, ma.x, ma.α, ma.β, ma.reflect, τCutOff; ndrange=nPixels)
     event !== nothing && wait(event)
