@@ -103,6 +103,53 @@ resident(m::model; T=Float64, backend=KernelAbstractions.CPU()) =
 
 cpu(rm::ResidentModel) = ResidentModel(cpu(rm.ma), KernelAbstractions.CPU(), rm.nSubModels)
 
+# Concatenate two flat snapshots column-by-column. `vcat` runs on whatever array type the columns
+# already are, so for device columns (CuArray) it stays on the device — no host round-trip.
+function _cat_model_arrays(a::ModelArrays, b::ModelArrays)
+    eltype(a.I) == eltype(b.I) ||
+        throw(ArgumentError("cannot combine ModelArrays with different element types: $(eltype(a.I)) and $(eltype(b.I))"))
+    c(f) = vcat(getfield(a, f), getfield(b, f))
+    r = c(:r)
+    reflect = c(:reflect)
+    return ModelArrays{eltype(a.I),typeof(r),typeof(reflect)}(
+        r, c(:ϕ), c(:ϕ₀), c(:i), c(:rot), c(:θₒ), c(:v), c(:I), c(:ΔA), c(:τ), c(:η),
+        c(:x), c(:y), c(:z), c(:α), c(:β), reflect)
+end
+
+"""
+    +(rm1::ResidentModel, rm2::ResidentModel) -> ResidentModel
+
+Combine two device-resident models by concatenating their columns **on their existing backend** — when
+both live on the GPU the `vcat`s stay on the device, so this is the fast path for `gpu(m1) + gpu(m2)`
+(or for merging submodels built on-device with [`residentDiskWindModel`](@ref)/[`residentCloudModel`](@ref))
+without a host round-trip. Mirrors `+(::model, ::model)`: submodels are stacked and `nSubModels` adds.
+Both handles must share the same backend type and element type.
+
+Like the host `+`, this does **not** raytrace (no optical-depth combination) — it is the on-device
+analogue of stacking submodels. Raytrace on the host (`raytrace!(m1 + m2; backend=…)`) if you need the
+τ-scan.
+"""
+function Base.:+(rm1::ResidentModel, rm2::ResidentModel)
+    if typeof(rm1.backend) != typeof(rm2.backend)
+        throw(ArgumentError(string(
+            "cannot combine ResidentModels that live on different backends ",
+            "($(typeof(rm1.backend)) + $(typeof(rm2.backend))) — move them onto the same device first, then add.\n",
+            "  • to combine on the CPU:  cpu(rm) brings a device-resident model back to the host (e.g. `cpu(gpuModel) + cpuModel`)\n",
+            "  • to combine on the GPU:  build/move both with gpu(m) (e.g. `gpuModel + gpu(cpu(otherModel))`)")))
+    end
+    return ResidentModel(_cat_model_arrays(rm1.ma, rm2.ma), rm1.backend, rm1.nSubModels + rm2.nSubModels)
+end
+
+# Mixing a host `model` (lives on the CPU) with a device-resident handle is the other "different
+# places" mistake — give the same actionable message instead of a bare MethodError.
+const _RESIDENT_MIX_MSG = string(
+    "cannot combine a host `model` with a `ResidentModel` — they live in different places. ",
+    "Put both in the same representation first:\n",
+    "  • flatten the host model with `resident(m)` (CPU) or `gpu(m)` (GPU) and add two ResidentModels, or\n",
+    "  • bring the resident handle back with `cpu(rm)` and add two host models.")
+Base.:+(::model, ::ResidentModel) = throw(ArgumentError(_RESIDENT_MIX_MSG))
+Base.:+(::ResidentModel, ::model) = throw(ArgumentError(_RESIDENT_MIX_MSG))
+
 function gpu(::Any; kwargs...)
     error("GPU support requires loading CUDA.jl; use the CUDA extension on feature/gpu-framework Phase B")
 end

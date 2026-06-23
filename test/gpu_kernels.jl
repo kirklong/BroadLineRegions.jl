@@ -218,6 +218,231 @@ end
     _test_same_nan_approx(I, _disk_field_values(m, :I))
 end
 
+@testset "on-device DiskWind construction (CPU backend)" begin
+    fkw = (f1=1.0, f2=0.7, f3=0.2, f4=0.9, α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
+    rMin, rMax, inc, nr, nϕ = 311.7, 887.3, 0.4, 20, 40
+    cols = (:r, :ϕ, :ϕ₀, :i, :rot, :θₒ, :v, :I, :ΔA, :τ, :η, :x, :y, :z, :α, :β)
+    # The host masks out-of-range pixels with a per-point round(r,sigdigits=9); the construction
+    # kernel uses plain compares against host-rounded bounds (the plan's B2 rule). They can therefore
+    # disagree only on pixels whose deprojected r sits *exactly* on rMin/rMax (the camera grid starts
+    # at rMin*cos(i), so the +x meridian of the inner/outer ring lands on the boundary) — the
+    # documented single-boundary-ring difference. Allow a NaN-mask mismatch only there; require
+    # bit-for-bit agreement everywhere else.
+    isboundary(rv, lo, hi) = isfinite(rv) && (abs(rv - lo) / lo < 1e-9 || abs(rv - hi) / hi < 1e-9)
+    function _compare_cols(rm, ref, lo, hi; checkcols=cols)
+        rhost = ref.r
+        for c in checkcols
+            a = getfield(rm.ma, c); b = getfield(ref, c)
+            @test length(a) == length(b)
+            for k in eachindex(a, b)
+                if isnan(a[k]) != isnan(b[k])
+                    @test isboundary(rhost[k], lo, hi)
+                elseif isfinite(b[k])
+                    @test isapprox(a[k], b[k]; atol=0.0, rtol=1e-12)
+                end
+            end
+        end
+    end
+    for scale in (:linear, :log)
+        m = BLR.DiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=scale,
+            I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, fkw...)
+        ref = BLR.flatten(m; T=Float64)
+        rm = BLR.residentDiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=scale, fkw...)
+        @test rm isa BLR.ResidentModel
+        @test rm.nSubModels == 1
+        @test length(rm.ma.I) == nr * nϕ
+        _compare_cols(rm, ref, rMin, rMax)
+        # reflect (per-ring scalar false) is exact everywhere — no boundary subtlety
+        @test rm.ma.reflect == ref.reflect
+        # drop-in for the resident observables pipeline: line profile matches host-resident
+        a = BLR.getProfile(BLR.resident(m), :line; bins=50).binSums
+        b = BLR.getProfile(rm, :line; bins=50).binSums
+        @test all((isnan(a[i]) ? isnan(b[i]) : isapprox(a[i], b[i]; rtol=1e-8, atol=1e-12)) for i in eachindex(a, b))
+    end
+
+    # r̄/rFac/Sα parameterization matches the host DiskWindModel(r̄, rFac, Sα, i; ...) geometry
+    # (both set the intensity power-law α = Sα internally, so α is not passed here)
+    fkwNoα = (f1=1.0, f2=0.7, f3=0.2, f4=0.9, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
+    r̄, rFac, Sα = 500.0, 2.0, 1.2
+    loh, hih = BLR.get_rMinMaxDiskWind(r̄, rFac, Sα)
+    mh = BLR.DiskWindModel(r̄, rFac, Sα, inc; nr=nr, nϕ=nϕ, scale=:log, fkwNoα...)
+    rmh = BLR.residentDiskWindModel(r̄, rFac, Sα, inc; nr=nr, nϕ=nϕ, scale=:log, fkwNoα...)
+    refh = BLR.flatten(mh; T=Float64)
+    _compare_cols(rmh, refh, loh, hih; checkcols=(:r, :v, :I, :η, :x, :ΔA))
+
+    # user-supplied GPU-safe scalar intensity/velocity hook runs in the same fused kernel
+    Icustom = (r, ϕ, i) -> 2.0 * cos(ϕ)^2
+    vcustom = (r, ϕ, i) -> 0.001 * sin(ϕ)
+    rmc = BLR.residentDiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=:linear,
+        intensity=Icustom, velocity=vcustom)
+    refr = BLR.residentDiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=:linear, fkw...).ma.r
+    for k in eachindex(rmc.ma.r)
+        if isnan(refr[k])
+            @test isnan(rmc.ma.I[k]) && isnan(rmc.ma.v[k])
+        else
+            @test rmc.ma.I[k] ≈ 2.0 * cos(rmc.ma.ϕ[k])^2
+            @test rmc.ma.v[k] ≈ 0.001 * sin(rmc.ma.ϕ[k])
+        end
+    end
+
+    # vCircularRadialDisk: bit-matches the host DiskWindModel(...; v=vCircularRadialDisk, vᵣFrac, inflow)
+    for (vf, inf) in ((0.0, true), (0.33, true), (0.5, false))
+        mr = BLR.DiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=:log,
+            I=BLR.DiskWindIntensity, v=BLR.vCircularRadialDisk, vᵣFrac=vf, inflow=inf, fkw...)
+        rmr = BLR.residentDiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=:log,
+            vᵣFrac=vf, inflow=inf, fkw...)
+        vref = BLR.flatten(mr).v
+        fin = isfinite.(vref) .& isfinite.(rmr.ma.v)
+        @test maximum(abs.(vref[fin] .- rmr.ma.v[fin])) < 1e-12
+    end
+
+    # error paths
+    @test_throws ArgumentError BLR.residentDiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ)  # missing f1..f4
+    @test_throws ArgumentError BLR.residentDiskWindModel(rMax, rMin, inc; nr=nr, nϕ=nϕ, fkw...)  # rMin>=rMax
+    @test_throws ArgumentError BLR.residentDiskWindModel(rMin, rMax, inc; nr=1, nϕ=nϕ, fkw...)   # nr<=1
+    @test_throws ArgumentError BLR.residentDiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=:bad, fkw...)
+end
+
+@testset "on-device cloud construction (CPU backend)" begin
+    params = (μ=600.0, β=1.0, F=0.5, rₛ=1.0, θₒ=0.5, γ=1.0, ξ=0.8, i=0.4,
+              ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
+    N, seed = 4000, 12345
+    rm = BLR.residentCloudModel(N, seed; params...)
+    @test rm isa BLR.ResidentModel
+    @test rm.nSubModels == 1
+    @test length(rm.ma.r) == N
+    ma = rm.ma
+
+    # cloud columns: ΔA=1, τ=0, isotropic I=1, camera α=y/β=z, i scalar = inc
+    @test all(ma.ΔA .== 1.0)
+    @test all(ma.τ .== 0.0)
+    @test all(ma.I .== 1.0)
+    @test ma.α == ma.y && ma.β == ma.z
+    @test all(ma.i .== params.i)
+    # geometry self-consistency: rotation + reflection are isometries -> |xyz| == r
+    @test maximum(abs.(sqrt.(ma.x .^ 2 .+ ma.y .^ 2 .+ ma.z .^ 2) .- ma.r)) < 1e-9
+
+    # deterministic transforms are BIT-EXACT vs the host package scalars given identical draws
+    # (only the RNG draws differ from host :philox — validated by the KS test below).
+    s = UInt64(seed); k0 = UInt32(s & 0xffffffff); k1 = UInt32((s >> 32) & 0xffffffff)
+    for p in 1:150
+        cidx = UInt32(p)
+        ϕ₀ = BLR._cloud_uniform(Float64, k0, k1, cidx, 0) * 2π
+        uθ = BLR._cloud_uniform(Float64, k0, k1, cidx, 1)
+        θ = acos(cos(params.θₒ) + (1 - cos(params.θₒ)) * uθ^params.γ)
+        rot = BLR._cloud_uniform(Float64, k0, k1, cidx, 2) * 2π
+        g, nn = BLR._cloud_gamma(Float64, k0, k1, cidx, 1 / params.β^2, 3)
+        r = params.rₛ + params.μ * params.F + params.μ * params.β^2 * (1 - params.F) * g
+        xyz = BLR.rotate3D_scalar(r, ϕ₀, params.i, rot, θ, false)
+        uref = BLR._cloud_uniform(Float64, k0, k1, cidx, nn)
+        reflect = (xyz[3] < BLR.midPlaneXZ(xyz[1], params.i)) && (uref > params.ξ)
+        xyz = reflect ? BLR.reflect_scalar(xyz[1], xyz[2], xyz[3], params.i) : xyz
+        sini, cosi = sincos(params.i)
+        ϕref = atan(xyz[2], sini * xyz[1] - cosi * xyz[3])
+        vref = BLR.vCircularCloud(r=r, ϕ₀=ϕ₀, i=params.i, rot=rot, θₒ=θ, rₛ=params.rₛ, reflect=reflect)
+        ηref = BLR.response(r; ηₒ=params.ηₒ, η₁=params.η₁, αRM=params.αRM, rNorm=params.rNorm)
+        @test ma.r[p] == r
+        @test ma.x[p] == xyz[1] && ma.y[p] == xyz[2] && ma.z[p] == xyz[3]
+        @test ma.ϕ[p] == ϕref
+        @test ma.v[p] == vref
+        @test ma.η[p] == ηref
+        @test ma.reflect[p] == reflect
+    end
+
+    # determinism: same seed -> identical realization; different seed -> different
+    rm2 = BLR.residentCloudModel(N, seed; params...)
+    @test rm2.ma.r == ma.r && rm2.ma.v == ma.v
+    rm3 = BLR.residentCloudModel(N, seed + 1; params...)
+    @test rm3.ma.r != ma.r
+
+    # statistical equivalence to host :philox radii (two-sample KS), both Gamma paths
+    ks2(a, b) = (A = sort(a); B = sort(b); na = length(A); nb = length(B);
+        maximum(abs(searchsortedlast(A, x) / na - searchsortedlast(B, x) / nb) for x in vcat(A, B)))
+    for βv in (1.0, 1.2)                     # shape=1 (direct) and shape<1 (boost)
+        Nks = 20000
+        rd = BLR.residentCloudModel(Nks, 77; μ=600.0, β=βv, F=0.5, θₒ=0.5, γ=1.0, ξ=0.8, i=0.4, rₛ=1.0).ma.r
+        mh = BLR.cloudModel(Nks; μ=600.0, β=βv, F=0.5, θₒ=0.5, γ=1.0, ξ=0.8, i=0.4, rₛ=1.0,
+            I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rng=:philox, seed=77)
+        D = ks2(rd, BLR.getVariable(mh, :r, flatten=true))
+        @test D < 1.358 * sqrt(2 / Nks)      # ~95% two-sample KS critical value
+    end
+
+    # drop-in for the resident observables pipeline
+    pl = BLR.getProfile(rm, :line; bins=40)
+    @test count(isfinite, pl.binSums) == length(pl.binSums)
+    @test isapprox(sum(filter(isfinite, pl.binSums)), Float64(N); rtol=1e-10)  # I=ΔA=1 -> Σ flux = N
+
+    # cloudIntensity (intensity=:cloud, κ): bit-matches host given identical draws
+    κ = 0.4
+    rmI = BLR.residentCloudModel(N, seed; params..., intensity=:cloud, κ=κ)
+    for p in 1:120
+        cidx = UInt32(p)
+        ϕ₀ = BLR._cloud_uniform(Float64, k0, k1, cidx, 0) * 2π
+        uθ = BLR._cloud_uniform(Float64, k0, k1, cidx, 1)
+        θ = acos(cos(params.θₒ) + (1 - cos(params.θₒ)) * uθ^params.γ)
+        rot = BLR._cloud_uniform(Float64, k0, k1, cidx, 2) * 2π
+        g, _ = BLR._cloud_gamma(Float64, k0, k1, cidx, 1 / params.β^2, 3)
+        r = params.rₛ + params.μ * params.F + params.μ * params.β^2 * (1 - params.F) * g
+        Iref = BLR.cloudIntensity(r=r, ϕ=0.0, θₒ=θ, ϕ₀=ϕ₀, rot=rot, i=params.i, κ=κ)
+        @test rmI.ma.I[p] == Iref
+    end
+
+    # vCloudTurbulentEllipticalFlow (velocity=:turbulent): statistically equal to the host turbulent
+    # model (two-sample KS on the LOS velocity); geometry still self-consistent.
+    tp = (σρᵣ=0.2, σρc=0.04, σΘᵣ=0.4, σΘc=0.1, θₑ=35 / 180 * π, fEllipse=0.8, fFlow=0.0, σₜ=0.05)
+    Nt = 20000
+    rmT = BLR.residentCloudModel(Nt, 31; μ=600.0, β=1.0, F=0.5, rₛ=1.0, θₒ=0.5, γ=5.0, ξ=0.3, i=0.35,
+        intensity=:cloud, κ=κ, velocity=:turbulent, tp...)
+    @test all(isfinite, rmT.ma.v)
+    @test maximum(abs.(sqrt.(rmT.ma.x .^ 2 .+ rmT.ma.y .^ 2 .+ rmT.ma.z .^ 2) .- rmT.ma.r)) < 1e-9
+    mhT = BLR.cloudModel(Nt; μ=600.0, β=1.0, F=0.5, rₛ=1.0, θₒ=0.5, γ=5.0, ξ=0.3, i=0.35, κ=κ,
+        I=BLR.cloudIntensity, v=BLR.vCloudTurbulentEllipticalFlow, tp..., rng=:philox, seed=31)
+    @test ks2(rmT.ma.v, BLR.getVariable(mhT, :v, flatten=true)) < 1.358 * sqrt(2 / Nt)
+
+    @test_throws ArgumentError BLR.residentCloudModel(0, seed; params...)
+    @test_throws ArgumentError BLR.residentCloudModel(N, seed; params..., intensity=:bogus)
+    @test_throws ArgumentError BLR.residentCloudModel(N, seed; params..., velocity=:bogus)
+end
+
+@testset "ResidentModel device combine (+)" begin
+    disk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=12, nϕ=24, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,
+        α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
+    clouds = BLR.cloudModel(300; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rng=:philox, seed=7)
+
+    # resident(m1) + resident(m2) concatenates columns in the same order as resident(m1 + m2),
+    # so it is bit-for-bit identical (and stays on-backend — vcat of device arrays never leaves the GPU)
+    combined = BLR.resident(disk) + BLR.resident(clouds)
+    reference = BLR.resident(disk + clouds)
+    @test combined.nSubModels == 2
+    @test combined.nSubModels == reference.nSubModels
+    @test length(combined.ma.I) == length(disk.rings) * length(disk.rings[1].I) + 300
+    for f in fieldnames(BLR.ModelArrays)
+        @test isequal(getfield(combined.ma, f), getfield(reference.ma, f))
+    end
+    # observable equivalence
+    @test isequal(BLR.getProfile(combined, :line; bins=40).binSums,
+        BLR.getProfile(reference, :line; bins=40).binSums)
+
+    # order matters (disk+clouds vs clouds+disk are different concatenations, same multiset of points)
+    flipped = BLR.resident(clouds) + BLR.resident(disk)
+    @test sort(filter(isfinite, Array(flipped.ma.r))) ≈ sort(filter(isfinite, Array(combined.ma.r)))
+
+    # different element types cannot be combined
+    @test_throws ArgumentError BLR.resident(disk; T=Float64) + BLR.resident(clouds; T=Float32)
+
+    # mixing a host model with a resident handle errors with an actionable message (not a MethodError)
+    @test_throws ArgumentError disk + BLR.resident(clouds)
+    @test_throws ArgumentError BLR.resident(disk) + clouds
+    err = try
+        disk + BLR.resident(clouds)
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("resident", err.msg) && occursin("cpu(", err.msg)
+end
+
 @testset "raytrace bin-assign kernels" begin
     disk(; r1=300.0, r2=900.0, nr=8, nϕ=16, inc=0.4, τ=0.4) =
         BLR.DiskWindModel(r1, r2, inc, nr=nr, nϕ=nϕ, scale=:linear,
