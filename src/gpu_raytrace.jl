@@ -17,26 +17,41 @@ using Adapt
     RaytraceMeta
 
 Device-resident metadata that `raytrace!(::ResidentModel)` needs beyond the flat [`ModelArrays`](@ref):
-the output-grid edges (`grid`, a `_RaytraceGridArrays`), the per-output-pixel area/camera coordinates
-(`pixelΔA`/`pixelα`/`pixelβ`, length = number of output pixels), and the per-point submodel index and
-discrete/cloud flag (`submodel`/`discrete`, length = number of input points). All fields live on the
-same backend as the model columns.
+a list of output-grid blocks (`grids`, one per continuous submodel — each a `_RtGridBlock` with grid
+edges, per-output-pixel area/camera coords, and the block's inner radius for ordering) plus the
+per-point submodel index and discrete/cloud flag (`submodel`/`discrete`, length = number of input
+points). `raytrace!` assembles the blocks innermost-first into a single output grid at call time, so any
+number/kind of submodels combine generically (mirroring the host `_rt_build_output`). All array fields
+live on the same backend as the model columns.
 """
-struct RaytraceMeta{GA,V<:AbstractVector,IV<:AbstractVector{Int},BV<:AbstractVector{Bool}}
-    grid::GA
+struct _RtGridBlock{GA,V<:AbstractVector}
+    grid::GA          # _RaytraceGridArrays
     pixelΔA::V
     pixelα::V
     pixelβ::V
-    submodel::IV
-    discrete::BV
     nPixels::Int
+    minRMin::Float64  # innermost cell radius (host scalar) -- sort key for overlap resolution
 end
 
-Adapt.@adapt_structure RaytraceMeta
+Adapt.@adapt_structure _RtGridBlock
+
+struct RaytraceMeta{GB,IV<:AbstractVector{Int},BV<:AbstractVector{Bool}}
+    grids::GB         # Vector{_RtGridBlock} (host vector; each block holds device arrays)
+    submodel::IV
+    discrete::BV
+end
+
+# Adapt each grid block's device arrays (and the per-point columns) but keep `grids` a host Vector.
+Adapt.adapt_structure(to, m::RaytraceMeta) = RaytraceMeta(
+    map(b -> Adapt.adapt(to, b), m.grids), Adapt.adapt(to, m.submodel), Adapt.adapt(to, m.discrete))
+
+_rt_grid_block(gridArrays, pixelΔA, pixelα, pixelβ, npix) = _RtGridBlock(
+    gridArrays, pixelΔA, pixelα, pixelβ, npix,
+    isempty(gridArrays.rMin) ? Inf : Float64(minimum(gridArrays.rMin)))
 
 # Build the (host-side) raytrace metadata for a combined model, reusing the audited host output-grid
-# and submodel machinery. Flat arrays only (no per-point structs kept) -- `gpu(m)` adapts the result to
-# the device alongside the columns, so the cost is paid once at transfer time, not per raytrace.
+# and submodel machinery. The host `_rt_build_output` already unions all continuous submodels into one
+# grid, so this is a single block. Flat arrays only -- `gpu(m)` adapts the result to the device.
 function _rt_build_meta(m::model; T=Float64)
     camStartInds = getFlattenedCameraIndices(m)
     grids, pixels, _, _, _, _ = _rt_build_output(m, camStartInds)
@@ -47,7 +62,37 @@ function _rt_build_meta(m::model; T=Float64)
     submodel = _rt_submodel_indices(m)
     discreteSub = [_rt_is_discrete(m, s) for s in 1:length(m.subModelStartInds)]
     discrete = Bool[discreteSub[s] for s in submodel]
-    return RaytraceMeta(gridArrays, pixelΔA, pixelα, pixelβ, submodel, discrete, length(pixels))
+    block = _rt_grid_block(gridArrays, pixelΔA, pixelα, pixelβ, length(pixels))
+    blocks = length(pixels) > 0 ? [block] : typeof(block)[]
+    return RaytraceMeta(blocks, submodel, discrete)
+end
+
+# Assemble the grid blocks into one output grid for binning, ordered innermost-first so the bin-assign
+# first-match resolves overlaps to the inner grid (matching the host union). Pixel slots are offset per
+# block; covered outer pixels simply receive no points and are dropped in compaction (= the union).
+function _rt_assemble_grid(grids, ma)
+    T = eltype(ma.I)
+    if isempty(grids)
+        e = _rt_backend_adapt(T[], ma); ei = _rt_backend_adapt(Int[], ma)
+        return (_RaytraceGridArrays{T,typeof(e),typeof(ei)}(e, e, e, ei, ei, ei), e, e, e, 0)
+    end
+    sorted = sort(grids; by=g -> g.minRMin)
+    cat(f) = reduce(vcat, (getfield(g.grid, f) for g in sorted))
+    keyOffset = 0; startOffset = 0
+    pkParts = similar(sorted, Any); psParts = similar(sorted, Any)
+    for (i, g) in enumerate(sorted)
+        psParts[i] = g.grid.pixelStarts .+ startOffset
+        pkParts[i] = g.grid.pixelKeys .+ keyOffset
+        startOffset += length(g.grid.pixelKeys)
+        keyOffset += g.nPixels
+    end
+    pixelKeys = reduce(vcat, pkParts)
+    grid = _RaytraceGridArrays{T,typeof(cat(:rMin)),typeof(pixelKeys)}(
+        cat(:rMin), cat(:rMax), cat(:Δϕ), cat(:nϕ), reduce(vcat, psParts), pixelKeys)
+    pΔA = reduce(vcat, (g.pixelΔA for g in sorted))
+    pα = reduce(vcat, (g.pixelα for g in sorted))
+    pβ = reduce(vcat, (g.pixelβ for g in sorted))
+    return (grid, pΔA, pα, pβ, keyOffset)
 end
 
 # Segment boundaries from the key-sorted permutation. `perm` orders points by (key ascending, depth
@@ -92,8 +137,8 @@ end
 # followed by the surviving free clouds. `pixCol` is the per-pixel value, `cloudCol` the per-point value.
 _rt_gather_out(pixCol, active, cloudCol, freeMask) = vcat(pixCol[active], cloudCol[freeMask])
 
-function _rt_compact_resident(scanOut::_RaytraceScanOutput, meta::RaytraceMeta, ma::ModelArrays,
-        keys::AbstractVector{Int}, IRpp, freeI, freeMask, ::Type{T}) where {T<:Real}
+function _rt_compact_resident(scanOut::_RaytraceScanOutput, pixelΔA, pixelα, pixelβ, ma::ModelArrays,
+        freeI, freeMask, ::Type{T}) where {T<:Real}
     a = scanOut.active
     g(pix, cloud) = _rt_gather_out(pix, a, cloud, freeMask)
     r = g(scanOut.r, ma.r)
@@ -107,14 +152,14 @@ function _rt_compact_resident(scanOut::_RaytraceScanOutput, meta::RaytraceMeta, 
         g(scanOut.θₒ, ma.θₒ),
         g(scanOut.v, ma.v),
         vcat(scanOut.I[a], freeI),                 # free-cloud I already scaled by IRatios
-        vcat(meta.pixelΔA[a], ma.ΔA[freeMask]),    # output-pixel area for pixels, own ΔA for clouds
+        vcat(pixelΔA[a], ma.ΔA[freeMask]),         # output-pixel area for pixels, own ΔA for clouds
         g(scanOut.τ, ma.τ),
         g(scanOut.η, ma.η),
         g(scanOut.x, ma.x),
         g(scanOut.y, ma.y),
         g(scanOut.z, ma.z),
-        vcat(meta.pixelα[a], ma.α[freeMask]),      # camera α/β: pixel coords for pixels, own for clouds
-        vcat(meta.pixelβ[a], ma.β[freeMask]),
+        vcat(pixelα[a], ma.α[freeMask]),           # camera α/β: pixel coords for pixels, own for clouds
+        vcat(pixelβ[a], ma.β[freeMask]),
         reflect)
     return out
 end
@@ -127,14 +172,14 @@ function _rt_resident_raytrace(rm::ResidentModel; IRatios::Union{Float64,Array{F
     ma = rm.ma
     backend = rm.backend
     T = eltype(ma.I)
-    nPixels = meta.nPixels
 
+    grid, pixelΔA, pixelα, pixelβ, nPixels = _rt_assemble_grid(meta.grids, ma)
     IRd = _rt_backend_adapt(Vector{T}(_rt_iratio_vector(IRatios, rm.nSubModels)), ma)
-    keys = _rt_bin_assign(ma, meta.grid; backend=backend)
+    keys = _rt_bin_assign(ma, grid; backend=backend)
     perm = _rt_sortperm_by_key_depth(ma, keys)
     segStarts, segStops = _rt_device_segment_arrays(keys, perm, nPixels; backend=backend)
-    scan = _RaytraceScanArrays{T,typeof(meta.pixelΔA),typeof(segStarts)}(
-        meta.pixelΔA, IRd, meta.submodel, segStarts, segStops)
+    scan = _RaytraceScanArrays{T,typeof(pixelΔA),typeof(segStarts)}(
+        pixelΔA, IRd, meta.submodel, segStarts, segStops)
     scanOut = _rt_scan_output_device(backend, T, nPixels)
     _rt_segmented_scan!(scanOut, ma, keys, perm, scan; τCutOff=T(τCutOff), backend=backend)
 
@@ -149,7 +194,7 @@ function _rt_resident_raytrace(rm::ResidentModel; IRatios::Union{Float64,Array{F
         (freeMask, ma.I[freeMask] .* IRpp[freeMask])
     end
 
-    outMA = _rt_compact_resident(scanOut, meta, ma, keys, IRpp, freeI, freeKeep, T)
+    outMA = _rt_compact_resident(scanOut, pixelΔA, pixelα, pixelβ, ma, freeI, freeKeep, T)
     nsub = length(freeI) > 0 ? 2 : 1
     return ResidentModel(outMA, backend, nsub)
 end
@@ -294,7 +339,7 @@ end
     pixelKeys[idx] = k + (j - 1) * nr
 end
 
-# RaytraceMeta for a freshly-constructed DiskWind submodel (one grid; no discrete points).
+# RaytraceMeta for a freshly-constructed DiskWind submodel: one grid block, no discrete points.
 function _rt_diskwind_meta(ma::ModelArrays, rMin::Real, rMax::Real, inc::Real, nr::Int, nϕ::Int,
         scale::Symbol, backend, ::Type{T}) where {T<:Real}
     rMinRing, rMaxRing, Δϕv = _rt_diskwind_grid_edges(rMin, rMax, inc, nr, nϕ, scale, T)
@@ -310,43 +355,34 @@ function _rt_diskwind_meta(ma::ModelArrays, rMin::Real, rMax::Real, inc::Real, n
         _rt_backend_adapt(pixelStarts, ma), pixelKeys)
     submodel = fill!(KernelAbstractions.allocate(backend, Int, npix), 1)
     discrete = fill!(KernelAbstractions.allocate(backend, Bool, npix), false)
-    return RaytraceMeta(grid, ma.ΔA, ma.α, ma.β, submodel, discrete, npix)
+    block = _rt_grid_block(grid, ma.ΔA, ma.α, ma.β, npix)
+    return RaytraceMeta([block], submodel, discrete)
 end
 
-# RaytraceMeta for a cloud submodel: no output grid (all points discrete). Empty grid arrays so the
-# merge in `+` can adopt a real grid from a continuous submodel on the other side.
+# RaytraceMeta for a cloud submodel: no output grid (all points discrete). Empty grids list -- a `+`
+# with a continuous submodel adopts that side's grid blocks.
 function _rt_cloud_meta(ma::ModelArrays, backend, ::Type{T}) where {T<:Real}
     n = length(ma.I)
-    emptyT = _rt_backend_adapt(T[], ma)
-    emptyI = _rt_backend_adapt(Int[], ma)
-    grid = _RaytraceGridArrays{T,typeof(emptyT),typeof(emptyI)}(emptyT, emptyT, emptyT, emptyI, emptyI, emptyI)
+    Vt = typeof(_rt_backend_adapt(T[], ma))               # backend Float vector type
+    It = typeof(_rt_backend_adapt(Int[], ma))             # backend Int vector type
+    blocks = _RtGridBlock{_RaytraceGridArrays{T,Vt,It},Vt}[]
     submodel = fill!(KernelAbstractions.allocate(backend, Int, n), 1)
     discrete = fill!(KernelAbstractions.allocate(backend, Bool, n), true)
-    return RaytraceMeta(grid, emptyT, emptyT, emptyT, submodel, discrete, 0)
+    return RaytraceMeta(blocks, submodel, discrete)
 end
 
-_rt_meta_has_grid(meta::RaytraceMeta) = meta.nPixels > 0
+_rt_meta_has_grid(meta::RaytraceMeta) = !isempty(meta.grids)
 _rt_meta_has_grid(::Nothing) = false
 
-# Merge two handles' raytrace metadata for `+`. The combined output grid is the (single) continuous
-# submodel's grid (pixel slots are independent of point order); submodel indices shift by the left
-# handle's submodel count and discrete flags concatenate. Two continuous grids (disk+disk) would need an
-# on-device grid union -- not done here; combine those on the host (`gpu(m1 + m2)`).
+# Merge two handles' raytrace metadata for `+`: concatenate the grid-block lists (any number of
+# continuous submodels -- `_rt_assemble_grid` orders them innermost-first at raytrace, so overlaps
+# resolve to the inner grid exactly like the host union) and the per-point submodel/discrete columns
+# (submodel indices shift by the left handle's submodel count). Generic over any N and kind of submodel.
+# If either side lacks metadata the result is unraytraceable (`nothing`).
 function _rt_merge_meta(m1, nSub1::Int, m2, nSub2::Int)
-    (m1 === nothing && m2 === nothing) && return nothing
-    g1 = _rt_meta_has_grid(m1)
-    g2 = _rt_meta_has_grid(m2)
-    g1 && g2 && throw(ArgumentError(
-        "combining two continuous (grid) submodels on-device is not supported; build on the host and " *
-        "use `gpu(m1 + m2)` for the device-resident raytrace of multi-disk models"))
-    sub1 = m1 === nothing ? nothing : m1.submodel
-    sub2 = m2 === nothing ? nothing : m2.submodel
-    sub1 === nothing && (sub1 = similar(sub2, 0))
-    sub2 === nothing && (sub2 = similar(sub1, 0))
-    disc1 = m1 === nothing ? similar(sub1, Bool, 0) : m1.discrete
-    disc2 = m2 === nothing ? similar(sub2, Bool, 0) : m2.discrete
-    submodel = vcat(sub1, sub2 .+ nSub1)
-    discrete = vcat(disc1, disc2)
-    src = g1 ? m1 : m2
-    return RaytraceMeta(src.grid, src.pixelΔA, src.pixelα, src.pixelβ, submodel, discrete, src.nPixels)
+    (m1 === nothing || m2 === nothing) && return nothing
+    grids = vcat(m1.grids, m2.grids)
+    submodel = vcat(m1.submodel, m2.submodel .+ nSub1)
+    discrete = vcat(m1.discrete, m2.discrete)
+    return RaytraceMeta(grids, submodel, discrete)
 end

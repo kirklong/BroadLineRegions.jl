@@ -446,12 +446,12 @@ end
         f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0)
     rmCl = BLR.residentCloudModel(400, 7; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8)
     @test rmDisk.rt isa BLR.RaytraceMeta && BLR._rt_meta_has_grid(rmDisk.rt)
-    @test rmDisk.rt.nPixels == 16 * 32
+    @test length(rmDisk.rt.grids) == 1 && rmDisk.rt.grids[1].nPixels == 16 * 32
     @test rmCl.rt isa BLR.RaytraceMeta && !BLR._rt_meta_has_grid(rmCl.rt)
 
     rm = rmDisk + rmCl
     @test rm.nSubModels == 2
-    @test rm.rt.nPixels == 16 * 32
+    @test length(rm.rt.grids) == 1 && rm.rt.grids[1].nPixels == 16 * 32
     @test unique(rm.rt.submodel) == [1, 2]
     @test sum(.!rm.rt.discrete) == 16 * 32 && sum(rm.rt.discrete) == 400   # disk grid pts vs clouds
 
@@ -465,8 +465,8 @@ end
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0) +
         BLR.cloudModel(50; μ=600.0, i=0.4, rng=:philox, seed=1)
     hmeta = BLR._rt_build_meta(mh)
-    @test sort(rmDisk.rt.grid.rMin) ≈ sort(hmeta.grid.rMin)
-    @test sort(rmDisk.rt.grid.rMax) ≈ sort(hmeta.grid.rMax)
+    @test sort(rmDisk.rt.grids[1].grid.rMin) ≈ sort(hmeta.grids[1].grid.rMin)
+    @test sort(rmDisk.rt.grids[1].grid.rMax) ≈ sort(hmeta.grids[1].grid.rMax)
 
     # determinism: same seed -> identical raytrace result
     rm2 = BLR.residentDiskWindModel(300.0, 900.0, 0.4; nr=16, nϕ=32, scale=:linear, f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0) +
@@ -474,9 +474,31 @@ end
     rrt2 = BLR.raytrace!(rm2)
     @test sort(rrt2.ma.I) == sort(rrt.ma.I)
 
-    # combining two continuous (grid) submodels on-device is unsupported -> actionable error
-    @test_throws ArgumentError (BLR.residentDiskWindModel(250.0, 700.0, 0.4; nr=8, nϕ=16, scale=:linear, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0) +
-        BLR.residentDiskWindModel(500.0, 1000.0, 0.4; nr=8, nϕ=16, scale=:linear, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0)).rt
+    # generic N-continuous combine on-device: multiple disks merge into a multi-block grid that
+    # `raytrace!` assembles innermost-first (like the host union). With matching τ, bit-reproducible
+    # disks match host raytrace! to machine precision for non-overlapping / nested stacks, and to the
+    # documented boundary/depth-tie tolerance where grids partially overlap (identical pixel set).
+    ddk(r1, r2; τ=5.0) = BLR.residentDiskWindModel(r1, r2, 0.4; nr=10, nϕ=20, scale=:linear,
+        f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0, τ=τ)
+    hdk(r1, r2; τ=5.0) = BLR.DiskWindModel(r1, r2, 0.4; nr=10, nϕ=20, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0, τ=τ)
+    twoDisks = ddk(250.0, 700.0) + ddk(500.0, 1000.0)
+    @test length(twoDisks.rt.grids) == 2                          # two grid blocks, not an error
+    rdd = BLR.raytrace!(twoDisks)
+    href = BLR.resident(BLR.raytrace!(hdk(250.0, 700.0) + hdk(500.0, 1000.0)))
+    @test sort(filter(isfinite, rdd.ma.ΔA)) ≈ sort(filter(isfinite, href.ma.ΔA))  # identical pixel set
+    fluxR = sum(filter(isfinite, rdd.ma.I .* rdd.ma.ΔA))
+    fluxH = sum(filter(isfinite, href.ma.I .* href.ma.ΔA))
+    @test isapprox(fluxR, fluxH; rtol=1e-3)                       # ≤ boundary/depth-tie tolerance
+
+    # non-overlapping / nested stacks are exact
+    for (db, hb) in ((() -> ddk(200., 400.) + ddk(600., 1000.), () -> hdk(200., 400.) + hdk(600., 1000.)),
+                     (() -> ddk(200., 1100.) + ddk(400., 900.) + ddk(600., 800.),
+                      () -> hdk(200., 1100.) + hdk(400., 900.) + hdk(600., 800.)))
+        r = BLR.raytrace!(db()); h = BLR.resident(BLR.raytrace!(hb()))
+        @test length(r.ma.I) == length(h.ma.I)
+        @test isapprox(sum(filter(isfinite, r.ma.I .* r.ma.ΔA)), sum(filter(isfinite, h.ma.I .* h.ma.ΔA)); rtol=1e-10)
+    end
 end
 
 @testset "ResidentModel device combine (+)" begin

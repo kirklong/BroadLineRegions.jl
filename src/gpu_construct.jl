@@ -65,7 +65,7 @@ _rt_disk_radial_velocity_fn(::Type{T}, vᵣFrac, inflow::Bool, rₛ) where {T<:R
 @kernel function _rt_build_disk_kernel!(outr, outϕ, outϕ₀, outi, outrot, outθₒ, outv, outI, outΔA,
         outτ, outη, outx, outy, outz, outα, outβ, outreflect, Ifun, vfun,
         nr, scaleLog, rStart, Δr, Δϕ, inc, rot, θₒ, m11, m12, m21, m22,
-        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac)
+        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac, τval)
     p = @index(Global)
     T = eltype(outr)
     k = (p - 1) % nr + 1
@@ -99,7 +99,7 @@ _rt_disk_radial_velocity_fn(::Type{T}, vᵣFrac, inflow::Bool, rₛ) where {T<:R
     outi[p] = inc
     outrot[p] = rot
     outθₒ[p] = θₒ
-    outτ[p] = zero(T)
+    outτ[p] = τval
     outreflect[p] = false
 end
 
@@ -112,7 +112,7 @@ wrap as a [`ModelArrays`](@ref). `Ifun`/`vfun` are GPU-safe scalar callables `(r
 """
 function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int, nϕ::Int,
         scale::Symbol, rot::Real, θₒ::Real, Ifun, vfun; ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
-        backend=KernelAbstractions.CPU(), T=Float64)
+        τ::Real=0.0, backend=KernelAbstractions.CPU(), T=Float64)
     rMin < rMax || throw(ArgumentError("rMin must be less than rMax"))
     nr > 1 || throw(ArgumentError("nr must be greater than 1"))
     nϕ > 1 || throw(ArgumentError("nϕ must be greater than 1"))
@@ -143,7 +143,7 @@ function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int,
         outx, outy, outz, outα, outβ, outreflect, Ifun, vfun, nr, scaleLog, rStart, Δr, Δϕ,
         T(inc), T(rot), T(θₒ), T(M[1, 1]), T(M[1, 2]), T(M[2, 1]), T(M[2, 2]),
         T(r3D[1, 1]), T(r3D[1, 2]), T(r3D[2, 1]), T(r3D[2, 2]), T(r3D[3, 1]), T(r3D[3, 2]),
-        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac; ndrange=n)
+        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac, T(τ); ndrange=n)
     event !== nothing && wait(event)
 
     ma = ModelArrays{T,typeof(outr),typeof(outreflect)}(outr, outϕ, outϕ₀, outi, outrot, outθₒ,
@@ -176,7 +176,7 @@ function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ
         scale::Symbol=:log, rot::Real=0.0, θₒ::Real=0.0,
         f1::Real=NaN, f2::Real=NaN, f3::Real=NaN, f4::Real=NaN, α::Real=NaN,
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0, rₛ::Real=1.0,
-        vᵣFrac::Real=0.0, inflow::Bool=true,
+        vᵣFrac::Real=0.0, inflow::Bool=true, τ::Real=0.0,
         intensity=nothing, velocity=nothing,
         backend=KernelAbstractions.CPU(), T=Float64)
     T <: Real || throw(ArgumentError("element type T must be <: Real, got $T"))
@@ -189,7 +189,7 @@ function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ
     end
     vfun = velocity === nothing ? _rt_disk_radial_velocity_fn(T, vᵣFrac, inflow, rₛ) : velocity
     ma = _build_diskwind_modelarrays(rMin, rMax, i, nr, nϕ, scale, rot, θₒ, Ifun, vfun;
-        ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, backend=backend, T=T)
+        ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, τ=τ, backend=backend, T=T)
     meta = _rt_diskwind_meta(ma, rMin, rMax, i, nr, nϕ, scale, backend, T)
     return ResidentModel(ma, backend, 1, meta)
 end
@@ -395,11 +395,11 @@ end
 @kernel function _rt_build_cloud_kernel!(outr, outϕ, outϕ₀, outi, outrot, outθₒ, outv, outI, outΔA,
         outτ, outη, outx, outy, outz, outα, outβ, outreflect, key0, key1,
         μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm, useCloudI, κ, useTurbulent,
-        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ)
+        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, τval)
     p = @index(Global)
     T = eltype(outr)
     cloudInd = UInt32(p)
-    r, ϕ, ϕ₀, i, rot, θ, v, I, ΔA, τ, η, x, y, z, reflect = _rt_build_cloud_scalar(
+    r, ϕ, ϕ₀, i, rot, θ, v, I, ΔA, _, η, x, y, z, reflect = _rt_build_cloud_scalar(
         T, key0, key1, cloudInd, μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm,
         useCloudI, κ, useTurbulent, σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ)
     outr[p] = r
@@ -411,7 +411,7 @@ end
     outv[p] = v
     outI[p] = I
     outΔA[p] = ΔA
-    outτ[p] = τ
+    outτ[p] = τval
     outη[p] = η
     outx[p] = x
     outy[p] = y
@@ -432,7 +432,7 @@ function _build_cloud_modelarrays(nClouds::Int, seed::Integer; μ::Real, β::Rea
         θₒ::Real, γ::Real, ξ::Real, i::Real, rescale::Real, ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
         useCloudI::Bool=false, κ::Real=0.0, useTurbulent::Bool=false, σρᵣ::Real=0.0, σρc::Real=0.0,
         σΘᵣ::Real=0.0, σΘc::Real=0.0, θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0,
-        backend=KernelAbstractions.CPU(), T=Float64)
+        τ::Real=0.0, backend=KernelAbstractions.CPU(), T=Float64)
     nClouds > 0 || throw(ArgumentError("nClouds must be positive"))
     s = seed % UInt64
     key0 = UInt32(s & 0xffffffff)
@@ -450,7 +450,7 @@ function _build_cloud_modelarrays(nClouds::Int, seed::Integer; μ::Real, β::Rea
         outx, outy, outz, outα, outβ, outreflect, key0, key1, T(μ), T(β), T(F), T(rₛ),
         T(θₒ), T(γ), T(ξ), T(i), T(rescale), T(ηₒ), T(η₁), T(αRM), T(rNorm),
         useCloudI, T(κ), useTurbulent, T(σρᵣ), T(σρc), T(σΘᵣ), T(σΘc), T(θₑ),
-        T(fEllipse), T(fFlow), T(σₜ); ndrange=n)
+        T(fEllipse), T(fFlow), T(σₜ), T(τ); ndrange=n)
     event !== nothing && wait(event)
 
     return ModelArrays{T,typeof(outr),typeof(outreflect)}(outr, outϕ, outϕ₀, outi, outrot, outθₒ,
@@ -489,7 +489,7 @@ function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Rea
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0,
         intensity::Symbol=:isotropic, κ::Real=0.0,
         velocity::Symbol=:circular, σρᵣ::Real=0.0, σρc::Real=0.0, σΘᵣ::Real=0.0, σΘc::Real=0.0,
-        θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0,
+        θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0, τ::Real=0.0,
         backend=KernelAbstractions.CPU(), T=Float64)
     T <: Real || throw(ArgumentError("element type T must be <: Real, got $T"))
     intensity in (:isotropic, :cloud) ||
@@ -499,7 +499,7 @@ function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Rea
     ma = _build_cloud_modelarrays(nClouds, seed; μ=μ, β=β, F=F, rₛ=rₛ, θₒ=θₒ, γ=γ, ξ=ξ, i=i,
         rescale=rescale, ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm,
         useCloudI=(intensity === :cloud), κ=κ, useTurbulent=(velocity === :turbulent),
-        σρᵣ=σρᵣ, σρc=σρc, σΘᵣ=σΘᵣ, σΘc=σΘc, θₑ=θₑ, fEllipse=fEllipse, fFlow=fFlow, σₜ=σₜ,
+        σρᵣ=σρᵣ, σρc=σρc, σΘᵣ=σΘᵣ, σΘc=σΘc, θₑ=θₑ, fEllipse=fEllipse, fFlow=fFlow, σₜ=σₜ, τ=τ,
         backend=backend, T=T)
     return ResidentModel(ma, backend, 1, _rt_cloud_meta(ma, backend, T))
 end
