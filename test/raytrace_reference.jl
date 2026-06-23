@@ -1,3 +1,5 @@
+using StableRNGs: StableRNG
+
 @testset "raytrace Phase A combiner" begin
     disk(; r1=300.0, r2=900.0, nr=8, nϕ=16, inc=0.4, τ=0.4) =
         BLR.DiskWindModel(r1, r2, inc, nr=nr, nϕ=nϕ, scale=:linear,
@@ -5,7 +7,7 @@
 
     clouds(n, seed; μ=600.0, inc=0.4, τ=0.1) =
         BLR.cloudModel(n, μ=μ, β=1.0, F=0.5, θₒ=0.4, i=inc, γ=1.0, ξ=1.0,
-            I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=τ, rng=MersenneTwister(seed))
+            I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=τ, rng=StableRNG(seed))
 
     raytrace_summary(m; kwargs...) = begin
         rt = BLR.raytrace!(m; kwargs...)
@@ -17,29 +19,29 @@
 
     # ------------------------------------------------------------------
     # (1) EQUIVALENCE to the pre-rewrite raytrace!.
-    # The flux/line values below were CAPTURED by running the original
-    # raytrace! on origin/main (pre-rewrite, commit a96fba6) for the cases
-    # that path could handle. The rewrite must reproduce them: this proves
-    # the combiner did not change observable behaviour on the working paths.
+    # The continuous-model values below were captured by running the original
+    # raytrace! on origin/main (pre-rewrite, commit a96fba6). Cloud-model
+    # baselines use StableRNG so the sampled fixture is identical across Julia
+    # versions; those values pin the corrected rewrite's observable behaviour.
     # (rtol 1e-8 absorbs floating-point re-association from the new order of
     # summation; old vs new agree to ~1e-13 in practice.)
     # ------------------------------------------------------------------
-    # NOTE on provenance: the pre-rewrite raytrace! on origin/main gave
+    # Historical provenance: with the former MersenneTwister fixture, the
+    # pre-rewrite raytrace! on origin/main gave
     #   flux = 2.0391087024702898e6
     #   line = [50951.8414, 228718.8705, 356006.2909, 246949.2266, 263973.4663,
     #           1.0, 303694.1658, 357323.0208, 196441.9867, 35047.8335, 1.0]
-    # The rewrite reproduced those EXACTLY before the obscuredFrac fix. The values
-    # below are origin/main + that one deliberate correction (partial-obscuration
-    # formula; see the "obscuredFrac" unit test). Since the obscuredFrac edit is the
-    # only delta from the verified-equivalent rewrite, these isolate that fix.
+    # The rewrite reproduced those exactly before the obscuredFrac fix. The
+    # StableRNG baseline below exercises the corrected partial-obscuration path
+    # with a cloud realization that is stable across supported Julia versions.
     sDC = raytrace_summary(disk() + clouds(80, 101), τCutOff=1.0)
     @test !any(isnan, sDC.I)
-    @test isapprox(sDC.flux, 2.0579430970021e6, rtol=1e-9)
+    @test isapprox(sDC.flux, 2.0579449066647638e6, rtol=1e-9)
     @test all(isapprox.(sDC.line,
-        [54265.913923740234, 234483.85358264975, 360127.72516325157,
-         246949.22664271292, 266292.08547965763, 1.0,
-         303694.77223813196, 357323.62727836345, 196442.59312292485,
-         38361.2995706341, 1.0], rtol=1e-8))
+        [1.0, 105092.04795800222, 322399.4485419428,
+         221378.89101676922, 246954.69609633373, 266289.68656407285,
+         107259.08395262505, 196442.57773723497, 357329.38412395125,
+         180536.36862948653, 54261.72204434513], rtol=1e-8))
 
     # Two overlapping continuous disks, uniform weights. origin/main handled a
     # single overlap pair through its main loop (only length(overlaps) > 1 hit
@@ -74,7 +76,7 @@
     s3 = raytrace_summary(disk() + clouds(60, 102) + clouds(40, 103, μ=850.0), τCutOff=1.0)
     @test !any(isnan, s3.I)
     @test isfinite(s3.flux)
-    @test isapprox(s3.flux, 2.0579611782195e6, rtol=1e-8)  # rewrite baseline (origin/main throws on disk+2cloud)
+    @test isapprox(s3.flux, 2.0579620075784149e6, rtol=1e-8)  # rewrite baseline (origin/main throws on disk+2cloud)
 
     # THREE overlapping continuous disks (a chain). This is the case that hit the
     # old `length(overlaps) > 1` recursive branch, where origin/main threw
@@ -108,7 +110,8 @@
     dFluxModel = disk()
     diskFlux = sum(BLR.getVariable(dFluxModel, :I, flatten=true) .*
                    BLR.getVariable(dFluxModel, :ΔA, flatten=true))
-    diskCloud = BLR.raytrace!(disk() + clouds(1, 501, μ=600.0), IRatios=[1.0, 0.25], τCutOff=1.0)
+    # Stable seed 3 places the cloud in the unobscured merged-pixel case.
+    diskCloud = BLR.raytrace!(disk() + clouds(1, 3, μ=600.0), IRatios=[1.0, 0.25], τCutOff=1.0)
     diskCloudFlux = sum(BLR.getVariable(diskCloud, :I, flatten=true) .*
                         BLR.getVariable(diskCloud, :ΔA, flatten=true))
     @test isapprox(diskCloudFlux - diskFlux, 0.25, rtol=1e-8, atol=1e-8)
