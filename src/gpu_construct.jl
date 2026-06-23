@@ -107,7 +107,7 @@ end
     _build_diskwind_modelarrays(rMin, rMax, inc, nr, nϕ, scale, rot, θₒ, Ifun, vfun;
         ηₒ, η₁, αRM, rNorm, backend, T) -> ModelArrays
 
-Allocate the device columns on `backend` and run [`_rt_build_disk_kernel!`](@ref) to fill them, then
+Allocate the device columns on `backend` and run `_rt_build_disk_kernel!` to fill them, then
 wrap as a [`ModelArrays`](@ref). `Ifun`/`vfun` are GPU-safe scalar callables `(r, ϕ, inc) -> value`.
 """
 function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int, nϕ::Int,
@@ -424,7 +424,7 @@ end
     _build_cloud_modelarrays(nClouds, seed; μ, β, F, rₛ, θₒ, γ, ξ, i, rescale,
         ηₒ, η₁, αRM, rNorm, backend, T) -> ModelArrays
 
-Allocate the device columns on `backend` and run [`_rt_build_cloud_kernel!`](@ref) to draw `nClouds`
+Allocate the device columns on `backend` and run `_rt_build_cloud_kernel!` to draw `nClouds`
 clouds (one thread each) into a [`ModelArrays`](@ref).
 """
 function _build_cloud_modelarrays(nClouds::Int, seed::Integer; μ::Real, β::Real, F::Real, rₛ::Real,

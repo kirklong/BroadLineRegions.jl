@@ -14,6 +14,7 @@ include("operators.jl")
 include("raytrace.jl")
 include("gpu_kernels.jl")
 include("gpu_construct.jl")
+include("gpu_raytrace.jl")
 include("gpu_observables.jl")
 export BLR
 end #module BroadLineRegions

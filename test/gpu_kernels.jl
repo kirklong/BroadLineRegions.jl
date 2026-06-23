@@ -404,6 +404,41 @@ end
     @test_throws ArgumentError BLR.residentCloudModel(N, seed; params..., velocity=:bogus)
 end
 
+@testset "device-resident raytrace! (CPU backend)" begin
+    dk(r1, r2; nr=10, nϕ=20, τ=5.0) = BLR.DiskWindModel(r1, r2, 0.4; nr=nr, nϕ=nϕ, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0, τ=τ)
+    cl(n, seed; μ=600.0, τ=0.1) = BLR.cloudModel(n; μ=μ, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=τ, rng=:philox, seed=seed)
+    fluxsum(rm) = sum(filter(isfinite, rm.ma.I .* rm.ma.ΔA))
+
+    # the device-resident pipeline (bin→sort→segment→scan→compact, all on the backend) reproduces the
+    # host raytrace! combine for every topology. Output ordering differs (active pixels then free
+    # clouds), so compare order-independent aggregates: surviving point count, total flux, line profile.
+    function check(builder; rfc=false, IR=1.0)
+        href = BLR.resident(BLR.raytrace!(builder(); IRatios=IR, τCutOff=1.0, raytraceFreeClouds=rfc))
+        rm = BLR.resident(builder(); raytrace=true)
+        @test rm.rt isa BLR.RaytraceMeta
+        rrt = BLR.raytrace!(rm; IRatios=IR, τCutOff=1.0, raytraceFreeClouds=rfc)
+        @test rrt isa BLR.ResidentModel
+        @test length(rrt.ma.I) == length(href.ma.I)
+        @test isapprox(fluxsum(rrt), fluxsum(href); rtol=1e-10)
+        a = BLR.getProfile(href, :line; bins=40).binSums
+        b = BLR.getProfile(rrt, :line; bins=40).binSums
+        @test all((isnan(a[i]) ? isnan(b[i]) : isapprox(a[i], b[i]; rtol=1e-8, atol=1e-10)) for i in eachindex(a, b))
+    end
+    check(() -> dk(300., 900.) + cl(300, 1))                       # disk + clouds (binned)
+    check(() -> cl(300, 1) + dk(300., 900.))                       # order swapped
+    check(() -> dk(250., 700.) + dk(500., 1000.))                  # N-disk overlap (grid union)
+    check(() -> dk(300., 900.) + cl(200, 2) + cl(200, 3, μ=800.))  # 3 submodels
+    check(() -> dk(300., 900.) + cl(300, 4); IR=[1.0, 0.25])       # non-uniform IRatios
+    check(() -> cl(150, 1, μ=300., τ=2.0) + cl(150, 2, μ=320., τ=2.0); rfc=true)  # free clouds (attenuate)
+    check(() -> cl(400, 5, μ=50., τ=3.0) + cl(400, 6, μ=55., τ=3.0); rfc=true)    # dense free-cloud overlaps
+
+    # a handle with no submodels carries no metadata and cannot be device-raytraced
+    @test BLR.resident(dk(300., 900.); raytrace=true).rt === nothing
+    @test_throws ErrorException BLR.raytrace!(BLR.resident(dk(300., 900.)))
+end
+
 @testset "ResidentModel device combine (+)" begin
     disk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=12, nϕ=24, scale=:linear,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,

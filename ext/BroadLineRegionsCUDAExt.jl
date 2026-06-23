@@ -8,9 +8,14 @@ const BLR = BroadLineRegions
 
 BLR.gpu(ma::BLR.ModelArrays) = Adapt.adapt(CUDA.CuArray, ma)
 # User entry point: a device-resident handle (ModelArrays on the GPU + the CUDA backend) that the
-# observable methods (getProfile/getΨ/getΨt/phase/secondMoment) reuse across calls.
-BLR.gpu(m::BLR.model; T=Float32) =
-    BLR.ResidentModel(BLR.gpu(BLR.flatten(m; T=T)), CUDA.CUDABackend(), length(m.subModelStartInds))
+# observable methods (getProfile/getΨ/getΨt/phase/secondMoment) reuse across calls. For combined models
+# (>1 submodel) it also carries device-resident raytrace metadata (output grid + per-point submodel /
+# discrete info) built once here on the host, so `raytrace!(rm)` runs entirely on the GPU.
+function BLR.gpu(m::BLR.model; T=Float32)
+    ma = BLR.gpu(BLR.flatten(m; T=T))
+    meta = length(m.subModelStartInds) > 1 ? Adapt.adapt(CUDA.CuArray, BLR._rt_build_meta(m; T=T)) : nothing
+    return BLR.ResidentModel(ma, CUDA.CUDABackend(), length(m.subModelStartInds), meta)
+end
 # Bare device ModelArrays for the raytrace backend (no wrapper -- the scan needs the columns directly).
 BLR._rt_backend_model_arrays(m::BLR.model, ::CUDA.CUDABackend; T=Float64) = BLR.gpu(BLR.flatten(m; T=T))
 

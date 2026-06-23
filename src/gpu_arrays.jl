@@ -1,6 +1,13 @@
 using Adapt
 using KernelAbstractions
 
+"""
+    ModelArrays{T,V,B}
+
+Flat structure-of-arrays representation of a [`model`](@ref), with one entry per model point for
+geometry, velocity, intensity, response, camera coordinates, and reflection state. This is the common
+host/device payload used by [`resident`](@ref), [`gpu`](@ref), and the resident observable kernels.
+"""
 struct ModelArrays{T<:Real,V<:AbstractVector{T},B<:AbstractVector{Bool}}
     r::V
     ϕ::V
@@ -77,19 +84,28 @@ cpu(ma::ModelArrays) = Adapt.adapt(Array, ma)
 cpu(m::model; T=Float64) = flatten(m; T=T)
 
 """
-    ResidentModel(ma::ModelArrays, backend, nSubModels::Int)
+    ResidentModel(ma::ModelArrays, backend, nSubModels::Int [, rt])
 
 A model held resident on a compute device: a flat [`ModelArrays`](@ref) snapshot plus the
 `KernelAbstractions` backend its columns live on. Built once (`gpu(m)` on the device, or
 [`resident`](@ref) on the CPU) and reused across many observable calls — `getProfile`, `getΨ`,
 `getΨt`, `phase`, `secondMoment` have methods on it that run the GPU kernels without re-flattening or
 re-transferring the model each call.
+
+The optional `rt` field carries device-resident raytrace metadata (output grid + per-point submodel /
+discrete info; see `RaytraceMeta`) so `raytrace!(::ResidentModel)` can run the bin→sort→scan→compact
+entirely on `backend`. It is `nothing` for handles that were not built for raytracing; the observable
+methods ignore it.
 """
-struct ResidentModel{MA<:ModelArrays,B}
+struct ResidentModel{MA<:ModelArrays,B,RT}
     ma::MA
     backend::B
     nSubModels::Int
+    rt::RT
 end
+
+# Back-compat: a handle without raytrace metadata (every existing call site builds one this way).
+ResidentModel(ma::ModelArrays, backend, nSubModels::Int) = ResidentModel(ma, backend, nSubModels, nothing)
 
 """
     resident(m::model; T=Float64, backend=KernelAbstractions.CPU()) -> ResidentModel
@@ -98,10 +114,14 @@ Flatten `m` and wrap it as a [`ResidentModel`](@ref) on `backend`. The default `
 everything on the host — useful for testing the resident pipeline without a GPU. Use `gpu(m)` (with
 CUDA.jl loaded) to build a device-resident handle.
 """
-resident(m::model; T=Float64, backend=KernelAbstractions.CPU()) =
-    ResidentModel(flatten(m; T=T), backend, length(m.subModelStartInds))
+function resident(m::model; T=Float64, backend=KernelAbstractions.CPU(), raytrace::Bool=false)
+    ma = flatten(m; T=T)
+    meta = (raytrace && length(m.subModelStartInds) > 1) ? _rt_build_meta(m; T=T) : nothing
+    return ResidentModel(ma, backend, length(m.subModelStartInds), meta)
+end
 
-cpu(rm::ResidentModel) = ResidentModel(cpu(rm.ma), KernelAbstractions.CPU(), rm.nSubModels)
+cpu(rm::ResidentModel) =
+    ResidentModel(cpu(rm.ma), KernelAbstractions.CPU(), rm.nSubModels, Adapt.adapt(Array, rm.rt))
 
 # Concatenate two flat snapshots column-by-column. `vcat` runs on whatever array type the columns
 # already are, so for device columns (CuArray) it stays on the device — no host round-trip.
@@ -150,6 +170,14 @@ const _RESIDENT_MIX_MSG = string(
 Base.:+(::model, ::ResidentModel) = throw(ArgumentError(_RESIDENT_MIX_MSG))
 Base.:+(::ResidentModel, ::model) = throw(ArgumentError(_RESIDENT_MIX_MSG))
 
+"""
+    gpu(m::model; T=Float32) -> ResidentModel
+    gpu(ma::ModelArrays) -> ModelArrays
+
+Move a host model or flat [`ModelArrays`](@ref) snapshot onto the GPU and return a device-resident
+handle for repeated observable calls. Requires CUDA.jl to be loaded so the package extension can
+provide the CUDA-backed methods.
+"""
 function gpu(::Any; kwargs...)
     error("GPU support requires loading CUDA.jl; use the CUDA extension on feature/gpu-framework Phase B")
 end

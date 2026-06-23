@@ -278,6 +278,31 @@ using KernelAbstractions
             @test maximum(abs.(vc[fin] .- vg[fin])) < 1e-9
         end
 
+        @testset "device-resident raytrace! on CUDABackend" begin
+            dk(r1, r2; nr=16, nϕ=32, τ=5.0) = BLR.DiskWindModel(r1, r2, 0.4; nr=nr, nϕ=nϕ, scale=:linear,
+                I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0, τ=τ)
+            cl(n, seed; μ=600.0, τ=0.1) = BLR.cloudModel(n; μ=μ, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0,
+                ξ=0.8, I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=τ, rng=:philox, seed=seed)
+            function check(builder; rfc=false, IR=1.0)
+                href = BLR.resident(BLR.raytrace!(builder(); IRatios=IR, raytraceFreeClouds=rfc))
+                rmg = BLR.gpu(builder(); T=Float64)            # carries device raytrace metadata
+                @test rmg.rt isa BLR.RaytraceMeta
+                rrt = BLR.raytrace!(rmg; IRatios=IR, raytraceFreeClouds=rfc)
+                @test rrt.ma.r isa CuArray                      # never left the device
+                @test length(rrt.ma.I) == length(href.ma.I)
+                fH = sum(filter(isfinite, href.ma.I .* href.ma.ΔA))
+                fD = sum(filter(isfinite, Array(rrt.ma.I) .* Array(rrt.ma.ΔA)))
+                @test isapprox(fH, fD; rtol=1e-9)
+                a = BLR.getProfile(href, :line; bins=40).binSums
+                b = BLR.getProfile(rrt, :line; bins=40).binSums
+                @test approx_eq(b, a; rtol=1e-8, atol=1e-9)
+            end
+            check(() -> dk(300., 900.) + cl(300, 1))                  # disk + clouds
+            check(() -> dk(250., 700.) + dk(500., 1000.))             # N-disk overlap
+            check(() -> dk(300., 900.) + cl(300, 4); IR=[1.0, 0.25])  # non-uniform IRatios
+            check(() -> cl(150, 1, μ=300., τ=2.0) + cl(150, 2, μ=320., τ=2.0); rfc=true)  # free-cloud attenuate
+        end
+
         @testset "ResidentModel device combine (+) on CUDABackend" begin
             d = BLR.gpuDiskWindModel(311.7, 887.3, 0.4; nr=16, nϕ=32, scale=:log,
                 f1=1.0, f2=0.7, f3=0.2, f4=0.9, α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
