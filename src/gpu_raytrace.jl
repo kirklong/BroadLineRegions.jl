@@ -259,3 +259,94 @@ count changes: one combined point per active output pixel + surviving free cloud
 raytrace!(rm::ResidentModel; IRatios::Union{Float64,Array{Float64,}}=1.0, τCutOff::Float64=1.0,
         raytraceFreeClouds::Bool=false) =
     _rt_resident_raytrace(rm; IRatios=IRatios, τCutOff=τCutOff, raytraceFreeClouds=raytraceFreeClouds)
+
+# ======================================================================================
+# Phase 2: raytrace metadata built ON-DEVICE by the construction path, so a model assembled with
+# residentDiskWindModel/residentCloudModel and combined with `+` can be raytraced without any host
+# build. The output-pixel grid for a single DiskWind submodel is its own camera grid (pixel slot =
+# disk point's flat index, ΔA/α/β = its columns), so the only new on-device array is `pixelKeys`.
+# ======================================================================================
+
+# Per-ring radial cell edges of the DiskWind camera grid (matches `_rt_ring_edges`): nr host values.
+function _rt_diskwind_grid_edges(rMin::Real, rMax::Real, inc::Real, nr::Int, nϕ::Int, scale::Symbol,
+        ::Type{T}) where {T<:Real}
+    scaleLog = scale === :log
+    rStart = scaleLog ? log(rMin * cos(inc)) : rMin * cos(inc)
+    rEnd = scaleLog ? log(rMax) : rMax
+    Δr = (rEnd - rStart) / (nr - 1)
+    rMinRing = Vector{T}(undef, nr)
+    rMaxRing = Vector{T}(undef, nr)
+    for k in 1:nr
+        rCam = scaleLog ? exp(rStart + (k - 1) * Δr) : (rStart + (k - 1) * Δr)
+        ΔrUp = scaleLog ? rCam * (exp(Δr) - 1) : Δr
+        ΔrDown = scaleLog ? min(rCam, rCam * (1 - 1 / exp(Δr))) : min(rCam, Δr)
+        rMinRing[k] = rCam - ΔrDown / 2
+        rMaxRing[k] = rCam + ΔrUp / 2
+    end
+    return rMinRing, rMaxRing, T(2π / nϕ)
+end
+
+# pixelKeys[(k-1)*nϕ + j] = k + (j-1)*nr  (cell (ring k, col j) -> its pixel slot = the disk flat index)
+@kernel function _rt_disk_pixelkeys_kernel!(pixelKeys, nr, nϕ)
+    idx = @index(Global)
+    k = (idx - 1) ÷ nϕ + 1
+    j = (idx - 1) % nϕ + 1
+    pixelKeys[idx] = k + (j - 1) * nr
+end
+
+# RaytraceMeta for a freshly-constructed DiskWind submodel (one grid; no discrete points).
+function _rt_diskwind_meta(ma::ModelArrays, rMin::Real, rMax::Real, inc::Real, nr::Int, nϕ::Int,
+        scale::Symbol, backend, ::Type{T}) where {T<:Real}
+    rMinRing, rMaxRing, Δϕv = _rt_diskwind_grid_edges(rMin, rMax, inc, nr, nϕ, scale, T)
+    pixelStarts = Int[(k - 1) * nϕ + 1 for k in 1:nr]
+    npix = nr * nϕ
+    pixelKeys = KernelAbstractions.allocate(backend, Int, npix)
+    kernel! = _rt_disk_pixelkeys_kernel!(backend)
+    event = kernel!(pixelKeys, nr, nϕ; ndrange=npix)
+    event !== nothing && wait(event)
+    grid = _RaytraceGridArrays{T,typeof(ma.ΔA),typeof(pixelKeys)}(
+        _rt_backend_adapt(rMinRing, ma), _rt_backend_adapt(rMaxRing, ma),
+        _rt_backend_adapt(fill(Δϕv, nr), ma), _rt_backend_adapt(fill(nϕ, nr), ma),
+        _rt_backend_adapt(pixelStarts, ma), pixelKeys)
+    submodel = fill!(KernelAbstractions.allocate(backend, Int, npix), 1)
+    discrete = fill!(KernelAbstractions.allocate(backend, Bool, npix), false)
+    return RaytraceMeta(grid, ma.ΔA, ma.α, ma.β, submodel, discrete, npix)
+end
+
+# RaytraceMeta for a cloud submodel: no output grid (all points discrete). Empty grid arrays so the
+# merge in `+` can adopt a real grid from a continuous submodel on the other side.
+function _rt_cloud_meta(ma::ModelArrays, backend, ::Type{T}) where {T<:Real}
+    n = length(ma.I)
+    emptyT = _rt_backend_adapt(T[], ma)
+    emptyI = _rt_backend_adapt(Int[], ma)
+    grid = _RaytraceGridArrays{T,typeof(emptyT),typeof(emptyI)}(emptyT, emptyT, emptyT, emptyI, emptyI, emptyI)
+    submodel = fill!(KernelAbstractions.allocate(backend, Int, n), 1)
+    discrete = fill!(KernelAbstractions.allocate(backend, Bool, n), true)
+    return RaytraceMeta(grid, emptyT, emptyT, emptyT, submodel, discrete, 0)
+end
+
+_rt_meta_has_grid(meta::RaytraceMeta) = meta.nPixels > 0
+_rt_meta_has_grid(::Nothing) = false
+
+# Merge two handles' raytrace metadata for `+`. The combined output grid is the (single) continuous
+# submodel's grid (pixel slots are independent of point order); submodel indices shift by the left
+# handle's submodel count and discrete flags concatenate. Two continuous grids (disk+disk) would need an
+# on-device grid union -- not done here; combine those on the host (`gpu(m1 + m2)`).
+function _rt_merge_meta(m1, nSub1::Int, m2, nSub2::Int)
+    (m1 === nothing && m2 === nothing) && return nothing
+    g1 = _rt_meta_has_grid(m1)
+    g2 = _rt_meta_has_grid(m2)
+    g1 && g2 && throw(ArgumentError(
+        "combining two continuous (grid) submodels on-device is not supported; build on the host and " *
+        "use `gpu(m1 + m2)` for the device-resident raytrace of multi-disk models"))
+    sub1 = m1 === nothing ? nothing : m1.submodel
+    sub2 = m2 === nothing ? nothing : m2.submodel
+    sub1 === nothing && (sub1 = similar(sub2, 0))
+    sub2 === nothing && (sub2 = similar(sub1, 0))
+    disc1 = m1 === nothing ? similar(sub1, Bool, 0) : m1.discrete
+    disc2 = m2 === nothing ? similar(sub2, Bool, 0) : m2.discrete
+    submodel = vcat(sub1, sub2 .+ nSub1)
+    discrete = vcat(disc1, disc2)
+    src = g1 ? m1 : m2
+    return RaytraceMeta(src.grid, src.pixelΔA, src.pixelα, src.pixelβ, submodel, discrete, src.nPixels)
+end

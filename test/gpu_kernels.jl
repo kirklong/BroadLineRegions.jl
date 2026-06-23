@@ -439,6 +439,46 @@ end
     @test_throws ErrorException BLR.raytrace!(BLR.resident(dk(300., 900.)))
 end
 
+@testset "on-device-built model raytrace! (Phase 2, CPU backend)" begin
+    # residentDiskWindModel/residentCloudModel carry raytrace metadata built ON-DEVICE, and `+` merges
+    # it, so a model assembled with no host `ring`s raytraces end-to-end.
+    rmDisk = BLR.residentDiskWindModel(300.0, 900.0, 0.4; nr=16, nϕ=32, scale=:linear,
+        f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0)
+    rmCl = BLR.residentCloudModel(400, 7; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8)
+    @test rmDisk.rt isa BLR.RaytraceMeta && BLR._rt_meta_has_grid(rmDisk.rt)
+    @test rmDisk.rt.nPixels == 16 * 32
+    @test rmCl.rt isa BLR.RaytraceMeta && !BLR._rt_meta_has_grid(rmCl.rt)
+
+    rm = rmDisk + rmCl
+    @test rm.nSubModels == 2
+    @test rm.rt.nPixels == 16 * 32
+    @test unique(rm.rt.submodel) == [1, 2]
+    @test sum(.!rm.rt.discrete) == 16 * 32 && sum(rm.rt.discrete) == 400   # disk grid pts vs clouds
+
+    rrt = BLR.raytrace!(rm)
+    @test rrt isa BLR.ResidentModel
+    @test all(isfinite, filter(!isnan, rrt.ma.I))
+    @test isfinite(sum(filter(isfinite, rrt.ma.I .* rrt.ma.ΔA)))
+
+    # the on-device disk grid edges match the host DiskWindModel grid exactly (deterministic geometry)
+    mh = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=16, nϕ=32, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0) +
+        BLR.cloudModel(50; μ=600.0, i=0.4, rng=:philox, seed=1)
+    hmeta = BLR._rt_build_meta(mh)
+    @test sort(rmDisk.rt.grid.rMin) ≈ sort(hmeta.grid.rMin)
+    @test sort(rmDisk.rt.grid.rMax) ≈ sort(hmeta.grid.rMax)
+
+    # determinism: same seed -> identical raytrace result
+    rm2 = BLR.residentDiskWindModel(300.0, 900.0, 0.4; nr=16, nϕ=32, scale=:linear, f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0) +
+        BLR.residentCloudModel(400, 7; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8)
+    rrt2 = BLR.raytrace!(rm2)
+    @test sort(rrt2.ma.I) == sort(rrt.ma.I)
+
+    # combining two continuous (grid) submodels on-device is unsupported -> actionable error
+    @test_throws ArgumentError (BLR.residentDiskWindModel(250.0, 700.0, 0.4; nr=8, nϕ=16, scale=:linear, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0) +
+        BLR.residentDiskWindModel(500.0, 1000.0, 0.4; nr=8, nϕ=16, scale=:linear, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0)).rt
+end
+
 @testset "ResidentModel device combine (+)" begin
     disk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=12, nϕ=24, scale=:linear,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,

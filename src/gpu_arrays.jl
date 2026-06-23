@@ -157,7 +157,9 @@ function Base.:+(rm1::ResidentModel, rm2::ResidentModel)
             "  • to combine on the CPU:  cpu(rm) brings a device-resident model back to the host (e.g. `cpu(gpuModel) + cpuModel`)\n",
             "  • to combine on the GPU:  build/move both with gpu(m) (e.g. `gpuModel + gpu(cpu(otherModel))`)")))
     end
-    return ResidentModel(_cat_model_arrays(rm1.ma, rm2.ma), rm1.backend, rm1.nSubModels + rm2.nSubModels)
+    meta = _rt_merge_meta(rm1.rt, rm1.nSubModels, rm2.rt, rm2.nSubModels)
+    return ResidentModel(_cat_model_arrays(rm1.ma, rm2.ma), rm1.backend,
+        rm1.nSubModels + rm2.nSubModels, meta)
 end
 
 # Mixing a host `model` (lives on the CPU) with a device-resident handle is the other "different

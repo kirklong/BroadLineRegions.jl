@@ -190,7 +190,8 @@ function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ
     vfun = velocity === nothing ? _rt_disk_radial_velocity_fn(T, vᵣFrac, inflow, rₛ) : velocity
     ma = _build_diskwind_modelarrays(rMin, rMax, i, nr, nϕ, scale, rot, θₒ, Ifun, vfun;
         ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, backend=backend, T=T)
-    return ResidentModel(ma, backend, 1)
+    meta = _rt_diskwind_meta(ma, rMin, rMax, i, nr, nϕ, scale, backend, T)
+    return ResidentModel(ma, backend, 1, meta)
 end
 
 """
@@ -500,7 +501,7 @@ function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Rea
         useCloudI=(intensity === :cloud), κ=κ, useTurbulent=(velocity === :turbulent),
         σρᵣ=σρᵣ, σρc=σρc, σΘᵣ=σΘᵣ, σΘc=σΘc, θₑ=θₑ, fEllipse=fEllipse, fFlow=fFlow, σₜ=σₜ,
         backend=backend, T=T)
-    return ResidentModel(ma, backend, 1)
+    return ResidentModel(ma, backend, 1, _rt_cloud_meta(ma, backend, T))
 end
 
 """

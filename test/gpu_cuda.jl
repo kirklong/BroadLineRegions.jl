@@ -303,6 +303,25 @@ using KernelAbstractions
             check(() -> cl(150, 1, μ=300., τ=2.0) + cl(150, 2, μ=320., τ=2.0); rfc=true)  # free-cloud attenuate
         end
 
+        @testset "on-device-built model raytrace! (Phase 2) on CUDABackend" begin
+            # build the whole model on the GPU (no host rings), raytrace on the GPU, and confirm it
+            # matches the CPU raytrace of the SAME points (via cpu(rm)) — validates the on-device
+            # metadata + the device raytrace agree across backends.
+            rmG = BLR.residentDiskWindModel(300.0, 900.0, 0.4; nr=16, nϕ=32, scale=:linear,
+                f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0, backend=backend, T=Float64) +
+                BLR.residentCloudModel(400, 7; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8,
+                    backend=backend, T=Float64)
+            @test rmG.rt isa BLR.RaytraceMeta && rmG.ma.r isa CuArray
+            resG = BLR.raytrace!(rmG)
+            @test resG.ma.r isa CuArray                       # stayed on the device
+            resC = BLR.raytrace!(BLR.cpu(rmG))                # same points, CPU backend
+            @test length(resG.ma.I) == length(resC.ma.I)
+            @test isapprox(sort(Array(resG.ma.I)), sort(resC.ma.I); rtol=1e-10)
+            a = BLR.getProfile(resG, :line; bins=40).binSums
+            b = BLR.getProfile(resC, :line; bins=40).binSums
+            @test approx_eq(b, a; rtol=1e-9, atol=1e-10)
+        end
+
         @testset "ResidentModel device combine (+) on CUDABackend" begin
             d = BLR.gpuDiskWindModel(311.7, 887.3, 0.4; nr=16, nϕ=32, scale=:log,
                 f1=1.0, f2=0.7, f3=0.2, f4=0.9, α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
