@@ -617,14 +617,16 @@ Julia 1.12), the measured wall-clock times are:
 
 | approach | time | vs. CPU-only |
 |---|---|---|
-| CPU only — build + `getProfile(:line)` | ~360 ms | 1× |
-| **GPU, build-on-device** (`gpuDiskWindModel`) + profile, **`Float32`** | **~2.2 ms** | **~150–280×** |
-| GPU, build-on-device + profile, `Float64` | ~7.4 ms | ~50× |
+| CPU only — build + `getProfile(:line)` | ~360–720 ms | 1× |
+| **GPU, build-on-device** (`gpuDiskWindModel`) + profile, **`Float32`** | **~2.2 ms** | **~160–330×** |
+| GPU, build-on-device + profile, `Float64` | ~7.5 ms | ~50–95× |
 
 So **building directly on the device is well over two orders of magnitude faster** for this
 build-dominated work (`Float32`), and the gap grows with `nr`/`nϕ` and with the number of clouds —
 most of the win is eliminating the host build + flatten + transfer, not just the kernel compute. (The
-~150–280× spread is CPU-side run-to-run variance; regenerate on your own hardware.)
+CPU time varies run-to-run by roughly 2× here, which is where the spread in the speedup column comes
+from; regenerate on your own hardware. All times are warm/steady-state — the first call in a fresh
+session additionally pays one-time kernel compilation.)
 
 !!! note "When the transfer path `gpu(m)` pays off"
     `gpu(m)` (approach 1) is *not* a shortcut if you are only going to take a single profile of a newly built model — building
