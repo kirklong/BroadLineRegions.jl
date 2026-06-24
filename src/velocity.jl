@@ -88,7 +88,7 @@ Calculate line of sight velocity for cloud in 3D space with potential for ellipt
 - Line of sight velocity (`Float64`)
 """
 function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ::Float64, σΘc::Float64, θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64, 
-    r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, ϕ::Float64, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...) 
+    r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...)
     vc = vCirc(r,rₛ) #flip sign so that right side is negative
     vₜ = rand(rng,Normal(0.0,σₜ))*vc
     ρ = 0.0; Θ = 0.0

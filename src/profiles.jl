@@ -182,8 +182,8 @@ Bin the model into a histogram, where each bin is the integrated value of the yV
 # Arguments
 - `m::model`: Model object to bin
 - `yVariable::Union{String,Symbol,Function}`: Variable to bin
-  - Must be valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
-  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+  - Must be valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
+  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r .* (1 .+ sin.(ring.ϕ) .* ring.i)`
 - `bins::Union{Int,Vector{Float64}}`: Number of bins or bin edges for binning
   - If `Int`: Number of bins with edges equally spaced between min/max of xVariable
   - If `Vector{Float64}`: Specific bin edges, with number of bins = `length(bins)-1`
@@ -294,6 +294,9 @@ Calculate differential phase signal for a model based on specified baselines, mo
 
 The differential phase is calculated by integrating the phase over the model at each velocity bin,
 weighted by the intensity and area of each ring element.
+
+A device-resident method (`phase(::ResidentModel, …)`) runs this on the GPU without re-flattening the
+model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
 function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing, 
     U::Vector{Float64}, V::Vector{Float64}, PA::Float64, BLRAng::Float64, kwargs...)    
@@ -363,6 +366,9 @@ Note that these are moments of the line image only: unlike `phase`, no continuum
   - Average line-integrated squared angular size σ²tot (in rad²)
 - If `returnAvg=false`: `Vector{Tuple{Vector{Float64},Vector{Float64},Vector{Float64},Float64}}` containing:
   - For each baseline, a tuple of bin edges, bin centers, per-channel σ²(v), and line-integrated σ²tot
+
+A device-resident method (`secondMoment(::ResidentModel, …)`) runs this on the GPU without re-flattening
+the model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
 function secondMoment(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
     U::Vector{Float64}, V::Vector{Float64}, PA::Float64, BLRAng::Float64, kwargs...)
@@ -449,6 +455,9 @@ Return a profile for the model based on the specified name.
 # Returns
 - `profile`: A profile object containing bin edges, bin centers, and binned sums.
   Assign to a model object using `setProfile!` to store the profile in the model.
+
+A device-resident method (`getProfile(::ResidentModel, …)`) runs this on the GPU without re-flattening
+the model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
 function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{Int,Vector{Float64}}=100, dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
     n = Symbol(name); p = nothing;

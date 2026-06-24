@@ -68,10 +68,10 @@ _rt_resident_delays(rm::ResidentModel) = _rt_transfer_delays(rm.ma; backend=rm.b
 """
     getProfile(rm::ResidentModel, name; bins=100, dx=nothing, kwargs...) -> profile
 
-GPU-resident `getProfile`. Supports `:line`, `:delay`, `:r`, `:ϕ`, `:phase`, `:moment2`, and a custom
-`Function`, matching the host `getProfile(::model, …)` semantics (binnedSum's left-exclusive bins).
-`dx` is not supported on the resident path (the model's `ΔA` is always used); pass a host `model` for
-custom integration elements.
+GPU-resident `getProfile`. Supports `:line`, `:delay`, `:r`, `:ϕ`, `:phase`, and `:moment2`, matching the
+host `getProfile(::model, …)` semantics (binnedSum's left-exclusive bins). Custom-`Function` profiles and a
+custom `dx` integration element are not supported on the resident path (the model's `ΔA` is always used);
+pass a host `model` for either.
 """
 function getProfile(rm::ResidentModel, name::Union{String,Symbol,Function}; bins=100,
         dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
@@ -108,8 +108,9 @@ end
 """
     getΨt(rm::ResidentModel, tEdges::AbstractVector, overflow::Bool=false) -> Ψt
 
-GPU-resident 1D transfer function Ψ(t); uniform `tEdges` only. Matches the host `getΨt` (left-inclusive
-delay bins, empty/NaN-poisoned bins floored to 1e-30, optional overflow into the edge bins).
+GPU-resident 1D transfer function Ψ(t); uniform `tEdges` only. Matches the host `getΨt` (binnedSum's
+left-exclusive interior-edge convention, empty/NaN-poisoned bins floored to 1e-30, optional overflow into
+the edge bins).
 """
 function getΨt(rm::ResidentModel, tEdges::AbstractVector, overflow::Bool=false)
     ma = rm.ma
@@ -157,11 +158,12 @@ function phase(rm::ResidentModel; returnAvg::Bool=false, offAxisInds::Union{Noth
     X = ma.α .* eltype(ma.I)(BLRAng); Y = ma.β .* eltype(ma.I)(BLRAng)
     w = ma.I .* ma.ΔA
     inds = isnothing(offAxisInds) ? collect(1:length(U)) : offAxisInds
+    # The line profile and its normalization don't depend on the baseline (U/V), so build them once.
+    edges, centers, LP = _rt_resident_binsum(rm, ma.v, w, bins; kwargs...)
+    norm = maximum(LP)
     results = map(inds) do k
         Ui = U[k]; Vi = V[k]
         U′ = cos(PA)*Ui + sin(PA)*Vi; V′ = -sin(PA)*Ui + cos(PA)*Vi
-        edges, centers, LP = _rt_resident_binsum(rm, ma.v, w, bins; kwargs...)
-        norm = maximum(LP)
         proj = eltype(ma.I)(-2π) .* (X .* eltype(ma.I)(U′) .+ Y .* eltype(ma.I)(V′)) .* w .* eltype(ma.I)(1e6)
         _, _, Δϕ = _rt_resident_binsum(rm, ma.v, proj, edges; kwargs...)
         (edges, centers, (Δϕ ./ norm) ./ (1.0 .+ LP ./ norm))

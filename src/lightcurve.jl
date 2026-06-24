@@ -12,9 +12,7 @@ Generate a damped random walk continuum lightcurve following [MacLeod+2010](http
 - `C::Vector{Float64}`: damped random walk array corresponding to times t
 """
 function DRW(;t::Array{Float64}=collect(range(0,stop=100,length=1001)), μ::Float64=0.0, τ::Float64=1.0, σ::Float64=0.1)
-    if nt == 0
-        nt = length(t)
-    end
+    nt = length(t)
     SF∞ = √2*σ #eq 4 of https://iopscience.iop.org/article/10.1088/0004-637X/721/2/1014/pdf
     C = zeros(nt)
     C[1] = μ + rand(Normal(0,σ)) #first point
@@ -47,8 +45,8 @@ function syntheticLC(Ct,CLC,Ψτ;tStart=0.0,normalize=false) #assumes Ψτ is al
     elseif length(Ψτ) > length(t)
         Ψτ = Ψτ[1:length(t)] #truncate Ψτ to match t length
     end
-    C = C./maximum(C)
-    span = maximum(C) - minimum(C) 
+    C = CLC./maximum(CLC)
+    span = maximum(C) - minimum(C)
     ΔC = C .- C[1]
     ΔC = ΔC ./ span #make span 1, normalize to first point so that + = brighter and - = dimmer
     function LC(t,Ψτ,ΔC) #ΔLC variations at times t following formula for convolution of transfer function with continuum variations
