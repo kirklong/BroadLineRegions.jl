@@ -527,6 +527,152 @@ Which produces the following plot:
 !!! note
     If you want the default 3D visualizations to work correctly, define your points in the x-y plane and then rotate them into 3D space using [`rotate3D`](@ref BLR.rotate3D) as this is what [`plot3d`](@ref BLR.plot3d) calls on points to make the 3D visualizations. This should not affect any science use case if you opt to initialize the points some other way (like in the quick example above).
 
+## Running on the GPU
+
+As of version 0.3.0, `BroadLineRegions.jl` can now generate/port models to the GPU (only tested on NVIDIA for now) for significant performance gains on some workflows.
+Below we repeat the CM96 example from above showcasing how to access these capabilities and the kind of 
+performance gains one might expect from using `BroadLineRegions.jl` on your GPU. 
+First, we must load `CUDA.jl` alongside `BroadLineRegions` to enable these features:
+
+```julia
+using BroadLineRegions, CUDA
+```
+
+!!! note "Float32 by default"
+    The GPU entry points default to `Float32` (`T=Float32`) because consumer (GeForce) cards run
+    `Float64` at roughly 1/64 the `Float32` rate. `Float32` is plenty for most line-profile and
+    transfer-function work; pass `T=Float64` if you are on a data-center card or need the extra
+    precision.
+
+Following the [CM96](#Reproducing-the-line-profile-and-transfer-function-shown-in-CM96) disk model from the
+top of this page, we can modify this slightly to showcase two ways to get this model onto the GPU instead of the CPU: 
+
+**(1) Build on the CPU, then transfer.** Construct the model exactly as before and hand it to
+[`gpu`](@ref BLR.gpu), which returns a *device-resident handle* you can call the observable functions
+on directly:
+
+```julia
+mCM96 = BLR.DiskWindModel(3000.,100.,1.,75/180*π,
+        nr=2048,nϕ=1024,scale=:log,f1=1.0,f2=1.0,f3=0.0,f4=0.0,
+        I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,τ=5.0,reflect=false) #same as before
+
+mGPU = BLR.gpu(mCM96)                 #device-resident handle (ModelArrays on the GPU)
+p = BLR.getProfile(mGPU, :line, bins=101)
+tEdges = collect(range(0.0,stop=20.0/rsDay,length=101)) #will generate 100 bins, convert 20 days upper limit to units of rs
+vEdges = collect(range(-0.04,stop=0.04,length=101)) #0.04c ~12*1e8 cm/s
+Ψ = BLR.getΨ(mGPU, vEdges, tEdges)   #same vEdges/tEdges as the CM96 example
+```
+
+The handle is built once and reused across as many observable calls as you like — nothing is
+re-flattened or re-copied per call. Results come back as ordinary host arrays/`profile`s, identical in
+shape to the CPU versions. You can call any observable/`raytrace!` on the model and will see a performance gain 
+for each of these common function calls that can exploit the GPU. But note that you do pay a penalty to 
+transfer the model from the CPU to the GPU, thus to see performance gains in this kind of scenario requires that 
+the models be large (such that calculating observables/raytracing takes a long time on the CPU) or that you calculate 
+many quantities after model creation (i.e. calling `getProfile` many times).
+
+**(2) Build directly on the device.** For the built-in DiskWind/cloud model physics you can skip the host model
+entirely and construct everything instead directly *on the GPU* with [`gpuDiskWindModel`](@ref
+BLR.gpuDiskWindModel) (note there similarly exists a [`gpuCloudModel`](@ref BLR.gpuCloudModel) function as well). 
+This is the fastest path for fitting where models are constantly reconstructed from new parameters, since it never allocates host `ring`s, flattens,
+or transfers. To generate the same example as before but on GPU directly we thus can write:
+
+```julia
+mGPU = BLR.gpuDiskWindModel(3000.,100.,1.0,75/180*π;          #(r̄, rFac, α, i) as in CM96
+        nr=2048,nϕ=1024,scale=:log,f1=1.0,f2=1.0,f3=0.0,f4=0.0,τ=5.0)
+p = BLR.getProfile(mGPU, :line, bins=101)
+tEdges = collect(range(0.0,stop=20.0/rsDay,length=101)) #will generate 100 bins, convert 20 days upper limit to units of rs
+vEdges = collect(range(-0.04,stop=0.04,length=101)) #0.04c ~12*1e8 cm/s
+Ψ = BLR.getΨ(mGPU, vEdges, tEdges) #same vEdges/tEdges as in the CM96 example
+```
+
+If for some reason you want the model back on the CPU, this can easily be accomplished with:
+```julia
+mCPU = BLR.cpu(mGPU)
+```
+But note that in doing so this model object will hold the flattened array shape required to build it on the GPU and not the standard `ring` structs used 
+on models created on the CPU. 
+
+How much of a performance gain does this get us? We can time the end-to-end "build a model and get its line profile" for each approach (use
+`CUDA.@sync` so the GPU work actually completes before the timer stops):
+
+```julia
+#CPU only: build host model + profile
+@time begin
+    m = BLR.DiskWindModel(3000.,100.,1.,75/180*π,nr=2048,nϕ=1024,scale=:log,
+            f1=1.0,f2=1.0,f3=0.0,f4=0.0,τ=5.0)
+    BLR.getProfile(m, :line, bins=101)
+end
+
+#GPU, build-on-device: build resident model + profile
+@time CUDA.@sync begin
+    mGPU = BLR.gpuDiskWindModel(3000.,100.,1.0,75/180*π;nr=2048,nϕ=1024,scale=:log,
+            f1=1.0,f2=1.0,f3=0.0,f4=0.0,τ=5.0)
+    BLR.getProfile(mGPU, :line, bins=101)
+end
+```
+
+On a laptop with an AMD Ryzen 9 HX 370 CPU and RTX 5070 Ti GPU for this scenario (`nr=2048`, `nϕ=1024`, total grid size ≈ 2.1M points, 101-bin `:line` profile,
+Julia 1.12), the measured wall-clock times are:
+
+| approach | time | vs. CPU-only |
+|---|---|---|
+| CPU only — build + `getProfile(:line)` | ~360 ms | 1× |
+| **GPU, build-on-device** (`gpuDiskWindModel`) + profile, **`Float32`** | **~2.2 ms** | **~150–280×** |
+| GPU, build-on-device + profile, `Float64` | ~7.4 ms | ~50× |
+
+So **building directly on the device is well over two orders of magnitude faster** for this
+build-dominated work (`Float32`), and the gap grows with `nr`/`nϕ` and with the number of clouds —
+most of the win is eliminating the host build + flatten + transfer, not just the kernel compute. (The
+~150–280× spread is CPU-side run-to-run variance; regenerate on your own hardware.)
+
+!!! note "When the transfer path `gpu(m)` pays off"
+    `gpu(m)` (approach 1) is *not* a shortcut if you are only going to take a single profile of a newly built model — building
+    the host model, flattening it, and copying it to the device costs more than just evaluating the
+    profile on the CPU (≈ 4 s here, slower than CPU-only). Its value is **reuse**: once a model is
+    resident on the GPU, each *additional* observable call is at least ~15× faster than the equivalent CPU implementation.
+    Thus use `gpu(m)` when you will make many observable calls on one model, or when trying to 
+    implement custom physics that are not easily ported to the GPU; otherwise just use `gpuDiskWindModel`/`gpuCloudModel` when you
+    rebuild "standard" geometries every iteration.
+
+### Custom intensity / velocity on the GPU
+
+`gpuDiskWindModel` accepts custom physics, as long as it can run inside a kernel — pass `intensity` (or
+`velocity`) as a **GPU-safe scalar callable** `(r, ϕ, inc) -> value` that closes only over `isbits`
+values. For example, for a disk with uniform emissivity (every point set to `1`):
+
+```julia
+mGPU = BLR.gpuDiskWindModel(3000.,100.,1.0,75/180*π;nr=2048,nϕ=1024,scale=:log,
+        intensity = (r,ϕ,inc) -> 1.0f0,    # GPU-safe scalar I(r,ϕ,inc); use 1.0f0 for Float32
+        τ=5.0)
+p = BLR.getProfile(mGPU, :line, bins=101)
+```
+
+A *general* `Function` that cannot run in a kernel (closures over arrays, calls into
+non-GPU libraries, etc.) should instead be used to build the model on the CPU and then moved over with
+`BLR.gpu(m)`. For a more detailed worked example of the `(r, ϕ, inc) -> value` form to model your own physics on, see the built-in
+GPU-safe closures: [`_rt_disk_intensity_fn`](@ref BLR._rt_disk_intensity_fn) (the device intensity, a
+direct port of the CPU [`DiskWind_I_`](@ref BLR.DiskWind_I_)) and
+[`_rt_disk_velocity_fn`](@ref BLR._rt_disk_velocity_fn) /
+[`_rt_disk_radial_velocity_fn`](@ref BLR._rt_disk_radial_velocity_fn) for an example velocity calculation.
+
+
+### Summary of everything else that works on the GPU
+
+The device-resident handle is a drop-in for the observables described above: [`getProfile`](@ref
+BLR.getProfile) (`:line`, `:delay`, `:r`, `:ϕ`, `:phase`, `:moment2`), [`getΨ`](@ref BLR.getΨ),
+[`getΨt`](@ref BLR.getΨt), [`phase`](@ref BLR.phase), and [`secondMoment`](@ref BLR.secondMoment) all
+have methods on it, which work automatically just as they would on a CPU hosted model and with the same syntax. 
+Combined models work too: build each submodel on the device (or copy them there) and add them with `+`
+(e.g. `BLR.gpuDiskWindModel(...) + BLR.gpuCloudModel(...)`) just as before, then [`raytrace!`](@ref BLR.raytrace!) the
+combined model if desired — all without leaving the GPU. Bring any handle back
+to the host with `BLR.cpu(mGPU)`. Two caveats on the resident GPU paths: they require **uniform** bin edges
+(pass an `Int` bin count or uniformly spaced edges), and do not accept a custom `dx` integration
+element — use the host `model` for those. See [`gpu`](@ref BLR.gpu), [`gpuDiskWindModel`](@ref
+BLR.gpuDiskWindModel), [`gpuCloudModel`](@ref BLR.gpuCloudModel), and [`residentDiskWindModel`](@ref
+BLR.residentDiskWindModel)/[`residentCloudModel`](@ref BLR.residentCloudModel) (CPU-backend builds, handy
+for testing the pipeline without a GPU) in the [API](@ref) for the full set of options.
+
 ## Additional (selected) helpful tools from the [API](@ref) not described above
 
 After combining submodels, access their constituent parts by simply writing:
