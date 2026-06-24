@@ -108,11 +108,15 @@ end
 ResidentModel(ma::ModelArrays, backend, nSubModels::Int) = ResidentModel(ma, backend, nSubModels, nothing)
 
 """
-    resident(m::model; T=Float64, backend=KernelAbstractions.CPU()) -> ResidentModel
+    resident(m::model; T=Float64, backend=KernelAbstractions.CPU(), raytrace=false) -> ResidentModel
 
 Flatten `m` and wrap it as a [`ResidentModel`](@ref) on `backend`. The default `CPU()` backend keeps
 everything on the host — useful for testing the resident pipeline without a GPU. Use `gpu(m)` (with
 CUDA.jl loaded) to build a device-resident handle.
+
+Pass `raytrace=true` to attach the metadata that `raytrace!(::ResidentModel)` needs. It is only built for
+host models with more than one submodel (single-submodel handles keep `rt === nothing`); on-device
+constructors carry their own metadata for later combination via `+`.
 """
 function resident(m::model; T=Float64, backend=KernelAbstractions.CPU(), raytrace::Bool=false)
     ma = flatten(m; T=T)
@@ -145,9 +149,9 @@ both live on the GPU the `vcat`s stay on the device, so this is the fast path fo
 without a host round-trip. Mirrors `+(::model, ::model)`: submodels are stacked and `nSubModels` adds.
 Both handles must share the same backend type and element type.
 
-Like the host `+`, this does **not** raytrace (no optical-depth combination) — it is the on-device
-analogue of stacking submodels. Raytrace on the host (`raytrace!(m1 + m2; backend=…)`) if you need the
-τ-scan.
+Like the host `+`, this stacks submodels without raytracing, but it **does** preserve raytrace metadata
+when both operands carry it (merged via `_rt_merge_meta`). Use `raytrace!(rm)` for the device-resident
+τ-scan, or host `raytrace!(m1 + m2; backend=…)` for the one-shot host-orchestrated path.
 """
 function Base.:+(rm1::ResidentModel, rm2::ResidentModel)
     if typeof(rm1.backend) != typeof(rm2.backend)
@@ -181,5 +185,5 @@ handle for repeated observable calls. Requires CUDA.jl to be loaded so the packa
 provide the CUDA-backed methods.
 """
 function gpu(::Any; kwargs...)
-    error("GPU support requires loading CUDA.jl; use the CUDA extension on feature/gpu-framework Phase B")
+    error("GPU support requires CUDA.jl — run `using CUDA` (with a functional CUDA device) to activate the BroadLineRegions CUDA extension")
 end

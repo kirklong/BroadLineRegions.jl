@@ -20,6 +20,9 @@ response(r::Float64, ηₒ::Float64, η₁::Float64, αRM::Float64, rNorm::Float
     getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
 
 Calculate the 2D transfer function Ψ for a model `m` over specified velocity and time bins, whose edges are given by `vEdges` and `tEdges`.
+
+A device-resident method (`getΨ(::ResidentModel, …)`) runs this on the GPU without re-flattening the
+model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
 function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
     I = getVariable(m,:I)
@@ -84,6 +87,9 @@ end
 
 Calculate the 1D transfer function Ψ(t) for a model `m` over specified time edges `tEdges`.
 The `overflow` parameter determines whether to include contributions from delays outside the specified edges in the edge bins.
+
+A device-resident method (`getΨt(::ResidentModel, …)`) runs this on the GPU without re-flattening the
+model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
 function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
     I = getVariable(m,:I)

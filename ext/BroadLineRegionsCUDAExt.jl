@@ -24,8 +24,8 @@ BLR._rt_backend_model_arrays(m::BLR.model, ::CUDA.CUDABackend; T=Float64) = BLR.
 # ~1/64 rate). Mirrors `residentDiskWindModel` with `backend=CUDABackend()`.
 BLR.gpuDiskWindModel(rMin::Real, rMax::Real, i::Real; T=Float32, kwargs...) =
     BLR.residentDiskWindModel(rMin, rMax, i; backend=CUDA.CUDABackend(), T=T, kwargs...)
-BLR.gpuDiskWindModel(r̄::Real, rFac::Real, Sα::Real, i::Real; T=Float32, kwargs...) =
-    BLR.residentDiskWindModel(r̄, rFac, Sα, i; backend=CUDA.CUDABackend(), T=T, kwargs...)
+BLR.gpuDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; T=Float32, kwargs...) =
+    BLR.residentDiskWindModel(r̄, rFac, α, i; backend=CUDA.CUDABackend(), T=T, kwargs...)
 
 # On-device cloud construction (counter-based Philox substreams, no host rings). Float32 default.
 BLR.gpuCloudModel(nClouds::Int, seed::Integer; T=Float32, kwargs...) =

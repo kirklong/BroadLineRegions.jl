@@ -738,15 +738,17 @@ end
 
 Perform raytracing for a model, combining overlapping components along line of sight.
 
-!!! warning "Slow"
-    This function not very performant and can take a long time to combine large models.
-    Consider using [`removeDiskObscuredClouds!`](@ref BLR.removeDiskObscuredClouds!) for
-    simple disk obscuration removal if you do not need full raytracing.
-
 This function should be called after combining all relevant models (i.e. `mCombined = m1 + m2 + m3...`).
-It performs raytracing in discrete steps (no absorption, only adding intensity in chunks along
-the line of sight until maximum optical depth `τ` is reached) and generates a new model object
-with extraneous points removed. Note that this function will mutate the input model objects.
+Points are binned by pixel, sorted front-to-back along the line of sight, and combined with a segmented
+`exp(-τ)` scan: each point attenuates those behind it, points past `τCutOff` are dropped, and `IRatios`
+is applied as a global per-submodel weight. A new model object is returned with the extraneous points
+removed. Note that this function will mutate the input model objects.
+
+!!! note "Algorithm / performance"
+    The bin→sort→segmented-scan implementation is far faster than the original brute-force raytracer (and
+    can also run on a device via `backend`). If you only need simple disk obscuration removal rather than
+    full attenuation, [`removeDiskObscuredClouds!`](@ref BLR.removeDiskObscuredClouds!) is a lighter
+    alternative.
 
 # Arguments
 - `m::model`: Model to raytrace

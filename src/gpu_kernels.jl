@@ -390,6 +390,7 @@ function _rt_grid_arrays(grids::Vector{_RaytraceGrid}; T=Float64)
     return _RaytraceGridArrays{T,Vector{T},Vector{Int}}(rMin, rMax, Δϕ, nϕ, pixelStarts, pixelKeys)
 end
 
+# Test-only oracle: CPU reference for the GPU bin keys (used by test/gpu_*.jl, no src/ callers).
 function _rt_reference_pixel_keys(points::Vector{_RaytracePoint}, grids::Vector{_RaytraceGrid})
     return [_rt_find_pixel(p, grids) for p in points]
 end
@@ -448,6 +449,7 @@ function _rt_sortperm_by_key_depth(ma::ModelArrays, keys::AbstractVector{Int})
     return _rt_sortperm_by_key_depth(keys, ma.x)
 end
 
+# Test-only oracle: CPU reference for the GPU sort order (used by test/gpu_*.jl, no src/ callers).
 function _rt_sorted_key_depth_pairs(keys::AbstractVector{Int}, x::AbstractVector, perm::AbstractVector{Int})
     return [(keys[i], _rt_sort_depth(x[i])) for i in perm]
 end

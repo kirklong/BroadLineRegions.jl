@@ -693,7 +693,7 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `nClouds::Int64`: Number of clouds
 - `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``)
 - `β::Float64=1.0`: Shape parameter for radial distribution
-- `F::Float64=0.5`: Minimum fraction of maximum radius where clouds can be placed
+- `F::Float64=0.5`: Beginning radius in units of μ where clouds can be placed
 - `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``)
 - `θₒ::Float64=π/2`: Maximum opening angle of cloud distribution (rad)
 - `γ::Float64=1.0`: Disk concentration parameter
@@ -710,8 +710,8 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `model` object
 
 # Note
-Similar to other `cloudModel` method but here random values are generated for `ϕ₀`, `rot`, and `θₒ` ,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
-while keeping `i` constant for the system.
+Similar to the other `cloudModel` methods, but here the per-cloud `ϕ₀`, `rot`, and `θₒ` values are drawn
+internally (one independent stream per cloud) while `i` is held constant for the system.
 """
 function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, 
     I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud,

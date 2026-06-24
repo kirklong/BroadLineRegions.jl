@@ -196,7 +196,7 @@ end
 
 """
     gpuDiskWindModel(rMin, rMax, i; T=Float32, kwargs...) -> ResidentModel
-    gpuDiskWindModel(r̄, rFac, Sα, i; T=Float32, kwargs...) -> ResidentModel
+    gpuDiskWindModel(r̄, rFac, α, i; T=Float32, kwargs...) -> ResidentModel
 
 Build a DiskWind model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the CUDA
 counterpart of [`residentDiskWindModel`](@ref), defaulting to `Float32` (GeForce FP64 is ~1/64 rate).
@@ -205,17 +205,17 @@ Requires CUDA.jl loaded (defined by the CUDA package extension); errors otherwis
 function gpuDiskWindModel end
 
 """
-    residentDiskWindModel(r̄, rFac, Sα, i; rot=0.0, nr=128, nϕ=256, scale=:log, kwargs...) -> ResidentModel
+    residentDiskWindModel(r̄, rFac, α, i; rot=0.0, nr=128, nϕ=256, scale=:log, kwargs...) -> ResidentModel
 
-`r̄`/`rFac`/`Sα` parameterization (matching `DiskWindModel(r̄, rFac, α, i; ...)`): derives `rMin`/`rMax`
-via [`get_rMinMaxDiskWind`](@ref) and sets the intensity power-law `α = Sα`.
+`r̄`/`rFac`/`α` parameterization (matching `DiskWindModel(r̄, rFac, α, i; ...)`): derives `rMin`/`rMax`
+via [`get_rMinMaxDiskWind`](@ref) and sets the intensity power-law to `α`.
 """
-function residentDiskWindModel(r̄::Real, rFac::Real, Sα::Real, i::Real; rot::Real=0.0,
+function residentDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; rot::Real=0.0,
         nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
-    (Sα != 1 / 2 && Sα != 3 / 2) || throw(ArgumentError("Sα cannot be 1/2 or 3/2 (divides by zero)"))
+    (α != 1 / 2 && α != 3 / 2) || throw(ArgumentError("α cannot be 1/2 or 3/2 (divides by zero)"))
     r̄ > 0 || throw(ArgumentError("r̄ must be greater than 0"))
-    rMin, rMax = get_rMinMaxDiskWind(Float64(r̄), Float64(rFac), Float64(Sα))
-    return residentDiskWindModel(rMin, rMax, i; nr=nr, nϕ=nϕ, scale=scale, rot=rot, α=Sα, kwargs...)
+    rMin, rMax = get_rMinMaxDiskWind(Float64(r̄), Float64(rFac), Float64(α))
+    return residentDiskWindModel(rMin, rMax, i; nr=nr, nϕ=nϕ, scale=scale, rot=rot, α=α, kwargs...)
 end
 
 # ======================================================================================

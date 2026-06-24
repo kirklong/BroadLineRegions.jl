@@ -219,8 +219,8 @@ Retrieve elements from model object and stack them into matrices for easy manipu
 - `m::model`: Model object to extract variables from
 - `variable::Union{String,Symbol,Function}`: Variable to extract from model
   - If `String`, will be converted to `Symbol`
-  - Must be a valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
-  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+  - Must be a valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
+  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r .* (1 .+ sin.(ring.ϕ) .* ring.i)`
 - `flatten::Bool=false`: If true, flatten the result to a vector
 
 # Returns
@@ -473,8 +473,8 @@ Generate an image of the model where the color of each point is determined by th
 - `m::model`: Model object to extract variable from
 - `variable::Union{String,Symbol,Function}`: Variable to extract from model
   - If `String`, will be converted to `Symbol`
-  - Must be a valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
-  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+  - Must be a valid attribute of `model.rings` (e.g. `:I`, `:v`, `:r`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
+  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r .* (1 .+ sin.(ring.ϕ) .* ring.i)`
 
 # Keywords
 - Additional keyword arguments are passed to `Plots.plot`
@@ -731,7 +731,8 @@ end
 """
     midPlaneXZ(x::Float64, i::Float64) -> Float64
 
-midPlaneXZ(x,i) = -x*cot(i)
+Height of the disk mid-plane in the x–z plane at camera coordinate `x` for inclination `i`; used to
+decide cloud reflection.
 """
 midPlaneXZ(x,i) = -x*cot(i)
 
@@ -747,8 +748,8 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
 - `m::model`: Model object to plot
 - `variable::Union{String,Symbol,Function}=nothing`: Variable to color the points by
   - If `String`, will be converted to `Symbol`
-  - Must be a valid attribute of `model.rings` (e.g., `:I`, `:v`, `:r`, `:e`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
-  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r*(1 .+ sin.(ring.ϕ).*ring.i))`
+  - Must be a valid attribute of `model.rings` (e.g., `:I`, `:v`, `:r`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
+  - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r .* (1 .+ sin.(ring.ϕ) .* ring.i)`
   - If not provided, defaults to `nothing` (no coloring)
 - `annotate::Bool=true`: Whether to annotate the camera position and model orientation in the plot
 - `kwargs...`: Additional keyword arguments passed to `Plots.plot`
