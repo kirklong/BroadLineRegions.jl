@@ -474,6 +474,7 @@ end
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
+include("recipes.jl")
 
 # GPU correctness tests are opt-in: they need a CUDA device and the CUDA.jl weak dependency in the
 # active environment. Run with `BLR_TEST_CUDA=1` from an env that has CUDA.jl available.
