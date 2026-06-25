@@ -484,23 +484,23 @@ Generate an image of the model where the color of each point is determined by th
 """
 @userplot Image #note that then to call this method use lowercase, i.e. image(m,"I") -- PROBLEM: this doesn't actually loop through each x and y point -- need to collapse them into 1D arrays? 
 @recipe function f(img::Image)
-    model, variable = nothing, nothing
+    model, variable = nothing, :I #default variable is intensity
     if length(img.args) == 2
         model, variable = img.args
     elseif length(img.args) == 1
-        model = img.args
-        variable = :I #default variable is intensity
+        model = img.args[1]
     else
         throw(ArgumentError("expected up to 2 arguments (model, [variable]), got $(img.args)"))
     end
-    model, variable = img.args
+    # getVariable and _camera_αβ both dispatch on `model` vs `ResidentModel`, so this body is shared.
     z = vec(getVariable(model,variable))
+    α, β = _camera_αβ(model)
     seriestype := :scatter
     marker_z := z
     markerstrokewidth --> 0.0
     markersize --> 1.
-    x := vec(model.camera.α)
-    y := vec(model.camera.β)
+    x := vec(α)
+    y := vec(β)
     xlabel --> "α [rₛ]"
     ylabel --> "β [rₛ]"
     title --> "Image of $variable"
@@ -741,23 +741,25 @@ function geometry(ring) #for 3d visualzation of model geometry
 end
 """
     plot3d(m::model, [variable], [annotate], [kwargs...])
+    plot3d(rm::ResidentModel, [variable], [annotate], [kwargs...])
 
-Generate a 3D plot of the model geometry, optionally colored by a variable.
+Generate a 3D plot of the model geometry, optionally colored by a variable. Accepts a host `model` or a
+[`ResidentModel`](@ref) (its flat columns are copied to the host; the cached `x/y/z` are used directly).
 
 ## Parameters
-- `m::model`: Model object to plot
+- `m::model` / `rm::ResidentModel`: Model object to plot
 - `variable::Union{String,Symbol,Function}=nothing`: Variable to color the points by
   - If `String`, will be converted to `Symbol`
   - Must be a valid attribute of `model.rings` (e.g., `:I`, `:v`, `:r`, `:i`, `:ϕ`) or a function that can be applied to `model.rings`
   - Example: Keplerian disk time delays could be calculated like `t(ring) = ring.r .* (1 .+ sin.(ring.ϕ) .* ring.i)`
-  - If not provided, defaults to `nothing` (no coloring)
+  - If not provided, defaults to `nothing` (no coloring). For a `ResidentModel`, a `Function` variable is not supported (pass a column `Symbol`); a combined (multi-submodel) `ResidentModel` must carry raytrace metadata (build it with `raytrace=true`) so the series can be split per submodel.
 - `annotate::Bool=true`: Whether to annotate the camera position and model orientation in the plot
 - `kwargs...`: Additional keyword arguments passed to `Plots.plot`
 
 ## Returns
 - `p::Plots.plot`: 3D plot of the model geometry, optionally colored by the variable provided
 """
-@userplot Plot3d #note that then to call this method use lowercase, i.e. plot3d(m,"I") -- WIP need to make more general for combined Models -- do in 2 steps if isCombined? just call twice
+@userplot Plot3d #call via lowercase, i.e. plot3d(m,"I"); accepts a host `model` or a ResidentModel, combined or not (series are split per submodel by _plot3d_submodels)
 @recipe function f(p::Plot3d)
     xlabel --> "x [rₛ]"
     ylabel --> "y [rₛ]"
@@ -787,54 +789,30 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
         throw(ArgumentError("expected 1, 2, or 3 arguments, got $(length(p.args))"))
     end
     variable = isa(variable,Function) ? variable : Symbol(variable)
-    isCombined = length(model.subModelStartInds) > 1 #check if model is combined
-    startInds = model.subModelStartInds
-    diskFlags = [typeof(model.rings[i].I) != Float64 for i in startInds] 
-    mList = [deepcopy(model[i]) for i=1:length(startInds)]
-    title --> (variable == geometry ? "System geometry visualization" : "System geometry + $variable (color) visualization")
-    boxSizeGlobal = 0.0
-    for (mInd,model) in enumerate(mList)
-        i = getVariable(model,:i)
-        r = getVariable(model,:r)
-        ϕ₀ = getVariable(model,:ϕ₀)
-        xtmp = zeros(size(ϕ₀))
-        ytmp = zeros(size(ϕ₀))
-        ztmp = zeros(size(ϕ₀))
-        if typeof(r) == Matrix{Float64} && typeof(ϕ₀) == Matrix{Float64}
-            for ii in 1:size(r)[1]
-                for jj in 1:size(r)[2]
-                    rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D_scalar(r[ii,jj],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect)
-                end
-            end
-        elseif typeof(r) == Vector{Float64} && typeof(ϕ₀) == Matrix{Float64}
-            for ii in 1:size(ϕ)[1]
-                for jj in 1:size(ϕ)[2]
-                    rot = model.rings[ii].rot
-                    xtmp[ii,jj],ytmp[ii,jj],ztmp[ii,jj] = rotate3D_scalar(r[ii],ϕ₀[ii,jj],i[ii],rot,model.rings[ii].θₒ,model.rings[ii].reflect)
-                end
-            end
-        else #if r is just a vector (with ϕ and i matching) -- cloud/point rings, one point per ring
-            for (ii,r) in enumerate(model.rings)
-                xtmp[ii],ytmp[ii],ztmp[ii] = getXYZ(r) #cached system coordinates
-            end
-        end
-        boxSize = 1.1*maximum([maximum(i for i in xtmp if !isnan(i)),maximum(i for i in ytmp if !isnan(i)),maximum(i for i in ztmp if !isnan(i))])
-        boxSizeGlobal = max(boxSize,boxSizeGlobal)
+    title --> (variable === geometry ? "System geometry visualization" : "System geometry + $variable (color) visualization")
+    # x/y/z, color values, and the disk/cloud flag for each submodel, as host arrays. Works for both a
+    # host `model` (reads the cached x/y/z columns -- no rotate3D needed) and a ResidentModel (copies
+    # the flat columns off the device). See `_plot3d_submodels` in gpu_arrays.jl.
+    subs, camR = _plot3d_submodels(model, variable)
+    nSub = length(subs)
+    finiteMax(v) = maximum(t for t in v if !isnan(t))
+    boxSizes = [1.1*max(finiteMax(s.x), finiteMax(s.y), finiteMax(s.z)) for s in subs]
+    boxSizeGlobal = maximum(boxSizes)
+    for (mInd,s) in enumerate(subs)
+        boxSize = boxSizes[mInd]
         @series begin
             subplot := 1
             seriestype := :scatter
             palette --> :magma
-            mz = vec(getVariable(model,variable))
-            nanMask = isnan.(mz)
-            marker_z := mz[.!nanMask]
-            markeralpha --> (diskFlags[mInd] ? 0.9 : 0.1)
+            nanMask = isnan.(s.mz)
+            marker_z := s.mz[.!nanMask]
+            markeralpha --> (s.disk ? 0.9 : 0.1)
             markerstrokewidth --> 0.0
             markersize --> 1.
             label --> ""
-            x := vec(xtmp)[.!nanMask]
-            y := vec(ytmp)[.!nanMask]
-            z := vec(ztmp)[.!nanMask]
+            x := s.x[.!nanMask]
+            y := s.y[.!nanMask]
+            z := s.z[.!nanMask]
             ()
         end
         if annotate
@@ -842,11 +820,11 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
                 subplot := 1
                 x := [-boxSize,boxSize]./1.1
                 y := [0.0,0.0]
-                z := [midPlaneXZ(-boxSize/1.1,i[1]),midPlaneXZ(boxSize/1.1,i[1])]
+                z := [midPlaneXZ(-boxSize/1.1,s.i1),midPlaneXZ(boxSize/1.1,s.i1)]
                 seriestype := :path
                 cList = [:crimson,:darkorange]
                 color --> (mInd <= 2 ? cList[mInd] : mInd)
-                label --> (length(mList) == 1 ? "midplane" : "midplane $mInd ($(diskFlags[mInd] ? "disk" : "cloud"))")
+                label --> (nSub == 1 ? "midplane" : "midplane $mInd ($(s.disk ? "disk" : "cloud"))")
                 ()
             end
         end
@@ -856,9 +834,9 @@ Generate a 3D plot of the model geometry, optionally colored by a variable.
     xlims --> (-boxSize,boxSize)
     zlims --> (-boxSize,boxSize)
     foreground_color_legend --> nothing
-    colorbar --> variable == BLR.geometry
+    colorbar --> variable === BLR.geometry
     if annotate
-        r = sqrt(maximum(model.camera.α.^2 .+ model.camera.β.^2))
+        r = camR
         @series begin
             subplot := 1
             θ = range(0,stop=2π,length=64)
@@ -915,45 +893,55 @@ end
 
 """
     profile(m::model, [variable], [kwargs...])
+    profile(rm::ResidentModel, variable, [kwargs...])
 
-Plot all profiles set in the model, normalized to the maximum value of each profile.
+Plot line profiles, normalized to the maximum value of each profile.
 
 # Arguments
-- `model`: A model object containing profile data.
-- `variable`: Optional. A symbol or string (or list of symbols/strings) specifying which profile to plot. If not provided, all profiles set in model will be plotted.
+- `model`: A model object containing profile data, or a [`ResidentModel`](@ref).
+- `variable`: A symbol or string (or list of symbols/strings) specifying which profile to plot. For a
+  host `model` this is optional — if omitted, every profile already set on the model is plotted. A
+  `ResidentModel` stores no preset profiles, so a variable is **required** there and the profile is
+  computed on demand via [`getProfile`](@ref) (choose from `:line, :delay, :r, :ϕ, :phase, :moment2`).
 - `kwargs...`: Additional keyword arguments passed to `Plots.plot`
 """
-@userplot Profile 
+@userplot Profile
 @recipe function f(p::Profile)
     m, variable = nothing, nothing
     if length(p.args) == 2
         m, variable = p.args
-        variable = Symbol(variable)
+        variable = variable isa AbstractVector ? Symbol.(variable) : Symbol(variable)
+    elseif length(p.args) == 1
+        m = p.args[1]
     else
-        if typeof(p.args[1]) == model
-            m = p.args[1]
-        else
-            error("expected arguments (model, variable[optional]), got $(p.args)")
+        error("expected arguments (model, variable[optional]), got $(p.args)")
+    end
+    # Resolve the profiles to draw into a name => profile lookup for either representation: a host
+    # `model` exposes its preset `profiles`; a ResidentModel has none, so we compute the requested
+    # ones on demand (GPU columns evaluated on the device, results returned to the host).
+    if m isa ResidentModel
+        isnothing(variable) && error("plotting profiles for a ResidentModel requires an explicit variable (it stores no preset profiles), e.g. profile(rm, :line) -- choose from [:line, :delay, :r, :ϕ, :phase, :moment2]")
+        variable = variable isa AbstractVector ? variable : [variable]
+        profiles = Dict(v => getProfile(m, v) for v in variable)
+    else
+        length(m.profiles) == 0 && error("no profiles set in model")
+        if isnothing(variable)
+            variable = collect(keys(m.profiles))
+        elseif variable isa Symbol
+            variable = [variable]
         end
-    end
-    if length(m.profiles) == 0
-        error("no profiles set in model")
-    end
-    if isnothing(variable)
-        variable = collect(keys(m.profiles))
-    elseif typeof(variable) == Symbol
-        variable = [variable]
+        profiles = m.profiles
     end
     title --> (length(variable) == 1 ? "Profile of $(variable[1])" : "Model profiles")
     ylabel --> (length(variable) == 1 ? "$(variable[1])" : "normalized value")
     xlabel --> "Δv [c]"
     for (i,v) in enumerate(variable)
-        norm = length(variable) == 1 ? 1.0 : maximum(abs(i) for i in m.profiles[v].binSums if !isnan(i))
+        norm = length(variable) == 1 ? 1.0 : maximum(abs(i) for i in profiles[v].binSums if !isnan(i))
         @series begin
             subplot := 1
             seriestype := :path
-            x := m.profiles[v].binCenters
-            y := m.profiles[v].binSums./norm
+            x := profiles[v].binCenters
+            y := profiles[v].binSums./norm
             marker --> :circle 
             markerstrokewidth --> 0.0
             markersize --> 2. 

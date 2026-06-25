@@ -187,3 +187,97 @@ provide the CUDA-backed methods.
 function gpu(::Any; kwargs...)
     error("GPU support requires CUDA.jl — run `using CUDA` (with a functional CUDA device) to activate the BroadLineRegions CUDA extension")
 end
+
+# --- Plots.jl recipe support for ResidentModel ----------------------------------------------------
+# The visualization recipes (image/plot3d/profile in util.jl) accept either a host `model` or a
+# ResidentModel. The accessors below return host (`Array`) data from the flat columns so the recipes
+# build series identically for both representations; device columns are copied to the host on demand.
+
+"""
+    getVariable(rm::ResidentModel, variable::Union{String,Symbol}) -> Vector
+
+Host copy of a single flat [`ModelArrays`](@ref) column by name (e.g. `:I`, `:v`, `:α`). This is the
+recipe-facing counterpart of `getVariable(::model, …)`; the columns are already flat so it takes no
+`flatten` keyword, and it does not accept a `Function` (compute custom quantities on the host `model`).
+When the columns live on the GPU the result is copied back to the host.
+"""
+function getVariable(rm::ResidentModel, variable::Union{String,Symbol})
+    sym = Symbol(variable)
+    sym in fieldnames(ModelArrays) ||
+        throw(ArgumentError("variable must be a column of ModelArrays\nvalid columns: $(fieldnames(ModelArrays))"))
+    return Array(getfield(rm.ma, sym))
+end
+
+# Per-point submodel index (1:nSubModels), used to split plot3d series by submodel. A single-submodel
+# handle needs no metadata; a combined handle carries the per-point index on `rt` (built with
+# raytrace=true, or by the on-device constructors / `+`). Without `rt` the submodel boundaries cannot
+# be recovered from the flat columns, so we ask the user to rebuild with raytrace metadata.
+function _plot_submodel_ids(rm::ResidentModel)
+    rm.rt !== nothing && return Array(rm.rt.submodel)
+    rm.nSubModels == 1 && return ones(Int, length(rm.ma.I))
+    throw(ArgumentError(string(
+        "plot3d on a combined ResidentModel ($(rm.nSubModels) submodels) needs per-point submodel ",
+        "info, which is carried on the raytrace metadata. Rebuild the handle with raytrace=true ",
+        "(e.g. `gpu(m; raytrace=true)` or `resident(m; raytrace=true)`).")))
+end
+
+# Per-submodel disk(true)/cloud(false) flag — controls marker alpha and the midplane label, mirroring
+# the host `typeof(rings[i].I) != Float64` test. `rt.discrete` is the per-point cloud flag (true for a
+# cloud/discrete submodel), constant within a submodel, so we read it at the first point of each.
+function _plot_disk_flags(rm::ResidentModel)
+    if rm.rt !== nothing
+        ids = Array(rm.rt.submodel); disc = Array(rm.rt.discrete)
+        return Bool[!disc[findfirst(==(s), ids)] for s in 1:rm.nSubModels]
+    end
+    rm.nSubModels == 1 && return Bool[true]  # no metadata: assume a disk (the common single-submodel case)
+    throw(ArgumentError(string(
+        "plot3d disk/cloud flags for a combined ResidentModel need raytrace metadata; ",
+        "rebuild the handle with raytrace=true.")))
+end
+
+# Camera (α,β) coordinates as host vectors — full model (all submodels concatenated), matching the
+# `image` recipe and plot3d's camera-radius annotation.
+_camera_αβ(m::model) = (vec(m.camera.α), vec(m.camera.β))
+_camera_αβ(rm::ResidentModel) = (getVariable(rm, :α), getVariable(rm, :β))
+
+# Per-submodel data the plot3d recipe needs, as host arrays, for either representation:
+# a NamedTuple per submodel with point coordinates `x,y,z`, color values `mz`, the disk/cloud `disk`
+# flag, and `i1` (first-ring inclination, for the midplane line), plus the camera ring radius `camR`.
+function _plot3d_submodels(m::model, variable)
+    nSub = length(m.subModelStartInds)
+    subs = Vector{NamedTuple}(undef, nSub)
+    for k in 1:nSub
+        sm = deepcopy(m[k])          # independent copy so caching xyz never mutates the caller's rings
+        _ensure_xyz!(sm)             # populate the cached (post-reflection) x/y/z columns
+        x = vec(getVariable(sm, :x)); y = vec(getVariable(sm, :y)); z = vec(getVariable(sm, :z))
+        mz = vec(getVariable(sm, variable))
+        disk = typeof(sm.rings[1].I) != Float64   # disk rings store I per-ϕ (Vector); clouds store a scalar
+        i1 = vec(getVariable(sm, :i))[1]
+        subs[k] = (x=x, y=y, z=z, mz=mz, disk=disk, i1=i1)
+    end
+    α, β = _camera_αβ(m)
+    return subs, sqrt(maximum(α .^ 2 .+ β .^ 2))
+end
+
+function _plot3d_submodels(rm::ResidentModel, variable)
+    ids = _plot_submodel_ids(rm)
+    disks = _plot_disk_flags(rm)
+    x = getVariable(rm, :x); y = getVariable(rm, :y); z = getVariable(rm, :z)
+    iCol = getVariable(rm, :i)
+    if variable === geometry
+        mz = ones(length(x))         # default geometry "color" is uniform, matching geometry(ring)
+    elseif variable isa Function
+        throw(ArgumentError(string(
+            "custom-Function color variables are not supported for a ResidentModel; ",
+            "pass a column Symbol such as :I, or use the host `model`.")))
+    else
+        mz = getVariable(rm, variable)
+    end
+    subs = Vector{NamedTuple}(undef, rm.nSubModels)
+    for s in 1:rm.nSubModels
+        mask = ids .== s
+        subs[s] = (x=x[mask], y=y[mask], z=z[mask], mz=mz[mask], disk=disks[s], i1=iCol[mask][1])
+    end
+    α, β = _camera_αβ(rm)
+    return subs, sqrt(maximum(α .^ 2 .+ β .^ 2))
+end
