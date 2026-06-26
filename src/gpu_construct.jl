@@ -376,14 +376,14 @@ end
         vx = sqrt(T(2)) * ρ * cos(Θ)
         vy = ρ * sin(Θ)
         vX, _, _ = let
-            a, b2, c = _rt_rotate3_vector(-(vx * cosϕ₀ + vy * sinϕ₀), -(vx * sinϕ₀ + vy * cosϕ₀),
+            a, b2, c = _rt_rotate3_vector(-(vx * cosϕ₀ + vy * sinϕ₀), vy * cosϕ₀ - vx * sinϕ₀,
                 zero(T), sini, cosi, sinrot, cosrot, sinθ, cosθ)
             reflect ? _rt_reflect3(a, b2, c, sini, cosi) : (a, b2, c)
         end
         vX + vₜ
     else
         vX, _, _ = let
-            a, b2, c = _rt_rotate3_vector(-vc * sinϕ₀, -vc * cosϕ₀, zero(T), sini, cosi, sinrot, cosrot, sinθ, cosθ)
+            a, b2, c = _rt_rotate3_vector(-vc * sinϕ₀, vc * cosϕ₀, zero(T), sini, cosi, sinrot, cosrot, sinθ, cosθ)
             reflect ? _rt_reflect3(a, b2, c, sini, cosi) : (a, b2, c)
         end
         vX

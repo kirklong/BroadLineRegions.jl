@@ -37,11 +37,15 @@ using StableRNGs: StableRNG
     sDC = raytrace_summary(disk() + clouds(80, 101), τCutOff=1.0)
     @test !any(isnan, sDC.I)
     @test isapprox(sDC.flux, 2.0579449066647638e6, rtol=1e-9)
+    # sDC.line regenerated after the cloud tangential-velocity sign correction in
+    # velocity.jl (vCircularCloud/vCloudTurbulentEllipticalFlow now use the proper
+    # CCW orbital tangent). Cloud positions/intensities are unchanged, so flux above
+    # is identical; only the velocity-binned line profile shifts.
     @test all(isapprox.(sDC.line,
-        [1.0, 105092.04795800222, 322399.4485419428,
-         221378.89101676922, 246954.69609633373, 266289.68656407285,
-         107259.08395262505, 196442.57773723497, 357329.38412395125,
-         180536.36862948653, 54261.72204434513], rtol=1e-8))
+        [12788.5143410726, 114441.91252453177, 332069.3055598979,
+         189578.46476604807, 246954.69609633373, 266290.68656407285,
+         151530.12725557524, 202676.7106953462, 306816.39818805375,
+         180537.36862948653, 54260.72204434513], rtol=1e-8))
 
     # Two overlapping continuous disks, uniform weights. origin/main handled a
     # single overlap pair through its main loop (only length(overlaps) > 1 hit

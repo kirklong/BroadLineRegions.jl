@@ -52,8 +52,10 @@ Calculate line of sight velocity for cloud in 3D space.
 """
 function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
     v₀ = vCirc(r,rₛ)
-    #match velocity sign conventions such that right side is negative; rotate into system coordinates and reflect if needed
-    vXYZ = rotate3D_vector_scalar(-v₀*sin(ϕ₀), -v₀*cos(ϕ₀), 0.0, i, rot, θₒ, reflect)
+    #proper circular-orbit tangent at ϕ₀: (-sin ϕ₀, +cos ϕ₀)*v₀ (perpendicular to the radius, r·v = 0),
+    #then rotate into system coordinates and reflect if needed. The +cos ϕ₀ (vs -cos ϕ₀) is required so
+    #the projected rotation sense survives the per-cloud `rot` and matches the disk (blue-shifted gas at +α).
+    vXYZ = rotate3D_vector_scalar(-v₀*sin(ϕ₀), v₀*cos(ϕ₀), 0.0, i, rot, θₒ, reflect)
     return vXYZ[1] #line of sight velocity is x component after rotation (camera is at +x)
 end
 
@@ -99,10 +101,14 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
         ρ = rand(rng,Normal(vc,σρᵣ))
         Θ = fFlow < 0.5 ? rand(rng,Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(rng,Normal(0.0,σΘᵣ)) + θₑ
     end
-    vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #without any rotation, radial direction is along x, inflow = "negative" velocity at +x, and ϕ is along y at ϕ = 0 when left is rotating towards observer
-    #rotate around z by ϕ₀, match velocity sign conventions (right = negative), then transform into system coordinates (reflecting across midplane of disk if needed)
-    vXYZ = rotate3D_vector_scalar(-(vx*cos(ϕ₀)+vy*sin(ϕ₀)), -(vx*sin(ϕ₀)+vy*cos(ϕ₀)), 0.0, i, rot, θₒ, reflect)
-    return vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3), negative sign to match disk convention left towards observer
+    vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #local (radial, tangential) components: radial along x, tangential along y at ϕ₀ = 0
+    #rotate into the ring plane. The tangential (vy) term needs the CCW sign (+vy cos ϕ₀ in the 2nd
+    #component, vs the old -vy cos ϕ₀) so the projected rotation sense survives the per-cloud `rot` and
+    #matches the disk; the radial (vx) terms are unchanged so the inflow/outflow convention is preserved
+    #(near-side inflow ⟹ redshift, as in vCircularRadialDisk). Reduces to the corrected vCircularCloud
+    #tangent in the circular limit (Θ = π/2 ⟹ (-sin ϕ₀, +cos ϕ₀)*vc).
+    vXYZ = rotate3D_vector_scalar(-(vx*cos(ϕ₀)+vy*sin(ϕ₀)), vy*cos(ϕ₀)-vx*sin(ϕ₀), 0.0, i, rot, θₒ, reflect)
+    return vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3)
 end
 
 function vElliptical(;a::Float64, i::Float64, ϕ::Union{Vector{Float64},Float64}, G::Float64=1.0, M::Float64=1.0, e::Float64=0.0, _...) 
