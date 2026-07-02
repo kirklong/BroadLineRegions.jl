@@ -15,6 +15,10 @@ Base.:+(m1::model,m2::model) = begin
     β1 = m1.camera.β; β2 = m2.camera.β
     raytraced = m1.camera.raytraced || m2.camera.raytraced
     mCombined.camera = camera(vcat(α1,α2),vcat(β1,β2),raytraced)
+    #record construction provenance as a NESTED tree (not flattened) mirroring the actual + calls.
+    #Set AFTER the deepcopy (which copied m1.params). Either side may be nothing (operand built
+    #without a public constructor). See the model `params` field docstring and `rebuild`.
+    mCombined.params = (; constructor=:+, left=m1.params, right=m2.params)
     return mCombined
 end
 

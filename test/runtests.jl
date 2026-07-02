@@ -517,6 +517,92 @@ end
     @test LPmr.binCenters == LPml.binCenters
 end
 
+@testset "model params + rebuild (W4-T1)" begin
+    # Models here are deliberately tiny -- this testset should add seconds, not minutes.
+    cloudArgs = (; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=1.0,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1)
+
+    # (a) rMin/rMax-form DiskWindModel records :DiskWindModel; rebuild -> bit-identical :line binSums
+    mDW = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4, reflect=false)
+    @test mDW.params.constructor == :DiskWindModel
+    @test mDW.params.rMin == 300.0 && mDW.params.rMax == 900.0
+    mDWr = BLR.rebuild(mDW)
+    @test BLR.getProfile(mDW, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(mDWr, :line, bins=21, centered=true).binSums
+
+    # mean-form (:DiskWindModelMean) also records provenance and round-trips
+    mMean = BLR.DiskWindModel(500.0, 5.0, 1.0, 0.4; nr=8, nϕ=16, scale=:log,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    @test mMean.params.constructor == :DiskWindModelMean
+    @test BLR.getProfile(mMean, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(BLR.rebuild(mMean), :line, bins=21, centered=true).binSums
+
+    # (b) philox cloudModel rebuilt from params is bit-identical
+    mC = BLR.cloudModel(64; rng=:philox, seed=42, cloudArgs...)
+    @test mC.params.constructor == :cloudModel
+    @test mC.params.rng == :philox && mC.params.seed == 42
+    @test _cloud_field_tuple(mC) == _cloud_field_tuple(BLR.rebuild(mC))
+
+    # (c) legacy-rng cloud model records rng=:legacy
+    mLeg = BLR.cloudModel(32; rng=MersenneTwister(7), cloudArgs...)
+    @test mLeg.params.constructor == :cloudModel
+    @test mLeg.params.rng == :legacy
+
+    # vectors-form cloudModel records :cloudModelVectors; rebuild reproduces the (input) ϕ₀
+    ϕ₀v = collect(range(0.0, 2π, length=9))[1:8]
+    mVec = BLR.cloudModel(ϕ₀v, fill(0.4, 8), fill(0.1, 8), fill(0.4, 8), 0.4, 1.0;
+        μ=600.0, I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rng=MersenneTwister(3), τ=0.0)
+    @test mVec.params.constructor == :cloudModelVectors
+    @test isequal(BLR.getVariable(BLR.rebuild(mVec), :ϕ₀, flatten=true),
+                  BLR.getVariable(mVec, :ϕ₀, flatten=true))
+
+    # (d) combined diskwind + philox-cloud records the nested :+ node; rebuild reproduces both
+    # submodels bit-identically INCLUDING subModelStartInds (use isequal -- disk has NaN sentinels)
+    mCombined = mDW + mC
+    @test mCombined.params.constructor == :+
+    @test mCombined.params.left.constructor == :DiskWindModel
+    @test mCombined.params.right.constructor == :cloudModel
+    mCombinedR = BLR.rebuild(mCombined)
+    @test mCombinedR.subModelStartInds == mCombined.subModelStartInds
+    @test isequal(BLR.getVariable(mCombinedR, :v, flatten=true),
+                  BLR.getVariable(mCombined, :v, flatten=true))
+    @test isequal(BLR.getVariable(mCombinedR, :I, flatten=true),
+                  BLR.getVariable(mCombined, :I, flatten=true))
+    @test BLR.getProfile(mCombinedR, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(mCombined, :line, bins=21, centered=true).binSums
+
+    # (d′) right-nested a+(b+e) (3 slots post-W4-T0) records the nested tree and rebuilds with
+    # identical subModelStartInds and getFlattenedCameraIndices
+    a = BLR.DiskWindModel(300.0, 500.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    b = BLR.cloudModel(16; rng=:philox, seed=201, cloudArgs...)
+    e = BLR.DiskWindModel(600.0, 800.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    rn = a + (b + e)
+    @test rn.params.constructor == :+
+    @test rn.params.right.constructor == :+ #nested, not flattened
+    @test length(rn.subModelStartInds) == 3
+    rnR = BLR.rebuild(rn)
+    @test rnR.subModelStartInds == rn.subModelStartInds
+    @test BLR.getFlattenedCameraIndices(rnR) == BLR.getFlattenedCameraIndices(rn)
+
+    # (e) raytrace! of the (d) model with a non-uniform IRatios vector records the :raytrace! wrapper
+    # and rebuild reproduces the raytraced :line profile bit-identically (raytrace! RETURNS a new model)
+    rt = BLR.raytrace!(mDW + mC; IRatios=[1.0, 2.0])
+    @test rt.params.constructor == :raytrace!
+    @test rt.params.IRatios == [1.0, 2.0]
+    @test rt.params.parent.constructor == :+
+    rtR = BLR.rebuild(rt)
+    @test BLR.getProfile(rtR, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(rt, :line, bins=21, centered=true).binSums
+
+    # (f) an unmatched override key throws
+    @test_throws ErrorException BLR.rebuild(mDW; notARealKey=1.0)
+    # a valid override is accepted and broadcasts to the leaf
+    @test typeof(BLR.rebuild(mDW; τ=0.9)) == BLR.model
+end
+
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")

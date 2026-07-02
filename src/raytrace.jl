@@ -781,8 +781,11 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
     @info "raytracing model with $(length(m.subModelStartInds)) submodels"
     nSubmodels = length(m.subModelStartInds)
     IR = _rt_iratio_vector(IRatios, nSubmodels)
+    #:raytrace! provenance node wrapping the input model's params (captures the raytrace arguments as
+    #given; nested parent subtree). Attached to the RETURNED model at the _rt_finalize_model funnel.
+    rtParams = (; constructor=:raytrace!, IRatios=IRatios, τCutOff=τCutOff, raytraceFreeClouds=raytraceFreeClouds, parent=m.params)
     if !isnothing(backend)
-        return _rt_backend_raytrace(m, IR, τCutOff, raytraceFreeClouds, backend; T=T)
+        return _rt_backend_raytrace(m, IR, τCutOff, raytraceFreeClouds, backend; T=T, params=rtParams)
     end
 
     camStartInds = getFlattenedCameraIndices(m)
@@ -814,5 +817,5 @@ function raytrace!(m::model;IRatios::Union{Float64,Array{Float64,}}=1.0,τCutOff
     else
         [_rt_copy_cloud_point(points[idx], points[idx].I * IR[points[idx].submodel]) for idx in freeInds]
     end
-    return _rt_finalize_model(outRings, subStarts, freeRings)
+    return _rt_finalize_model(outRings, subStarts, freeRings; params=rtParams)
 end

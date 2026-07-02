@@ -670,7 +670,7 @@ function _rt_apply_scan_output!(outRings::Vector{ring}, pixels::Vector{_Raytrace
     return outRings
 end
 
-function _rt_finalize_model(outRings::Vector{ring}, subStarts::Vector{Int}, freeRings)
+function _rt_finalize_model(outRings::Vector{ring}, subStarts::Vector{Int}, freeRings; params::Union{Nothing,NamedTuple}=nothing)
     if !isempty(freeRings)
         push!(subStarts, length(outRings)+1)
         append!(outRings, freeRings)
@@ -680,11 +680,14 @@ function _rt_finalize_model(outRings::Vector{ring}, subStarts::Vector{Int}, free
     αout, βout, subStarts = _rt_rebuild_camera(outRings)
     out = model(outRings, Dict{Symbol,profile}(), camera(αout, βout, true), subStarts)
     out.cache = Dict{Any,Array}()
+    #single funnel point for both CPU and backend raytrace! paths -- attach the :raytrace! provenance
+    #node here (params is nothing on the early-return paths, which never reach this function)
+    out.params = params
     return out
 end
 
 function _rt_backend_raytrace(m::model, IR::Vector{Float64}, τCutOff::Float64, raytraceFreeClouds::Bool,
-        backend; T=Float64)
+        backend; T=Float64, params::Union{Nothing,NamedTuple}=nothing)
     camStartInds = getFlattenedCameraIndices(m)
     points = _rt_flatten_points(m, camStartInds)
     grids, pixels, outRings, _, _, subStarts = _rt_build_output(m, camStartInds)
@@ -710,5 +713,5 @@ function _rt_backend_raytrace(m::model, IR::Vector{Float64}, τCutOff::Float64, 
     else
         [_rt_copy_cloud_point(points[idx], points[idx].I * IR[points[idx].submodel]) for idx in freeInds]
     end
-    return _rt_finalize_model(outRings, subStarts, freeRings)
+    return _rt_finalize_model(outRings, subStarts, freeRings; params=params)
 end
