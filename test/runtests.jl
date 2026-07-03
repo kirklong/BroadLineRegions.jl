@@ -603,6 +603,79 @@ end
     @test typeof(BLR.rebuild(mDW; τ=0.9)) == BLR.model
 end
 
+@testset "CompositeModel + addLine! (W4-T2/T3)" begin
+    # Models here are deliberately tiny -- this testset should add seconds, not minutes.
+    cloudArgs = (; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=1.0,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1)
+
+    # --- T2: construction, duplicate-name error, indexing error, show ---
+    mHa = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mHa; line="Ha", lineCenter=6562.8)
+    @test cm.lines == ["Ha"]
+    @test cm.models["Ha"] === mHa
+    @test cm.lineCenters["Ha"] == 6562.8
+    @test cm.fluxRatios["Ha"] == 1.0
+    @test length(cm) == 1
+    @test_throws ErrorException BLR.CompositeModel(mHa; line="Ha", lineCenter=-1.0) #lineCenter must be positive
+
+    # duplicate name error
+    @test_throws ErrorException BLR.addLine!(cm, mHa; line="Ha", lineCenter=1.0)
+
+    # indexing error lists known lines
+    err = try; cm["nope"]; nothing; catch e; e; end
+    @test err isa ErrorException
+    @test occursin("nope", err.msg) && occursin("Ha", err.msg)
+
+    # show output smoke test
+    s = sprint(show, cm)
+    @test occursin("Ha", s)
+    @test occursin("CompositeModel", s)
+
+    # --- T3(a): rMin/rMax-form DiskWindModel reuse with an intensity-only override (α) ---
+    # identical r/ϕ/v, different I (DiskWindIntensity's α is a source-function power law that
+    # reaches only the intensity, since rMin/rMax are given explicitly in this parameterization)
+    BLR.addLine!(cm; line="Hb", lineCenter=4861.3, from="Ha", α=2.5)
+    mHb = cm["Hb"]
+    @test isequal(BLR.getVariable(mHa, :r, flatten=true), BLR.getVariable(mHb, :r, flatten=true))
+    @test isequal(BLR.getVariable(mHa, :ϕ, flatten=true), BLR.getVariable(mHb, :ϕ, flatten=true))
+    @test isequal(BLR.getVariable(mHa, :v, flatten=true), BLR.getVariable(mHb, :v, flatten=true))
+    @test !isequal(BLR.getVariable(mHa, :I, flatten=true), BLR.getVariable(mHb, :I, flatten=true))
+
+    # --- T3(a'): the SAME kind of α override on a mean-form (:DiskWindModelMean) model
+    # MOVES the grid -- DIFFERENT r arrays. Pins the honest (non-invariant) constructor
+    # semantics -- do not "fix" this.
+    mMeanA = BLR.DiskWindModel(500.0, 5.0, 1.0, 0.4; nr=6, nϕ=12, scale=:log,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    cmMean = BLR.CompositeModel(mMeanA; line="A", lineCenter=1000.0)
+    BLR.addLine!(cmMean; line="B", lineCenter=2000.0, α=2.5)
+    @test !isequal(BLR.getVariable(cmMean["A"], :r, flatten=true), BLR.getVariable(cmMean["B"], :r, flatten=true))
+
+    # --- T3(b): philox cloud reuse without seed override -> identical r; new seed -> different ---
+    mC1 = BLR.cloudModel(64; rng=:philox, seed=42, cloudArgs...)
+    cmC = BLR.CompositeModel(mC1; line="C1", lineCenter=1.0)
+    BLR.addLine!(cmC; line="C2", lineCenter=2.0) #no seed override -> reuse stored seed
+    @test isequal(BLR.getVariable(cmC["C1"], :r, flatten=true), BLR.getVariable(cmC["C2"], :r, flatten=true))
+    BLR.addLine!(cmC; line="C3", lineCenter=3.0, seed=99) #new seed -> different clouds
+    @test !isequal(BLR.getVariable(cmC["C1"], :r, flatten=true), BLR.getVariable(cmC["C3"], :r, flatten=true))
+    # seed=nothing override is rejected (philox requires an explicit seed)
+    @test_throws ArgumentError BLR.addLine!(cmC; line="C4", lineCenter=4.0, seed=nothing)
+
+    # legacy-rng reuse warns once and rebuilds with GLOBAL_RNG (statistically different, not identical)
+    mLeg = BLR.cloudModel(16; rng=MersenneTwister(7), cloudArgs...)
+    cmLeg = BLR.CompositeModel(mLeg; line="L1", lineCenter=1.0)
+    @test_logs (:warn,) BLR.addLine!(cmLeg; line="L2", lineCenter=2.0)
+
+    # --- T3(c): reuse from a params-less model throws the documented error ---
+    mRaw = BLR.model(mHa.rings[1:2], nothing, nothing, [1]) #low-level constructor: params === nothing
+    cmRaw = BLR.CompositeModel(mRaw; line="R", lineCenter=1.0)
+    @test_throws ErrorException BLR.addLine!(cmRaw; line="R2", lineCenter=2.0)
+    # sanity: the explicit-model method doesn't care about params at all
+    BLR.addLine!(cmRaw, mHa; line="R3", lineCenter=3.0)
+    @test cmRaw.lines == ["R", "R3"]
+end
+
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
