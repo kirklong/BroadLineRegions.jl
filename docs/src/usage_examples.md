@@ -348,6 +348,56 @@ You can of course visualize your combined models with the same standard plotting
 
 ![Sample combined model animation for parameters in Long+2025](mCombined.gif)
 
+## Multi-line models
+<!-- DRAFT: awaiting Kirk's style pass — do not merge docs prose without it -->
+
+Everything above models a single broad emission line. A [`CompositeModel`](@ref BLR.CompositeModel) lets one object hold *several* lines at once (e.g. Hα + Hβ + CIV), where each line is a full `model` tagged with a unique name, a central wavelength, and a relative flux normalization. The per-line models stay completely independent — combining lines this way changes nothing about how each individual model behaves.
+
+Start by wrapping any existing model as the first (reference) line:
+
+```julia
+mHα = BLR.DiskWindModel(500.0, 4000.0, 30/180*π; nr=128, nϕ=256,
+        f1=1.0, f2=0.5, f3=0.5, f4=1.0, α=1.5, τ=5.0, reflect=false)
+cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6562.8)
+```
+
+`lineCenter` units are arbitrary (Å above, but nm/μm/anything works) — the only requirement is that they are **mutually consistent across all lines in one `CompositeModel`**, since only Δλ/λ matters downstream; this is your responsibility and is not checked.
+
+There are two ways to add more lines with [`addLine!`](@ref BLR.addLine!). You can pass an explicitly constructed model:
+
+```julia
+mCIV = BLR.cloudModel(100_000; μ=1000.0, β=1.0, F=0.5, θₒ=30/180*π, i=30/180*π, γ=1.0, ξ=1.0,
+        I=BLR.cloudIntensity, v=BLR.vCircularCloud, τ=5.0, rng=:philox, seed=42)
+BLR.addLine!(cm, mCIV; line="CIV", lineCenter=1549.0, fluxRatio=0.8)
+```
+
+or reuse the recorded construction parameters of an existing line (via [`rebuild`](@ref BLR.rebuild) on `model.params`), overriding only what should differ:
+
+```julia
+BLR.addLine!(cm; line="Hβ", lineCenter=4861.3, fluxRatio=0.35, from="Hα", α=2.0)
+```
+
+Here `fluxRatio` is the line's *velocity-integrated* flux relative to the first line (`"Hα"` ≡ 1.0), so the semantics are independent of each intensity function's arbitrary units. Overrides have plain constructor semantics — `rebuild` does exactly what calling the original constructor with the merged arguments would do, so whether an override moves the geometry depends on the recorded parameterization (in the explicit `rMin`/`rMax` disk-wind form above, `α` only reaches the intensity function, so `"Hβ"` reuses `"Hα"`'s grid exactly).
+
+A note on seeds: cloud models built with `rng=:philox, seed=...` (like `mCIV` above) rebuild bit-identically under parameter reuse — the stored seed is reused unless you override it, so an `addLine!(cm; from="CIV", ...)` line samples *the same clouds*. Pass a new `seed` to draw fresh (statistically equivalent, different) gas — physically legitimate, since different lines need not come from the same gas. Models built with the legacy `AbstractRNG` path cannot be reproduced exactly (the RNG state was consumed) and warn accordingly.
+
+The combined wavelength-space spectrum comes from [`getSpectrum`](@ref BLR.getSpectrum) and can be visualized directly with the [`spectrum`](@ref BLR.spectrum) recipe (one series per line plus the total, with any overlapping line regions shaded):
+
+```julia
+edges, centers, flux, total = BLR.getSpectrum(cm; bins=200) #the underlying data; sum(flux[line]) == fluxRatio
+BLR.spectrum(cm; bins=200) #plot it (pass z=... to shift to the observed frame)
+```
+
+Whether lines overlap in wavelength space can be checked with [`lineOverlap`](@ref BLR.lineOverlap), which returns one `(lineA, lineB, λlo, λhi)` entry per overlapping pair (an empty vector means no overlaps):
+
+```julia
+BLR.lineOverlap(cm) #NamedTuple[] here -- Hα/Hβ/CIV are far apart compared to their velocity widths
+```
+
+All the usual single-model entry points forward per line, e.g. `BLR.getProfile(cm, :line; line="Hβ")`, `BLR.getVariable(cm, :r; line="CIV")`, `BLR.raytrace!(cm)`, `BLR.image(cm, :I; line="Hα")`, `BLR.plot3d(cm)`, and `BLR.profile(cm)` (which overlays every line's profile).
+
+Velocities map to wavelengths at first order, `λ = lineCenter*(1+v)` (see [`wavelength`](@ref BLR.wavelength)), with the stored line-of-sight velocity `v` in units of c and **redshift-positive** (positive `v` = receding). If you supply your own custom `v` function it must follow this same convention or your spectra will be mirrored.
+
 ## Defining your own custom models
 `BroadLineRegions.jl` makes it easy to define your own models, either by modifying one of the existing classes of models or starting entirely from scratch. 
 

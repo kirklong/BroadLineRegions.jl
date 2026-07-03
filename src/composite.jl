@@ -561,7 +561,7 @@ Per-line forwarding of the [`plot3d`](@ref) recipe for a [`CompositeModel`](@ref
 
 - `line::String`: identical to `plot3d(cm[line], variable, annotate; kwargs...)`.
 - `line=nothing` (default): overlay **every** line's geometry on one 3D plot, one solid color per line.
-  Reuses [`_plot3d_submodels`](@ref) -- the same per-submodel point gather the single-model `plot3d`
+  Reuses `_plot3d_submodels` -- the same per-submodel point gather the single-model `plot3d`
   recipe uses -- for each line's `(x,y,z)` (and its NaN mask on `variable`); unlike the single-model
   recipe this does NOT color points by `variable`'s value (a shared colormap across lines with
   independently-scaled intensities/variables would not be meaningful) -- points are colored by line
