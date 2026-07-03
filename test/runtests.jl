@@ -676,6 +676,99 @@ end
     @test cmRaw.lines == ["R", "R3"]
 end
 
+@testset "composite forwarding + spectrum (W4-T4/T5/T6)" begin
+    # Models here are deliberately tiny -- this testset should add seconds, not minutes.
+    # rMin/rMax comfortably above 200 rₛ so |v| = √(rₛ/2r) stays well below 0.05c (T5 needs this).
+    mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+
+    # a two-line composite sharing the geometry: Hα (ref, fluxRatio 1.0) + Hβ (fluxRatio 0.35)
+    cm = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
+    BLR.addLine!(cm, mDisk; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
+
+    # --- T4: getProfile forwarding equals the direct call FIELD-WISE (profile has no ==) ---
+    for line in cm.lines
+        p = BLR.getProfile(cm, :line; line=line, bins=21, centered=true)
+        q = BLR.getProfile(cm[line], :line; bins=21, centered=true)
+        @test p.binSums == q.binSums
+        @test p.binCenters == q.binCenters
+        @test p.binEdges == q.binEdges
+    end
+
+    # --- T4: getVariable forwarding ---
+    @test isequal(BLR.getVariable(cm, :v; line="Ha", flatten=true),
+                  BLR.getVariable(cm["Ha"], :v, flatten=true))
+    @test isequal(BLR.getVariable(cm, :I; line="Hb", flatten=false),
+                  BLR.getVariable(cm["Hb"], :I, flatten=false))
+
+    # --- T4: :ratio is a W5 placeholder; a missing `line` kwarg errors naming the kwarg ---
+    @test_throws ErrorException BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"))
+    errNoLine = try; BLR.getProfile(cm, :line); nothing; catch e; e; end
+    @test errNoLine isa ErrorException && occursin("line", errNoLine.msg)
+
+    # --- T4: _fluxWeights identity -- default (centered=true) :line profile integrates to fluxRatio ---
+    w = BLR._fluxWeights(cm)
+    for line in cm.lines
+        lp = BLR.getProfile(cm, :line; line=line, centered=true) #default centered edges pad past data
+        @test isapprox(sum(lp.binSums) * w[line], cm.fluxRatios[line], rtol=1e-12)
+    end
+
+    # --- T4: raytrace! forwarding REASSIGNS the returned model; single-submodel lines are skipped ---
+    mCl = BLR.cloudModel(20; rng=:philox, seed=7, μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4,
+        γ=1.0, ξ=1.0, I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1)
+    mComb = mDisk + mCl #two submodels -> raytrace! does real work
+    cmRT = BLR.CompositeModel(mComb; line="X", lineCenter=6562.8)
+    BLR.addLine!(cmRT, mDisk; line="Y", lineCenter=4861.3) #single submodel -> skipped by raytrace!
+    @test cmRT["X"].camera.raytraced == false
+    origX = cmRT["X"]
+    BLR.raytrace!(cmRT)
+    @test cmRT["X"].camera.raytraced == true    #flipped
+    @test cmRT["X"] !== origX                    #reassigned to the NEW returned model
+    @test cmRT["Y"].camera.raytraced == false    #single-submodel line left unaltered (no warn-spam)
+
+    # --- T5: wavelength() scalar/vector round-trip ---
+    @test BLR.wavelength(0.0, 6562.8) == 6562.8
+    vvec = [-0.01, 0.0, 0.02]
+    λvec = BLR.wavelength(vvec, 6562.8)
+    @test λvec == 6562.8 .* (1.0 .+ vvec)
+    @test λvec ./ 6562.8 .- 1.0 ≈ vvec #recover v
+
+    # --- T5: overlap check. Hα/Hβ (widely separated centers) do NOT overlap ---
+    @test isempty(BLR.lineOverlap(cm))
+
+    # push centers together (same geometry) until the intervals DO overlap; check the reported interval
+    vmin, vmax = BLR._finiteVRange(mDisk)
+    @test vmin < 0.0 && vmax > 0.0 && abs(vmin) < 0.05 && abs(vmax) < 0.05
+    cA = 6563.0; cB = 6600.0 #cB/cA = 1.0056 < (1+vmax)/(1+vmin), so they overlap
+    cmO = BLR.CompositeModel(mDisk; line="A", lineCenter=cA)
+    BLR.addLine!(cmO, mDisk; line="B", lineCenter=cB)
+    ov = BLR.lineOverlap(cmO)
+    @test length(ov) == 1
+    @test ov[1].lineA == "A" && ov[1].lineB == "B"
+    @test isapprox(ov[1].λlo, cB*(1.0+vmin), rtol=1e-12) #hand computation: max(cA,cB)*(1+vmin)=cB*(1+vmin)
+    @test isapprox(ov[1].λhi, cA*(1.0+vmax), rtol=1e-12) #min(cA,cB)*(1+vmax)=cA*(1+vmax)
+
+    # --- T6: combined spectrum ---
+    edges, centers, flux, total = BLR.getSpectrum(cm; bins=64)
+    @test length(centers) == 64 && length(edges) == 65
+    # integrated flux per line equals its fluxRatio (overflow keeps the boundary points)
+    @test isapprox(sum(flux["Ha"]), 1.0, rtol=1e-12)
+    @test isapprox(sum(flux["Hb"]), 0.35, rtol=1e-12)
+    # total is the elementwise sum of the parts
+    @test total == flux["Ha"] .+ flux["Hb"]
+    # two non-overlapping lines -> two disjoint nonzero regions with a zero gap between them
+    haNZ = findall(>(0.0), flux["Ha"]); hbNZ = findall(>(0.0), flux["Hb"])
+    @test !isempty(haNZ) && !isempty(hbNZ)
+    @test isempty(intersect(haNZ, hbNZ))
+    @test any(==(0.0), total) #a gap of empty bins between the two lines
+
+    # redshift shifts the grid by (1+z); integrated fluxes are unchanged
+    e2, c2, flux2, total2 = BLR.getSpectrum(cm; bins=64, z=0.1)
+    @test isapprox(sum(flux2["Ha"]), 1.0, rtol=1e-12)
+    @test isapprox(edges[1]*1.1, e2[1], rtol=1e-12) && isapprox(edges[end]*1.1, e2[end], rtol=1e-12)
+end
+
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")

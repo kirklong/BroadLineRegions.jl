@@ -197,3 +197,268 @@ function addLine!(cm::CompositeModel; line::String, lineCenter::Float64, fluxRat
     m = rebuild(fromModel.params; overrides...)
     return addLine!(cm, m; line=line, lineCenter=lineCenter, fluxRatio=fluxRatio)
 end
+
+#=============================== W4-T4: per-line forwarding API ===============================#
+# Thin wrappers: no logic changes inside the wrapped functions -- each forwards to the per-line
+# `model` method after resolving `line`. The wrapped functions (getProfile, getVariable, setProfile!,
+# reset!, removeNaN!, raytrace!) all live earlier in the load order (util.jl/profiles.jl) or are
+# generic functions extended later (raytrace.jl); these bodies resolve them at call time.
+
+"""
+    getProfile(cm::CompositeModel, name; line=nothing, lines=nothing, kwargs...) -> profile
+
+Per-line forwarding of [`getProfile`](@ref): compute `name`'s profile for the model registered under
+`line` (`getProfile(cm[line], name; kwargs...)`).
+
+Julia cannot dispatch on keywords, so this is a *single* method covering the whole positional signature
+`getProfile(cm, name; ...)` -- branching happens at runtime:
+- `name === :ratio` (velocity-resolved line ratio, which needs `lines::Tuple`) is **implemented in
+  Workstream 5** and currently throws a clear error. This same method will be filled in there; two
+  keyword-only "methods" would silently overwrite each other.
+- every other `name` requires the `line` keyword and forwards to the per-line `model` method.
+"""
+function getProfile(cm::CompositeModel, name::Union{String,Symbol,Function};
+        line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
+    if name === :ratio
+        error("getProfile(cm, :ratio; lines=...): the :ratio (velocity-resolved line-ratio) profile is " *
+              "implemented in Workstream 5 (Balmer decrement) and is not available yet.")
+    end
+    line === nothing && error("getProfile(cm, $(repr(name)); line=...): the `line` keyword is required " *
+        "(which line's profile do you want?). Known lines: $(cm.lines).")
+    return getProfile(cm[line], name; kwargs...)
+end
+
+"""
+    getVariable(cm::CompositeModel, variable; line::String, flatten=false)
+
+Per-line forwarding of [`getVariable`](@ref): gather `variable` from the model registered under `line`.
+"""
+function getVariable(cm::CompositeModel, variable::Union{String,Symbol,Function}; line::String, flatten::Bool=false)
+    return getVariable(cm[line], variable; flatten=flatten)
+end
+
+"""
+    setProfile!(cm::CompositeModel, p::profile; line::String, overwrite=false) -> cm
+
+Per-line forwarding of [`setProfile!`](@ref): store profile `p` on the model registered under `line`.
+"""
+function setProfile!(cm::CompositeModel, p::profile; line::String, overwrite::Bool=false)
+    setProfile!(cm[line], p; overwrite=overwrite)
+    return cm
+end
+
+"""
+    reset!(cm::CompositeModel; line=nothing, profiles=true, img=false) -> cm
+
+Per-line forwarding of [`reset!`](@ref). `line=nothing` (the default) resets every line; otherwise only
+the named line. Extra keywords (`profiles`, `img`) forward to the per-line `model` method.
+"""
+function reset!(cm::CompositeModel; line::Union{Nothing,String}=nothing, kwargs...)
+    for l in (line === nothing ? cm.lines : [line])
+        reset!(cm[l]; kwargs...)
+    end
+    return cm
+end
+
+"""
+    removeNaN!(cm::CompositeModel) -> cm
+
+Per-line forwarding of [`removeNaN!`](@ref): drop NaN-sentinel points from *every* line's model.
+"""
+function removeNaN!(cm::CompositeModel)
+    for l in cm.lines
+        removeNaN!(cm[l])
+    end
+    return cm
+end
+
+"""
+    raytrace!(cm::CompositeModel; line=nothing, kwargs...) -> cm
+
+Per-line forwarding of [`raytrace!`](@ref). `line=nothing` (the default) raytraces every line; otherwise
+only the named line.
+
+`raytrace!` **returns a new model** (it does not mutate its argument), so this reassigns
+`cm.models[line] = raytrace!(cm.models[line]; kwargs...)`. Lines that `raytrace!` would warn about and
+hand back unaltered -- a single-submodel model (`subModelStartInds == [1]`) or an already-raytraced one
+(`camera.raytraced`) -- are skipped silently so a multi-line loop does not warn-spam.
+
+Raytracing happens *within* each line's own submodels only. Cross-line occlusion is deliberately **not**
+modeled: different lines are at different wavelengths and each line's `τ` is that line's own optical
+depth (see the Workstream-4 plan, "Out of scope").
+"""
+function raytrace!(cm::CompositeModel; line::Union{Nothing,String}=nothing, kwargs...)
+    for l in (line === nothing ? cm.lines : [line])
+        m = cm[l]
+        (m.subModelStartInds == [1] || m.camera.raytraced) && continue #raytrace!'s warn-and-return cases
+        cm.models[l] = raytrace!(m; kwargs...)
+    end
+    return cm
+end
+
+"""
+    _fluxWeights(cm::CompositeModel) -> Dict{String,Float64}
+
+Internal helper: per-line multiplicative weight `fluxRatios[line] / totalFlux(line)` that renormalizes
+each line's binned profile to unit integral before scaling by its `fluxRatio` -- the integrated-flux
+semantics of decision 3. `totalFlux(line) = Σ I[k]*ΔA[k]` over points where
+`isfinite(v[k]) && isfinite(I[k]*ΔA[k])` -- **both** conditions, matching exactly what `binAccumulate!`
+counts (finite-`I`/NaN-position points occur in practice, so finite-`I` alone is not enough).
+
+Uses the memoized flattened gathers (`getVariable(m, …; flatten=true)` hits `model.cache`) and one
+non-allocating loop. Deliberately **not** memoized itself -- it recomputes per call so nothing new joins
+the `model.cache` invalidation contract; the O(N) sum is noise next to the binning it accompanies.
+"""
+function _fluxWeights(cm::CompositeModel)
+    weights = Dict{String,Float64}()
+    for line in cm.lines
+        m = cm.models[line]
+        v = getVariable(m, :v, flatten=true)
+        I = getVariable(m, :I, flatten=true)
+        ΔA = getVariable(m, :ΔA, flatten=true)
+        total = 0.0
+        @inbounds for k in eachindex(v, I, ΔA)
+            iΔA = I[k]*ΔA[k]
+            if isfinite(v[k]) && isfinite(iΔA)
+                total += iΔA
+            end
+        end
+        weights[line] = cm.fluxRatios[line] / total
+    end
+    return weights
+end
+
+#=========================== W4-T5: wavelength utilities + overlap check ===========================#
+
+"""
+    wavelength(v, lineCenter) -> λ
+
+First-order velocity→wavelength map `λ = lineCenter * (1 + v)` (decision 4), with `v` the stored
+line-of-sight velocity in units of c. Works for scalar or vector `v` (broadcasts). Stored `v` is
+**redshift-positive** (positive v = receding), so `(1 + v)` is the correct sign -- do not re-derive it.
+"""
+wavelength(v, lineCenter) = lineCenter .* (1.0 .+ v)
+
+"""
+    _finiteVRange(m::model) -> (vmin, vmax)
+
+Internal helper: **the** definition of a line's velocity range -- the min/max of `v` over points where
+`isfinite(v) && isfinite(I*ΔA)` (the W4-T4 finiteness rule; finite-`I` alone would let a NaN `v` poison
+the range). Single non-allocating pass over the memoized flattened `v`/`I`/`ΔA` gathers. Shared by
+[`lineOverlap`](@ref), [`getSpectrum`](@ref) (and Workstream 5) so the three cannot disagree.
+
+Returns `(NaN, NaN)` when the model has **no** finite points; callers treat that as "this line
+contributes no range" (skip it).
+"""
+function _finiteVRange(m::model)
+    v = getVariable(m, :v, flatten=true)
+    I = getVariable(m, :I, flatten=true)
+    ΔA = getVariable(m, :ΔA, flatten=true)
+    vmin = Inf; vmax = -Inf
+    @inbounds for k in eachindex(v, I, ΔA)
+        if isfinite(v[k]) && isfinite(I[k]*ΔA[k])
+            vk = v[k]
+            vk < vmin && (vmin = vk)
+            vk > vmax && (vmax = vk)
+        end
+    end
+    return vmin > vmax ? (NaN, NaN) : (vmin, vmax) #vmin>vmax (Inf>-Inf) ⟺ no finite points
+end
+
+"""
+    lineOverlap(cm::CompositeModel) -> Vector{NamedTuple}
+
+Report wavelength-space overlaps between lines. Each line spans
+`[lineCenter*(1+vmin), lineCenter*(1+vmax)]` from [`_finiteVRange`](@ref); every pair whose intervals
+intersect yields an entry `(lineA, lineB, λlo, λhi)` (the overlap interval `[λlo, λhi]`). An **empty**
+vector means no lines overlap. Lines with no finite points (`_finiteVRange` = `NaN`) are skipped.
+"""
+function lineOverlap(cm::CompositeModel)
+    ranges = Dict{String,Tuple{Float64,Float64}}()
+    for line in cm.lines
+        vmin, vmax = _finiteVRange(cm.models[line])
+        λc = cm.lineCenters[line]
+        ranges[line] = (wavelength(vmin, λc), wavelength(vmax, λc)) #(NaN,NaN) if no finite points
+    end
+    result = NamedTuple[]
+    n = length(cm.lines)
+    for a in 1:n-1, b in a+1:n
+        lineA = cm.lines[a]; lineB = cm.lines[b]
+        loA, hiA = ranges[lineA]; loB, hiB = ranges[lineB]
+        (isnan(loA) || isnan(hiA) || isnan(loB) || isnan(hiB)) && continue
+        λlo = max(loA, loB); λhi = min(hiA, hiB)
+        if λlo <= λhi #closed intervals intersect
+            push!(result, (lineA=lineA, lineB=lineB, λlo=λlo, λhi=λhi))
+        end
+    end
+    return result
+end
+
+#================================= W4-T6: combined spectrum =================================#
+
+"""
+    getSpectrum(cm::CompositeModel; bins=100, z=0.0, kwargs...)
+        -> (edges, centers, flux::Dict{String,Vector{Float64}}, total::Vector{Float64})
+
+Combined wavelength-space spectrum of all lines. Each line's flattened points are binned by
+`wavelength(v, lineCenter)*(1+z)` weighted by `I*ΔA*_fluxWeights(cm)[line]`, over a **shared**
+wavelength grid spanning every line's finite range (from [`_finiteVRange`](@ref)) times `(1+z)`.
+`total` is the elementwise sum of the per-line vectors. With the unit-integral weighting, `sum(flux[line])`
+equals `fluxRatios[line]` (decision 3).
+
+# Arguments
+- `bins::Union{Int,Vector{Float64}}=100`: bin count, or an explicit edge vector (passthrough as in
+  [`binnedSum`](@ref)). For an integer count no edge vector is materialized -- the same `minX`/`maxX` go
+  to every line's `binnedSum`, whose deterministic `constructBinEdges` yields bit-identical edges and
+  preserves the uniform direct-index fast path.
+- `z::Real=0.0`: redshift; `z=0` = rest frame, `z>0` shifts to the observed frame.
+- `overflow` (via `kwargs`): honored **only** when `bins` is a user-supplied edge vector (default
+  `false`, so out-of-range flux drops against a data grid). For internally-constructed integer-`bins`
+  edges `overflow` is forced `true` -- non-centered edges built at exactly `[λmin, λmax]` place each
+  line's extremal points on the boundary, which `binnedSum` otherwise drops (deliberate package-wide
+  convention); `overflow=true` is the sanctioned mechanism to keep them and is what makes the integrated
+  flux exact.
+"""
+function getSpectrum(cm::CompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0, kwargs...)
+    #shared wavelength range across all lines (observed frame), from the per-line finite velocity ranges
+    λmin = Inf; λmax = -Inf
+    for line in cm.lines
+        vmin, vmax = _finiteVRange(cm.models[line])
+        (isnan(vmin) || isnan(vmax)) && continue
+        λc = cm.lineCenters[line]
+        lo = wavelength(vmin, λc)*(1.0+z); hi = wavelength(vmax, λc)*(1.0+z)
+        lo < λmin && (λmin = lo)
+        hi > λmax && (λmax = hi)
+    end
+    (isfinite(λmin) && isfinite(λmax)) || error("getSpectrum: no line has any finite points -- cannot " *
+        "build a spectrum (every line's I*ΔA / v is NaN everywhere).")
+
+    #overflow: forced true for internally-constructed integer-bins edges (keeps boundary points);
+    #for a user edge vector, pass through untouched (default false -- out-of-range flux drops).
+    overflow = (typeof(bins) == Int) ? true : get(kwargs, :overflow, false)
+
+    weights = _fluxWeights(cm)
+    flux = Dict{String,Vector{Float64}}()
+    edges = nothing; centers = nothing
+    for line in cm.lines
+        m = cm.models[line]
+        v = getVariable(m, :v, flatten=true)
+        I = getVariable(m, :I, flatten=true)
+        ΔA = getVariable(m, :ΔA, flatten=true)
+        λc = cm.lineCenters[line]; w = weights[line]
+        x = wavelength(v, λc) .* (1.0+z)
+        y = (I .* ΔA) .* w
+        #integer bins -> pass minX/maxX (no edge vector); constructBinEdges is deterministic so every
+        #line gets bit-identical edges. A user edge vector ignores minX/maxX inside binnedSum.
+        e, c, r = binnedSum(x, y; bins=bins, minX=λmin, maxX=λmax, centered=false, overflow=overflow)
+        if edges === nothing
+            edges = e; centers = c
+        end
+        flux[line] = r
+    end
+    total = zeros(length(centers))
+    for line in cm.lines
+        total .+= flux[line]
+    end
+    return (edges, centers, flux, total)
+end
