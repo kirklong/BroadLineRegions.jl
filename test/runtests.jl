@@ -769,6 +769,78 @@ end
     @test isapprox(edges[1]*1.1, e2[1], rtol=1e-12) && isapprox(edges[end]*1.1, e2[end], rtol=1e-12)
 end
 
+@testset "composite multiline models (W4-T8)" begin
+    # End-to-end scenario from the W4 plan. Models are deliberately tiny -- seconds, not minutes.
+    # rMin/rMax-form (explicit) DiskWindModel as Hα (reference line; in this parameterization α is a
+    # source-function power law that reaches ONLY the intensity function -- see the W4-T3 testset) +
+    # Hβ added via addLine! parameter reuse with a different α and fluxRatio=0.35.
+    # Radii matter for (c): |v| = √(rₛ/2r) ≲ 0.05 needs r ≳ 200 rₛ, so rMin=300 keeps the Hα/Hβ
+    # wavelength intervals physically disjoint (at smaller radii the overlap would be REAL).
+    rMin, rMax, inc = 300.0, 900.0, 0.4
+    # f2-only (Keplerian shear) intensity gives a double-horned profile whose peaks sit at nonzero
+    # ±|v| -- a meaningful peak position to pin, in the style of the existing DiskWind peak tests.
+    mHα = BLR.DiskWindModel(rMin, rMax, inc; nr=6, nϕ=64, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=0.0, f2=1.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.0)
+    BLR.addLine!(cm; line="Hβ", lineCenter=4861.0, fluxRatio=0.35, α=2.5) #param reuse, intensity-only override
+
+    # (a) identical geometry arrays between the two lines (α override moved only I, not the grid)
+    for var in (:r, :ϕ, :v)
+        @test isequal(BLR.getVariable(cm, var; line="Hα", flatten=true),
+                      BLR.getVariable(cm, var; line="Hβ", flatten=true))
+    end
+
+    # (b) getSpectrum integrated fluxes = the fluxRatios (integrated-flux semantics, decision 3)
+    edges, centers, flux, total = BLR.getSpectrum(cm; bins=64)
+    @test isapprox(sum(flux["Hα"]), 1.0, rtol=1e-12)
+    @test isapprox(sum(flux["Hβ"]), 0.35, rtol=1e-12)
+
+    # (c) Hα/Hβ do not overlap in wavelength at these radii
+    @test isempty(BLR.lineOverlap(cm))
+
+    # (d) each line's profile peaks at the same |v| positions as the equivalent standalone model
+    # (standalones constructed independently -- disk-wind construction is deterministic)
+    mHαAlone = BLR.DiskWindModel(rMin, rMax, inc; nr=6, nϕ=64, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=0.0, f2=1.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    mHβAlone = BLR.DiskWindModel(rMin, rMax, inc; nr=6, nϕ=64, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=0.0, f2=1.0, f3=0.0, f4=0.0, α=2.5,
+        τ=0.4, reflect=false)
+    for (line, standalone) in (("Hα", mHαAlone), ("Hβ", mHβAlone))
+        p = BLR.getProfile(cm, :line; line=line, bins=41, centered=true)
+        q = BLR.getProfile(standalone, :line; bins=41, centered=true)
+        pPeak = p.binCenters[findmax(p.binSums)[2]]
+        qPeak = q.binCenters[findmax(q.binSums)[2]]
+        @test abs(pPeak) == abs(qPeak)
+        @test abs(pPeak) > 0.0 #double-horned: the peak is NOT at line center
+        # second horn mirrors the first (existing peak-pinning style)
+        firstMax = findmax(p.binSums)[2]
+        mask = [j != firstMax for j in eachindex(p.binSums)]
+        secondPeak = p.binCenters[mask][findmax(p.binSums[mask])[2]]
+        @test isapprox(secondPeak, -pPeak, atol=1e-12)
+    end
+
+    # (e) SIGN-CONVENTION PIN (locked decision 4: stored v is redshift-positive -- near-side inflow
+    # stores +v). A FULL disk with pure radial inflow is exactly front/back symmetric in v (the far
+    # side's blueshift mirrors the near side's redshift), so mask the emission to the NEAR side
+    # (ϕ ∈ (-π/2, π/2), the half tilted toward the camera -- IϕDiskWindMask's ϕ=0 is at the camera)
+    # with isotropic (f4-only) emission: pure near-side inflow must put essentially ALL the flux
+    # REDWARD of lineCenter. The symmetric peak tests above cannot catch a mirrored spectrum; this
+    # asymmetric case can. If this test fails, the velocity sign convention broke -- do NOT "fix"
+    # signs in src/ to make it pass (the convention was verified against the source 2026-07-01).
+    mIn = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=64, scale=:linear, τ=0.1, reflect=false,
+        I=BLR.IϕDiskWindMask, v=BLR.vCircularRadialDisk, vᵣFrac=1.0, inflow=true,
+        f1=0.0, f2=0.0, f3=0.0, f4=1.0, α=0.0, ϕMin=-π/2+0.02, ϕMax=π/2-0.02)
+    cmIn = BLR.CompositeModel(mIn; line="inflow", lineCenter=6563.0)
+    _, cIn, fluxIn, _ = BLR.getSpectrum(cmIn; bins=101)
+    lc = cmIn.lineCenters["inflow"]
+    redFlux = sum(fluxIn["inflow"][cIn .> lc])
+    blueFlux = sum(fluxIn["inflow"][cIn .< lc])
+    @test redFlux > blueFlux
+    @test redFlux > 0.99 && blueFlux < 0.01 #near-side pure inflow: all redshifted (unit integral)
+end
+
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
