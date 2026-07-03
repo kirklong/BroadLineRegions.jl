@@ -113,6 +113,23 @@ end
         @test_throws ErrorException _recipe_series(BLR.Profile((cm, :ratio)))
     end
 
+    @testset "profile: degenerate (zero-emission) line does not throw" begin
+        # adversarial review 2026-07-03: a zero-emission line has all-zero :line bins (norm would be
+        # 0 -> divide by zero) and all-NaN intensity-weighted :r bins (norm's NaN-filtered iterator
+        # would be empty -> maximum throws). Both fall back to norm = 1 (plotted unnormalized) so the
+        # other lines still render.
+        mZero = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+            I=BLR.IsotropicIntensity, rescale=0.0, v=BLR.vCircularDisk, τ=0.4, reflect=false)
+        cmZ = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
+        BLR.addLine!(cmZ, mZero; line="dark", lineCenter=4861.3)
+        rdsLine = _recipe_series(BLR.Profile((cmZ,))) #:line -- "dark" bins are all zero
+        @test length(rdsLine) == 2
+        @test all(iszero, rdsLine[2].plotattributes[:y]) #unnormalized zeros, not 0/0 = NaN
+        rdsR = _recipe_series(BLR.Profile((cmZ, :r))) #:r -- "dark" bins are all NaN (0/0 weighted mean)
+        @test length(rdsR) == 2
+        @test all(isnan, rdsR[2].plotattributes[:y]) #plotted as-is (Plots skips NaN points)
+    end
+
     @testset "spectrum" begin
         # no overlap: per-line series + one black "total" series
         sp = BLR.spectrum(cm; bins=40)

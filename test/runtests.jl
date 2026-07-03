@@ -796,6 +796,17 @@ end
     e2, c2, flux2, total2 = BLR.getSpectrum(cm; bins=64, z=0.1)
     @test isapprox(sum(flux2["Ha"]), 1.0, rtol=1e-12)
     @test isapprox(edges[1]*1.1, e2[1], rtol=1e-12) && isapprox(edges[end]*1.1, e2[end], rtol=1e-12)
+
+    # a zero-flux line errors loudly by name instead of silently vanishing from the spectrum
+    # (adversarial review 2026-07-03: fluxRatio/0 = Inf weight would otherwise make binAccumulate!
+    # silently drop every weighted point of that line, breaking sum(flux[line]) == fluxRatio)
+    mZero = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, rescale=0.0, v=BLR.vCircularDisk, τ=0.4, reflect=false)
+    cmZero = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6563.0)
+    BLR.addLine!(cmZero, mZero; line="dark", lineCenter=4861.0)
+    errZ = try BLR._fluxWeights(cmZero); nothing; catch err; err; end
+    @test errZ isa ErrorException && occursin("dark", errZ.msg)
+    @test_throws ErrorException BLR.getSpectrum(cmZero; bins=32)
 end
 
 @testset "composite multiline models (W4-T8)" begin

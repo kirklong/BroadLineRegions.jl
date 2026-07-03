@@ -308,6 +308,10 @@ counts (finite-`I`/NaN-position points occur in practice, so finite-`I` alone is
 Uses the memoized flattened gathers (`getVariable(m, …; flatten=true)` hits `model.cache`) and one
 non-allocating loop. Deliberately **not** memoized itself -- it recomputes per call so nothing new joins
 the `model.cache` invalidation contract; the O(N) sum is noise next to the binning it accompanies.
+
+Errors (naming the offending line) if any line's total flux is not positive: a zero-emission line
+cannot be normalized to unit integral, and the alternative -- an `Inf` weight whose non-finite
+weighted fluxes the binning silently drops -- would make the line quietly vanish from the spectrum.
 """
 function _fluxWeights(cm::CompositeModel)
     weights = Dict{String,Float64}()
@@ -323,6 +327,13 @@ function _fluxWeights(cm::CompositeModel)
                 total += iΔA
             end
         end
+        #a zero (or negative) total cannot be normalized to unit integral -- error loudly by name
+        #rather than produce an Inf weight, whose non-finite weighted fluxes binAccumulate! would
+        #silently drop (the line would just vanish from the spectrum, breaking sum(flux) == fluxRatio)
+        total > 0.0 || error("_fluxWeights: line \"$line\" has no positive integrated flux " *
+            "(Σ I*ΔA = $total over its finite points) -- cannot normalize its profile to unit " *
+            "integral. Check the line's intensity function/mask; a line with no emission cannot " *
+            "carry a fluxRatio.")
         weights[line] = cm.fluxRatios[line] / total
     end
     return weights

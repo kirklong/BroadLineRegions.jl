@@ -959,7 +959,10 @@ Plot line profiles, normalized to the maximum value of each profile.
         xlabel --> "Δv [c]"
         for (i,line) in enumerate(m.lines)
             pLine = getProfile(m, name; line=line)
-            norm = length(m.lines) == 1 ? 1.0 : maximum(abs(b) for b in pLine.binSums if !isnan(b))
+            norm = length(m.lines) == 1 ? 1.0 : maximum((abs(b) for b in pLine.binSums if !isnan(b)); init=0.0)
+            #degenerate line (all-NaN or all-zero bins, e.g. zero emission): plot unnormalized rather
+            #than throw on an empty iterator / divide by zero -- the other lines must still render
+            norm > 0.0 || (norm = 1.0)
             @series begin
                 subplot := 1
                 seriestype := :path
