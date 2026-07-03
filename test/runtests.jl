@@ -601,6 +601,35 @@ end
     @test_throws ErrorException BLR.rebuild(mDW; notARealKey=1.0)
     # a valid override is accepted and broadcasts to the leaf
     @test typeof(BLR.rebuild(mDW; τ=0.9)) == BLR.model
+
+    # (g) getindex propagates the matching :+ params subtree to extracted submodels,
+    # for both association orders (a, b, e reused from (d′) above)
+    ln = (a + b) + e
+    for m3 in (ln, rn)
+        @test m3[1].params == a.params
+        @test m3[2].params == b.params
+        @test m3[3].params == e.params
+    end
+    # the extracted record is rebuild-able (philox cloud -> bit-identical gas)
+    @test _cloud_field_tuple(BLR.rebuild(rn[2])) == _cloud_field_tuple(b)
+    # single-slot extraction of a leaf model is the whole model -> the record transfers
+    @test mDW[1].params == mDW.params
+    # a side built without a public constructor stays params-less without breaking the other side
+    # (the known side's slot count pins the unknown side's arithmetically)
+    aRaw = deepcopy(a); aRaw.params = nothing
+    mMix = aRaw + e
+    @test mMix[1].params === nothing
+    @test mMix[2].params == e.params
+    # submodels sliced out of a multi-slot raytraced model carry no construction record (raytrace!
+    # compacts/regroups slots, and re-raytracing a slice alone is not equivalent to slicing the
+    # raytraced whole -- occlusion couples the submodels); rt from (e) above is multi-slot here
+    @test length(rt.subModelStartInds) > 1
+    @test all(rt[j].params === nothing for j in 1:length(rt.subModelStartInds))
+    # ...but a leaf added on top of a raytraced model still resolves
+    mRtPlus = rt + e
+    nSlots = length(mRtPlus.subModelStartInds)
+    @test mRtPlus[nSlots].params == e.params
+    @test mRtPlus[1].params === nothing
 end
 
 @testset "CompositeModel + addLine! (W4-T2/T3)" begin
