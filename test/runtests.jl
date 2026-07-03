@@ -471,6 +471,52 @@ end
     end
 end
 
+@testset "+ associativity (W4-T0)" begin
+    # Bug being fixed: Base.:+ used to push! a single boundary for the whole
+    # right-hand operand, discarding its internal subModelStartInds -- so
+    # a+(b+c) collapsed to 2 slots vs 3 for (a+b)+c. Models here are kept
+    # deliberately tiny; this testset should add seconds, not minutes.
+    d(; r1=300.0, r2=900.0, nr=3, nϕ=6, inc=0.4, τ=0.4) =
+        BLR.DiskWindModel(r1, r2, inc, nr=nr, nϕ=nϕ, scale=:linear,
+            I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=τ, reflect=false)
+    c(n, seed; μ=600.0, inc=0.4, τ=0.1) =
+        BLR.cloudModel(n, μ=μ, β=1.0, F=0.5, θₒ=0.4, i=inc, γ=1.0, ξ=1.0,
+            I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=τ, rng=:philox, seed=seed)
+
+    a = d(r1=300.0, r2=500.0)
+    b = c(20, 201)
+    e = d(r1=600.0, r2=800.0)
+
+    left = (a + b) + e
+    right = a + (b + e)
+
+    # (a) associativity: identical submodel boundaries (3 slots, not 2) and
+    # identical flattened camera indices.
+    @test length(left.subModelStartInds) == 3
+    @test left.subModelStartInds == right.subModelStartInds
+    @test BLR.getFlattenedCameraIndices(left) == BLR.getFlattenedCameraIndices(right)
+
+    # raytrace! returns a NEW model rather than mutating -- capture the return.
+    rtLeft = BLR.raytrace!(left)
+    rtRight = BLR.raytrace!(right)
+    LPLeft = BLR.getProfile(rtLeft, :line, bins=11, centered=true)
+    LPRight = BLR.getProfile(rtRight, :line, bins=11, centered=true)
+    @test LPLeft.binSums == LPRight.binSums
+    @test LPLeft.binCenters == LPRight.binCenters
+
+    # (b) mixed right-nest disk+(cloud+disk) matches its left-associated
+    # equivalent (a,b,e above already form exactly this disk/cloud/disk mix).
+    mixedRight = a + (b + e)
+    mixedLeft = (a + b) + e
+    @test mixedRight.subModelStartInds == mixedLeft.subModelStartInds
+    rtMixedRight = BLR.raytrace!(mixedRight)
+    rtMixedLeft = BLR.raytrace!(mixedLeft)
+    LPmr = BLR.getProfile(rtMixedRight, :line, bins=11, centered=true)
+    LPml = BLR.getProfile(rtMixedLeft, :line, bins=11, centered=true)
+    @test LPmr.binSums == LPml.binSums
+    @test LPmr.binCenters == LPml.binCenters
+end
+
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
