@@ -1,5 +1,6 @@
 using RecipesBase
 using KernelAbstractions
+using Plots # the W4-T7 CompositeModel testset checks recipe entry points that return Plots.Plot objects
 
 # Apply a @userplot recipe without a plotting backend and gather, per attribute, the concatenated &
 # sorted values across all generated series. A scatter recipe is order-independent (it's a point
@@ -73,5 +74,89 @@ _nanapprox(a, b; rtol=1e-10) = length(a) == length(b) &&
         @test rds[1].plotattributes[:y] ≈ ref.binSums           # single profile is unnormalized
         # a ResidentModel stores no preset profiles, so a bare profile(rm) must error
         @test_throws ErrorException _recipe_series(BLR.Profile((rm,)))
+    end
+end
+
+@testset "Plots recipes: CompositeModel (W4-T7)" begin
+    # Tiny two-line composite sharing one geometry (mirrors the style of the W4-T4/T5/T6 testset in
+    # runtests.jl) -- deliberately small, this testset should add seconds, not minutes.
+    mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
+    BLR.addLine!(cm, mDisk; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
+
+    @testset "profile: bare `profile` struct" begin
+        p = BLR.getProfile(mDisk, :line, bins=21)
+        rds = _recipe_series(BLR.Profile((p,)))
+        @test length(rds) == 1
+        @test rds[1].plotattributes[:x] == p.binCenters
+        @test rds[1].plotattributes[:y] == p.binSums   # bare struct is plotted unnormalized
+    end
+
+    @testset "profile: CompositeModel" begin
+        # default variable (:line): one series per line, labeled by line name, each normalized by its
+        # own max |binSums| (so shapes are comparable regardless of fluxRatio).
+        rds = _recipe_series(BLR.Profile((cm,)))
+        @test length(rds) == length(cm.lines)
+        for (i, line) in enumerate(cm.lines)
+            pLine = BLR.getProfile(cm, :line; line=line)
+            norm = maximum(abs(b) for b in pLine.binSums if !isnan(b))
+            @test rds[i].plotattributes[:label] == line
+            @test rds[i].plotattributes[:x] == pLine.binCenters
+            @test rds[i].plotattributes[:y] ≈ pLine.binSums ./ norm
+        end
+        # an explicit profile name is honored too
+        rdsR = _recipe_series(BLR.Profile((cm, :line)))
+        @test length(rdsR) == length(cm.lines)
+        # :ratio isn't implemented until W5 -- the CompositeModel getProfile forwarding errors clearly
+        @test_throws ErrorException _recipe_series(BLR.Profile((cm, :ratio)))
+    end
+
+    @testset "spectrum" begin
+        # no overlap: per-line series + one black "total" series
+        sp = BLR.spectrum(cm; bins=40)
+        @test sp isa Plots.Plot
+        @test length(sp.series_list) == length(cm.lines) + 1
+        labels = [s[:label] for s in sp.series_list]
+        @test all(line -> line in labels, cm.lines)
+        @test "total" in labels
+        totalSeries = only(filter(s -> s[:label] == "total", sp.series_list))
+        @test totalSeries[:linewidth] == 2
+
+        # overlapping lines add one shaded band series per overlapping pair
+        cA, cB = 6563.0, 6600.0
+        cmO = BLR.CompositeModel(mDisk; line="A", lineCenter=cA)
+        BLR.addLine!(cmO, mDisk; line="B", lineCenter=cB)
+        ov = BLR.lineOverlap(cmO)
+        @test length(ov) == 1
+        spO = BLR.spectrum(cmO; bins=40)
+        @test length(spO.series_list) == length(cmO.lines) + 1 + length(ov)
+    end
+
+    @testset "image forwarding" begin
+        im = BLR.image(cm, :I; line="Ha")
+        @test im isa Plots.Plot
+        @test length(im.series_list) == 1
+        # `line` has no default -- an intensity image mixing lines' arbitrary units is not meaningful
+        @test_throws UndefKeywordError BLR.image(cm, :I)
+    end
+
+    @testset "plot3d forwarding" begin
+        # line=<name> is identical to plotting that line's model directly
+        pLine = BLR.plot3d(cm; line="Ha")
+        pDirect = BLR.plot3d(mDisk)
+        @test pLine isa Plots.Plot
+        @test length(pLine.series_list) == length(pDirect.series_list)
+
+        # line=nothing (default) overlays every line: one scatter3d series per line (single-submodel
+        # models here) plus one camera-annotation series (annotate=true default)
+        pAll = BLR.plot3d(cm)
+        @test pAll isa Plots.Plot
+        @test length(pAll.series_list) == length(cm.lines) + 1
+
+        # annotate=false drops the camera series
+        pNoAnnotate = BLR.plot3d(cm, false)
+        @test length(pNoAnnotate.series_list) == length(cm.lines)
     end
 end

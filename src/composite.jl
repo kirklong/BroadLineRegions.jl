@@ -462,3 +462,148 @@ function getSpectrum(cm::CompositeModel; bins::Union{Int,Vector{Float64}}=100, z
     end
     return (edges, centers, flux, total)
 end
+
+#================================= W4-T7: visualization =================================#
+# Include-order note: src/BroadLineRegions.jl includes util.jl (position 2) long before composite.jl
+# (position after operators.jl) -- any top-level method *signature* annotated `::CompositeModel` would
+# UndefVarError there, since the type doesn't exist yet at parse time. `@userplot Profile`'s CompositeModel
+# support therefore lives as a runtime `isa CompositeModel` branch INSIDE that recipe's body (util.jl,
+# fine because the name resolves when the recipe is actually applied, long after the module has finished
+# loading) -- see the `profile`/`Profile` docstring there. Everything below needs a `::CompositeModel`
+# signature (or calls composite-only helpers like `getSpectrum`/`lineOverlap`), so it lives here instead.
+# `Plots`/`RecipesBase` (and their `@recipe`/`@userplot` macros) are already in scope module-wide from
+# util.jl's `using Plots, RecipesBase` (position 2) by the time this file is included -- no include-order
+# change needed for that part.
+
+"""
+    spectrum(cm::CompositeModel; z=0.0, bins=100, kwargs...)
+
+Combined wavelength-space spectrum plot: one series per line plus a black `"total"` series (both from
+[`getSpectrum`](@ref)), with pairwise line overlaps ([`lineOverlap`](@ref)) shaded as gray bands behind
+the curves.
+
+# Keywords
+- `z::Real=0.0`: redshift, forwarded to `getSpectrum` (`z=0` = rest frame; matches `getSpectrum`'s
+  observed-frame convention).
+- `bins::Union{Int,Vector{Float64}}=100`: bin count or explicit edge vector, forwarded to `getSpectrum`.
+- other `kwargs...`: ordinary `Plots` attributes.
+
+`lineOverlap` reports rest-frame wavelength intervals; they are scaled by `(1+z)` here before shading so
+the bands line up with the (possibly redshifted) spectrum.
+"""
+@userplot Spectrum
+@recipe function f(s::Spectrum; z=0.0, bins=100)
+    length(s.args) == 1 || error("spectrum(cm): expected a single CompositeModel argument, got $(s.args)")
+    cm = s.args[1]
+    edges, centers, flux, total = getSpectrum(cm; bins=bins, z=z)
+    title --> "Composite spectrum"
+    xlabel --> "λ [input units]"
+    ylabel --> "flux [arb.]"
+    legend --> :topright
+    overlaps = lineOverlap(cm)
+    if !isempty(overlaps)
+        ymin = min(0.0, minimum(total))
+        ymax = 1.05*maximum(total)
+        for ov in overlaps
+            lo = ov.λlo*(1.0+z); hi = ov.λhi*(1.0+z) #rest-frame -> observed frame (decision 4/W4-T5)
+            @series begin
+                subplot := 1
+                seriestype := :shape
+                fillcolor --> :gray
+                fillalpha --> 0.25
+                linealpha --> 0.0
+                label --> ""
+                x := [lo, hi, hi, lo]
+                y := [ymin, ymin, ymax, ymax]
+                ()
+            end
+        end
+    end
+    for (i,line) in enumerate(cm.lines)
+        @series begin
+            subplot := 1
+            seriestype := :path
+            color --> i
+            label --> line
+            x := centers
+            y := flux[line]
+            ()
+        end
+    end
+    @series begin
+        subplot := 1
+        seriestype := :path
+        color --> :black
+        linewidth --> 2
+        label --> "total"
+        x := centers
+        y := total
+        ()
+    end
+end
+
+"""
+    image(cm::CompositeModel, [variable]; line::String, kwargs...)
+
+Per-line forwarding of the [`image`](@ref) recipe: renders `cm[line]` exactly as
+`image(cm[line], variable; kwargs...)` would. `line` is required (no default) -- unlike [`plot3d`](@ref),
+an intensity image has no meaningful "overlay all lines" mode (each line's `I` is in its own arbitrary
+units, so mixing them in one color scale would be misleading).
+"""
+function image(cm::CompositeModel, variable::Union{String,Symbol,Function}=:I; line::String, kwargs...)
+    return image(cm[line], variable; kwargs...)
+end
+
+"""
+    plot3d(cm::CompositeModel, [variable], [annotate]; line=nothing, kwargs...)
+
+Per-line forwarding of the [`plot3d`](@ref) recipe for a [`CompositeModel`](@ref).
+
+- `line::String`: identical to `plot3d(cm[line], variable, annotate; kwargs...)`.
+- `line=nothing` (default): overlay **every** line's geometry on one 3D plot, one solid color per line.
+  Reuses [`_plot3d_submodels`](@ref) -- the same per-submodel point gather the single-model `plot3d`
+  recipe uses -- for each line's `(x,y,z)` (and its NaN mask on `variable`); unlike the single-model
+  recipe this does NOT color points by `variable`'s value (a shared colormap across lines with
+  independently-scaled intensities/variables would not be meaningful) -- points are colored by line
+  instead, and `variable` only selects which column supplies the per-point finite/NaN mask (default
+  `geometry`, i.e. no masking, matching the single-model recipe's default).
+"""
+function plot3d(cm::CompositeModel, args...; line::Union{Nothing,String}=nothing, kwargs...)
+    line !== nothing && return plot3d(cm[line], args...; kwargs...)
+    variable, annotate = geometry, true
+    if length(args) == 1
+        args[1] isa Bool ? (annotate = args[1]) : (variable = args[1])
+    elseif length(args) == 2
+        tmp1, tmp2 = args
+        if tmp1 isa Bool
+            annotate, variable = tmp1, tmp2
+        else
+            variable, annotate = tmp1, tmp2
+        end
+    elseif length(args) > 2
+        throw(ArgumentError("plot3d(cm; line=nothing) overlay expects up to 2 positional arguments (variable, annotate), got $(length(args))"))
+    end
+    perLine = [_plot3d_submodels(cm[l], variable) for l in cm.lines] #(subs, camR) per line -- exactly what the single-model recipe gathers
+    finiteMax(v) = maximum(t for t in v if !isnan(t))
+    boxSize = maximum(camR for (_,camR) in perLine)
+    for (subs,_) in perLine, sub in subs
+        boxSize = max(boxSize, 1.1*max(finiteMax(sub.x), finiteMax(sub.y), finiteMax(sub.z)))
+    end
+    p = Plots.plot(; xlabel="x [rₛ]", ylabel="y [rₛ]", zlabel="z [rₛ]", aspect_ratio=:equal,
+        title="System geometry (all lines)", foreground_color_legend=nothing,
+        xlims=(-boxSize,boxSize), ylims=(-boxSize,boxSize), zlims=(-boxSize,boxSize), kwargs...)
+    for (i,l) in enumerate(cm.lines)
+        subs, _ = perLine[i]
+        for (k,sub) in enumerate(subs)
+            finite = .!isnan.(sub.mz)
+            Plots.scatter3d!(p, sub.x[finite], sub.y[finite], sub.z[finite];
+                markerstrokewidth=0.0, markersize=1.0, markeralpha=(sub.disk ? 0.9 : 0.1),
+                color=i, label=(k == 1 ? l : ""))
+        end
+    end
+    if annotate
+        Plots.plot!(p, [0,boxSize], [0,0], [0,0]; seriestype=:path, linecolor=:dodgerblue,
+            linewidth=1.0, linestyle=:dash, arrow=:arrow, label="camera")
+    end
+    return p
+end
