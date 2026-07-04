@@ -423,30 +423,46 @@ equals `fluxRatios[line]` (decision 3).
   to every line's `binnedSum`, whose deterministic `constructBinEdges` yields bit-identical edges and
   preserves the uniform direct-index fast path.
 - `z::Real=0.0`: redshift; `z=0` = rest frame, `z>0` shifts to the observed frame.
-- `overflow` (via `kwargs`): honored **only** when `bins` is a user-supplied edge vector (default
-  `false`, so out-of-range flux drops against a data grid). For internally-constructed integer-`bins`
-  edges `overflow` is forced `true` -- non-centered edges built at exactly `[λmin, λmax]` place each
+- `minX`/`maxX::Union{Real,Nothing}=nothing`: pin one or both ends of the shared wavelength grid
+  (observed frame, i.e. after the `(1+z)` shift) instead of auto-computing them from the lines' finite
+  ranges -- forwarded to every line's [`binnedSum`](@ref) like the other binning keywords the simple
+  `model` methods forward. Ignored when `bins` is an edge vector (the edges pin the grid).
+- `centered::Bool=false`: forwarded to `binnedSum`/`constructBinEdges`. The default `false` builds
+  edges at exactly `[minX, maxX]`; `centered=true` pads them half a bin so the extremes fall in bin
+  centers, as in the `getProfile` default.
+- `overflow::Union{Bool,Nothing}=nothing`: an explicit `true`/`false` is forwarded to `binnedSum`
+  untouched. The default (`nothing`) resolves to `true` for integer `bins` and `false` for a
+  user-supplied edge vector: non-centered internal edges built at exactly `[λmin, λmax]` place each
   line's extremal points on the boundary, which `binnedSum` otherwise drops (deliberate package-wide
-  convention); `overflow=true` is the sanctioned mechanism to keep them and is what makes the integrated
-  flux exact.
+  convention) -- `overflow=true` is the sanctioned mechanism to keep them, is what makes the integrated
+  flux exact, and (for a user-narrowed `minX`/`maxX` window) keeps out-of-window flux by accumulating
+  it into the boundary bins. Pass `overflow=false` explicitly for drop-outside-the-window semantics;
+  against a user edge vector (a data grid) out-of-range flux drops by default.
 """
-function getSpectrum(cm::CompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0, kwargs...)
-    #shared wavelength range across all lines (observed frame), from the per-line finite velocity ranges
-    λmin = Inf; λmax = -Inf
-    for line in cm.lines
-        vmin, vmax = _finiteVRange(cm.models[line])
-        (isnan(vmin) || isnan(vmax)) && continue
-        λc = cm.lineCenters[line]
-        lo = wavelength(vmin, λc)*(1.0+z); hi = wavelength(vmax, λc)*(1.0+z)
-        lo < λmin && (λmin = lo)
-        hi > λmax && (λmax = hi)
+function getSpectrum(cm::CompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0,
+        minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
+        centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    #shared wavelength range across all lines (observed frame): any side not pinned by the caller via
+    #minX/maxX is auto-computed from the per-line finite velocity ranges (both pinned -> skip the pass)
+    λmin = minX === nothing ? Inf : Float64(minX)
+    λmax = maxX === nothing ? -Inf : Float64(maxX)
+    if minX === nothing || maxX === nothing
+        for line in cm.lines
+            vmin, vmax = _finiteVRange(cm.models[line])
+            (isnan(vmin) || isnan(vmax)) && continue
+            λc = cm.lineCenters[line]
+            lo = wavelength(vmin, λc)*(1.0+z); hi = wavelength(vmax, λc)*(1.0+z)
+            minX === nothing && lo < λmin && (λmin = lo)
+            maxX === nothing && hi > λmax && (λmax = hi)
+        end
     end
     (isfinite(λmin) && isfinite(λmax)) || error("getSpectrum: no line has any finite points -- cannot " *
         "build a spectrum (every line's I*ΔA / v is NaN everywhere).")
 
-    #overflow: forced true for internally-constructed integer-bins edges (keeps boundary points);
-    #for a user edge vector, pass through untouched (default false -- out-of-range flux drops).
-    overflow = (typeof(bins) == Int) ? true : get(kwargs, :overflow, false)
+    #overflow default: true for integer-bins edges (keeps boundary/out-of-window points -- preserves the
+    #integrated-flux identity), false for a user edge vector (out-of-range flux drops against a data
+    #grid). An explicit user overflow always wins.
+    overflow = overflow === nothing ? (bins isa Int) : overflow
 
     weights = _fluxWeights(cm)
     flux = Dict{String,Vector{Float64}}()
@@ -461,7 +477,7 @@ function getSpectrum(cm::CompositeModel; bins::Union{Int,Vector{Float64}}=100, z
         y = (I .* ΔA) .* w
         #integer bins -> pass minX/maxX (no edge vector); constructBinEdges is deterministic so every
         #line gets bit-identical edges. A user edge vector ignores minX/maxX inside binnedSum.
-        e, c, r = binnedSum(x, y; bins=bins, minX=λmin, maxX=λmax, centered=false, overflow=overflow)
+        e, c, r = binnedSum(x, y; bins=bins, minX=λmin, maxX=λmax, centered=centered, overflow=overflow)
         if edges === nothing
             edges = e; centers = c
         end

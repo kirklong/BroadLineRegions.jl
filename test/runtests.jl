@@ -807,6 +807,30 @@ end
     errZ = try BLR._fluxWeights(cmZero); nothing; catch err; err; end
     @test errZ isa ErrorException && occursin("dark", errZ.msg)
     @test_throws ErrorException BLR.getSpectrum(cmZero; bins=32)
+
+    # --- T6 follow-up: the binnedSum binning kwargs (minX/maxX/centered/overflow) forward through
+    # getSpectrum like they do through the simple model methods (getProfile -> binModel -> binnedSum) ---
+    # pinning the grid via minX/maxX at the auto-computed ends reproduces the default bit-identically
+    eP, cP, fluxP, totalP = BLR.getSpectrum(cm; bins=64, minX=edges[1], maxX=edges[end])
+    @test eP == edges && cP == centers
+    @test fluxP["Ha"] == flux["Ha"] && fluxP["Hb"] == flux["Hb"] && totalP == total
+    # a padded window moves the grid ends and keeps the integrated-flux identity (extremes interior)
+    ePad, _, fluxPad, _ = BLR.getSpectrum(cm; bins=64, minX=edges[1]-1.0, maxX=edges[end]+1.0)
+    @test ePad[1] == edges[1]-1.0 && ePad[end] == edges[end]+1.0
+    @test isapprox(sum(fluxPad["Ha"]), 1.0, rtol=1e-12) && isapprox(sum(fluxPad["Hb"]), 0.35, rtol=1e-12)
+    # centered=true pads the edges half a bin past the data (the getProfile default convention);
+    # the integrated-flux identity still holds (nothing sits on a boundary)
+    eC, _, fluxC, _ = BLR.getSpectrum(cm; bins=64, centered=true)
+    @test eC[1] < edges[1] && eC[end] > edges[end]
+    @test isapprox(sum(fluxC["Ha"]), 1.0, rtol=1e-12) && isapprox(sum(fluxC["Hb"]), 0.35, rtol=1e-12)
+    # user-narrowed window: the default overflow=true accumulates out-of-window flux into the boundary
+    # bins (integrated-flux identity preserved); explicit overflow=false drops it (windowing semantics)
+    win = (centers[10], centers[50]) #interior window -- both lines have flux outside it
+    eN, _, fluxN, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2])
+    @test isapprox(sum(fluxN["Ha"]) + sum(fluxN["Hb"]), 1.35, rtol=1e-12)
+    eD, _, fluxD, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2], overflow=false)
+    @test eD == eN #same window, same edges -- only the boundary handling differs
+    @test sum(fluxD["Ha"]) + sum(fluxD["Hb"]) < 1.35 - 1e-6 #out-of-window flux dropped
 end
 
 @testset "composite multiline models (W4-T8)" begin
@@ -887,7 +911,10 @@ include("gpu_kernels.jl")
 include("recipes.jl")
 
 # GPU correctness tests are opt-in: they need a CUDA device and the CUDA.jl weak dependency in the
-# active environment. Run with `BLR_TEST_CUDA=1` from an env that has CUDA.jl available.
+# active environment. Run with `BLR_TEST_CUDA=1 julia --project=<env> test/runtests.jl` where <env>
+# has this package Pkg.develop'ed plus CUDA.jl AND the test extras (StableRNGs, Plots, RecipesBase,
+# KernelAbstractions) -- the extras aren't loadable outside Pkg.test's sandbox, so a bare CUDA env
+# is not enough to run this file directly.
 if get(ENV, "BLR_TEST_CUDA", "0") == "1"
     include("gpu_cuda.jl")
 else
