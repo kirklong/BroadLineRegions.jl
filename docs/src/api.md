@@ -39,5 +39,5 @@ Several internal optimizations affect how you should interact with models:
 ```@autodocs
 Modules = [BroadLineRegions]
 Order = [:function,:type,:macro]
-Pages = ["structs.jl","clouds.jl","operators.jl","intensity.jl","velocity.jl","profiles.jl","transfer.jl","raytrace.jl","util.jl","gpu_arrays.jl","gpu_construct.jl","gpu_raytrace.jl","gpu_observables.jl"]
+Pages = ["structs.jl","clouds.jl","operators.jl","composite.jl","rebuild.jl","intensity.jl","velocity.jl","profiles.jl","transfer.jl","raytrace.jl","util.jl","gpu_arrays.jl","gpu_construct.jl","gpu_raytrace.jl","gpu_observables.jl"]
 ```

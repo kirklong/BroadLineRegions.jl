@@ -424,6 +424,18 @@ A mutable structure to hold many rings and their parameters that model the BLR.
   don't re-gather data from the rings. Managed automatically by the package's own mutating functions;
   if you mutate ring fields directly, call `reset!(m)` afterwards to invalidate it. Set to `nothing`
   to disable caching for a model entirely.
+- `params::Union{Nothing,NamedTuple}`: Construction provenance recorded by the *public* constructors
+  (`DiskWindModel`, `cloudModel`) and propagated recursively through `+` and `raytrace!`. Its first
+  entry is always `constructor=<Symbol>` naming how the model was built; leaf records store the
+  arguments that constructor was called with, `:+` records `left`/`right` subtrees, and `:raytrace!`
+  records the raytrace arguments plus a `parent` subtree. Used by [`rebuild`](@ref BLR.rebuild) to
+  reconstruct (or re-parameterize) a model. `nothing` when the model was not built by a public
+  constructor. This captures *construction* history ONLY -- in-place mutators (`removeNaN!`,
+  `zeroDiskObscuredClouds!`) are NOT recorded, so a caller who ran them must re-apply the same calls
+  in the same order to a rebuilt model. `removeNaN!` is observable-neutral (every binned observable
+  already skips non-finite points), so the only unrecorded mutator with a physical effect is
+  `zeroDiskObscuredClouds!`, which is deterministic and cheap to re-run. `params` is metadata only and
+  never affects numerics.
 
 # Constructors
 ```julia
@@ -451,6 +463,7 @@ mutable struct model
     camera::Union{Nothing,camera}
     subModelStartInds::Vector{Int} #indices of start of each submodel in list of rings
     cache::Union{Nothing,Dict{Any,Array}} #memoized getVariable results, keyed by (variable, flatten); set to nothing to disable caching entirely
+    params::Union{Nothing,NamedTuple} #construction provenance (metadata only, never affects numerics); see docstring + rebuild
     #cache contract: any code that mutates ring fields directly must call reset!(m) (which empties the
     #cache) before the next getVariable/getProfile call -- the package's own mutating functions
     #(removeNaN!, raytrace!, zeroDiskObscuredClouds!, removeDiskObscuredClouds!, +) handle this themselves
@@ -458,11 +471,12 @@ mutable struct model
     #also keep track of xyz in this new struct? call it coords and have one field be camera and the other be system
     #or just put it in each ring? probably less cluttered/better...do tomorrow
 
-    function model(rings::Vector{ring},profiles::Union{Nothing,Dict{Symbol,profile}},camera::Union{Nothing,camera},subModelStartInds::Vector{Int})
+    function model(rings::Vector{ring},profiles::Union{Nothing,Dict{Symbol,profile}},camera::Union{Nothing,camera},subModelStartInds::Vector{Int},params::Union{Nothing,NamedTuple}=nothing)
         """
         constructor for model struct -- takes in rings, profiles, camera, and subModelStartInds and returns a model object (detailed above) while checking for errors
+        params (construction provenance) defaults to nothing unless explicitly given
         """
-        new(rings,profiles,camera,subModelStartInds,Dict{Any,Array}())
+        new(rings,profiles,camera,subModelStartInds,Dict{Any,Array}(),params)
     end
 
     function model(rings::Vector{ring{Vector{Float64},Float64}})
@@ -474,7 +488,7 @@ mutable struct model
             xyz = getXYZ(r) #cached (or computed once here) system coordinates -- camera is at +x so α = y and β = z (see photograph)
             α[i] = xyz[2]; β[i] = xyz[3]
         end
-        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}())
+        new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}(),nothing)
     end
 
     function model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
@@ -533,7 +547,7 @@ mutable struct model
         Threads.@threads for k in 1:nr
             rings[k] = ring(r = rSystem[k], i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕSystem[k], ϕ₀ = ϕ₀[k], ΔA = ΔA[k], rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=η[k], x=xSystem[k], y=ySystem[k], z=zSystem[k]; kwargs...)
         end
-        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}())
+        m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}(),nothing)
     end
 
     function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
@@ -585,7 +599,9 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 Similar to other DiskWind model constructor but must explicitly pass `rMin` and `rMax`.
 """
 function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
-    return model(rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
+    m = model(rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
+    m.params = (; constructor=:DiskWindModel, rMin=rMin, rMax=rMax, i=i, nr=nr, nϕ=nϕ, I=I, v=v, scale=scale, kwargs...)
+    return m
 end
 
 """
@@ -612,7 +628,9 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 Similar to another DiskWind model constructor but here we pass `r̄`, `rFac`, and `α`.
 """
 function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
-    return model(r̄, rFac, α, i, nr, nϕ, scale; kwargs...)
+    m = model(r̄, rFac, α, i, nr, nϕ, scale; kwargs...)
+    m.params = (; constructor=:DiskWindModelMean, r̄=r̄, rFac=rFac, α=α, i=i, rot=rot, nr=nr, nϕ=nϕ, scale=scale, kwargs...)
+    return m
 end
 
 """
@@ -647,7 +665,10 @@ function cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Floa
     I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,kwargs...)
     @assert length(ϕ₀) == length(i) == length(rot) == length(θₒ) "ϕ, i, rot, and θₒ must be the same length -- got $(length(ϕ)), $(length(i)), $(length(rot)), and $(length(θₒ))"
     rings = [drawCloud(i=i[j],θₒ=θₒ[j],rot=rot[j],ϕ₀=ϕ₀[j],μ=μ,F=F,β=β,rₛ=rₛ,θₒSystem=θₒSystem,I=I,v=v,ξ=ξ;kwargs...) for j=1:length(ϕ₀)]
-    return model(rings)
+    m = model(rings)
+    #store the argument vectors by reference (no copies) -- the only cost is keeping the inputs alive
+    m.params = (; constructor=:cloudModelVectors, ϕ₀=ϕ₀, i=i, rot=rot, θₒ=θₒ, θₒSystem=θₒSystem, ξ=ξ, rₛ=rₛ, μ=μ, β=β, F=F, I=I, v=v, kwargs...)
+    return m
 end
 
 const _PHILOX_CLOUD_KEY2 = 0x9e3779b97f4a7c15
@@ -721,17 +742,27 @@ function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float6
         seed === nothing && throw(ArgumentError("cloudModel(...; rng=:philox) requires an explicit integer seed"))
         rings = _philox_cloud_rings(nClouds, seed; parallel=parallel, μ=μ, β=β, F=F, rₛ=rₛ,
             θₒ=θₒ, γ=γ, ξ=ξ, i=i, I=I, v=v, kwargs...)
-        return model(rings)
+        m = model(rings)
+        m.params = (; constructor=:cloudModel, nClouds=nClouds, μ=μ, β=β, F=F, rₛ=rₛ, θₒ=θₒ, γ=γ,
+            ξ=ξ, i=i, I=I, v=v, rng=:philox, seed=seed, parallel=parallel, kwargs...)
+        return m
     elseif rng isa Symbol
         throw(ArgumentError("unsupported cloudModel rng symbol: $rng"))
     elseif seed !== nothing
         throw(ArgumentError("seed is only used with rng=:philox; pass rng=MersenneTwister(seed) for the legacy path"))
     end
+    #capture the nClouds-level record now, with i still the scalar system inclination (it is
+    #overwritten by the per-cloud vector below). rng=:legacy: the RNG state is consumed, so a rebuild
+    #cannot reproduce these exact draws -- it re-draws statistically-equivalent gas from GLOBAL_RNG.
+    legacyParams = (; constructor=:cloudModel, nClouds=nClouds, μ=μ, β=β, F=F, rₛ=rₛ, θₒ=θₒ, γ=γ,
+        ξ=ξ, i=i, I=I, v=v, rng=:legacy, seed=seed, parallel=parallel, kwargs...)
     ϕ₀ = rand(rng,nClouds).*2π
     θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(rng,nClouds).^γ) #θₒ for each cloud, from eqn 14
     rot = rand(rng,nClouds).*2π
     i = ones(nClouds).*i
-    return cloudModel(ϕ₀,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
+    m = cloudModel(ϕ₀,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
+    m.params = legacyParams #overwrite the inner :cloudModelVectors record with the nClouds-level one
+    return m
 end
 Base.show(io::IO, m::model) = begin 
     println(io, "model struct with $(length(m.rings)) rings:")

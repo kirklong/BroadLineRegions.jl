@@ -517,13 +517,404 @@ end
     @test LPmr.binCenters == LPml.binCenters
 end
 
+@testset "model params + rebuild (W4-T1)" begin
+    # Models here are deliberately tiny -- this testset should add seconds, not minutes.
+    cloudArgs = (; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=1.0,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1)
+
+    # (a) rMin/rMax-form DiskWindModel records :DiskWindModel; rebuild -> bit-identical :line binSums
+    mDW = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4, reflect=false)
+    @test mDW.params.constructor == :DiskWindModel
+    @test mDW.params.rMin == 300.0 && mDW.params.rMax == 900.0
+    mDWr = BLR.rebuild(mDW)
+    @test BLR.getProfile(mDW, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(mDWr, :line, bins=21, centered=true).binSums
+
+    # mean-form (:DiskWindModelMean) also records provenance and round-trips
+    mMean = BLR.DiskWindModel(500.0, 5.0, 1.0, 0.4; nr=8, nϕ=16, scale=:log,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    @test mMean.params.constructor == :DiskWindModelMean
+    @test BLR.getProfile(mMean, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(BLR.rebuild(mMean), :line, bins=21, centered=true).binSums
+
+    # (b) philox cloudModel rebuilt from params is bit-identical
+    mC = BLR.cloudModel(64; rng=:philox, seed=42, cloudArgs...)
+    @test mC.params.constructor == :cloudModel
+    @test mC.params.rng == :philox && mC.params.seed == 42
+    @test _cloud_field_tuple(mC) == _cloud_field_tuple(BLR.rebuild(mC))
+
+    # (c) legacy-rng cloud model records rng=:legacy
+    mLeg = BLR.cloudModel(32; rng=MersenneTwister(7), cloudArgs...)
+    @test mLeg.params.constructor == :cloudModel
+    @test mLeg.params.rng == :legacy
+
+    # vectors-form cloudModel records :cloudModelVectors; rebuild reproduces the (input) ϕ₀
+    ϕ₀v = collect(range(0.0, 2π, length=9))[1:8]
+    mVec = BLR.cloudModel(ϕ₀v, fill(0.4, 8), fill(0.1, 8), fill(0.4, 8), 0.4, 1.0;
+        μ=600.0, I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, rng=MersenneTwister(3), τ=0.0)
+    @test mVec.params.constructor == :cloudModelVectors
+    @test isequal(BLR.getVariable(BLR.rebuild(mVec), :ϕ₀, flatten=true),
+                  BLR.getVariable(mVec, :ϕ₀, flatten=true))
+
+    # (d) combined diskwind + philox-cloud records the nested :+ node; rebuild reproduces both
+    # submodels bit-identically INCLUDING subModelStartInds (use isequal -- disk has NaN sentinels)
+    mCombined = mDW + mC
+    @test mCombined.params.constructor == :+
+    @test mCombined.params.left.constructor == :DiskWindModel
+    @test mCombined.params.right.constructor == :cloudModel
+    mCombinedR = BLR.rebuild(mCombined)
+    @test mCombinedR.subModelStartInds == mCombined.subModelStartInds
+    @test isequal(BLR.getVariable(mCombinedR, :v, flatten=true),
+                  BLR.getVariable(mCombined, :v, flatten=true))
+    @test isequal(BLR.getVariable(mCombinedR, :I, flatten=true),
+                  BLR.getVariable(mCombined, :I, flatten=true))
+    @test BLR.getProfile(mCombinedR, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(mCombined, :line, bins=21, centered=true).binSums
+
+    # (d′) right-nested a+(b+e) (3 slots post-W4-T0) records the nested tree and rebuilds with
+    # identical subModelStartInds and getFlattenedCameraIndices
+    a = BLR.DiskWindModel(300.0, 500.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    b = BLR.cloudModel(16; rng=:philox, seed=201, cloudArgs...)
+    e = BLR.DiskWindModel(600.0, 800.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    rn = a + (b + e)
+    @test rn.params.constructor == :+
+    @test rn.params.right.constructor == :+ #nested, not flattened
+    @test length(rn.subModelStartInds) == 3
+    rnR = BLR.rebuild(rn)
+    @test rnR.subModelStartInds == rn.subModelStartInds
+    @test BLR.getFlattenedCameraIndices(rnR) == BLR.getFlattenedCameraIndices(rn)
+
+    # (e) raytrace! of the (d) model with a non-uniform IRatios vector records the :raytrace! wrapper
+    # and rebuild reproduces the raytraced :line profile bit-identically (raytrace! RETURNS a new model)
+    rt = BLR.raytrace!(mDW + mC; IRatios=[1.0, 2.0])
+    @test rt.params.constructor == :raytrace!
+    @test rt.params.IRatios == [1.0, 2.0]
+    @test rt.params.parent.constructor == :+
+    rtR = BLR.rebuild(rt)
+    @test BLR.getProfile(rtR, :line, bins=21, centered=true).binSums ==
+          BLR.getProfile(rt, :line, bins=21, centered=true).binSums
+
+    # (f) an unmatched override key throws
+    @test_throws ErrorException BLR.rebuild(mDW; notARealKey=1.0)
+    # a valid override is accepted and broadcasts to the leaf
+    @test typeof(BLR.rebuild(mDW; τ=0.9)) == BLR.model
+
+    # (g) getindex propagates the matching :+ params subtree to extracted submodels,
+    # for both association orders (a, b, e reused from (d′) above)
+    ln = (a + b) + e
+    for m3 in (ln, rn)
+        @test m3[1].params == a.params
+        @test m3[2].params == b.params
+        @test m3[3].params == e.params
+    end
+    # the extracted record is rebuild-able (philox cloud -> bit-identical gas)
+    @test _cloud_field_tuple(BLR.rebuild(rn[2])) == _cloud_field_tuple(b)
+    # single-slot extraction of a leaf model is the whole model -> the record transfers
+    @test mDW[1].params == mDW.params
+    # a side built without a public constructor stays params-less without breaking the other side
+    # (the known side's slot count pins the unknown side's arithmetically)
+    aRaw = deepcopy(a); aRaw.params = nothing
+    mMix = aRaw + e
+    @test mMix[1].params === nothing
+    @test mMix[2].params == e.params
+    # submodels sliced out of a multi-slot raytraced model carry no construction record (raytrace!
+    # compacts/regroups slots, and re-raytracing a slice alone is not equivalent to slicing the
+    # raytraced whole -- occlusion couples the submodels); rt from (e) above is multi-slot here
+    @test length(rt.subModelStartInds) > 1
+    @test all(rt[j].params === nothing for j in 1:length(rt.subModelStartInds))
+    # ...but a leaf added on top of a raytraced model still resolves
+    mRtPlus = rt + e
+    nSlots = length(mRtPlus.subModelStartInds)
+    @test mRtPlus[nSlots].params == e.params
+    @test mRtPlus[1].params === nothing
+end
+
+@testset "CompositeModel + addLine! (W4-T2/T3)" begin
+    # Models here are deliberately tiny -- this testset should add seconds, not minutes.
+    cloudArgs = (; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=1.0,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1)
+
+    # --- T2: construction, duplicate-name error, indexing error, show ---
+    mHa = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mHa; line="Ha", lineCenter=6562.8)
+    @test cm.lines == ["Ha"]
+    @test cm.models["Ha"] === mHa
+    @test cm.lineCenters["Ha"] == 6562.8
+    @test cm.fluxRatios["Ha"] == 1.0
+    @test length(cm) == 1
+    @test_throws ErrorException BLR.CompositeModel(mHa; line="Ha", lineCenter=-1.0) #lineCenter must be positive
+
+    # duplicate name error
+    @test_throws ErrorException BLR.addLine!(cm, mHa; line="Ha", lineCenter=1.0)
+
+    # indexing error lists known lines
+    err = try; cm["nope"]; nothing; catch e; e; end
+    @test err isa ErrorException
+    @test occursin("nope", err.msg) && occursin("Ha", err.msg)
+
+    # show output smoke test
+    s = sprint(show, cm)
+    @test occursin("Ha", s)
+    @test occursin("CompositeModel", s)
+
+    # --- T3(a): rMin/rMax-form DiskWindModel reuse with an intensity-only override (α) ---
+    # identical r/ϕ/v, different I (DiskWindIntensity's α is a source-function power law that
+    # reaches only the intensity, since rMin/rMax are given explicitly in this parameterization)
+    BLR.addLine!(cm; line="Hb", lineCenter=4861.3, from="Ha", α=2.5)
+    mHb = cm["Hb"]
+    @test isequal(BLR.getVariable(mHa, :r, flatten=true), BLR.getVariable(mHb, :r, flatten=true))
+    @test isequal(BLR.getVariable(mHa, :ϕ, flatten=true), BLR.getVariable(mHb, :ϕ, flatten=true))
+    @test isequal(BLR.getVariable(mHa, :v, flatten=true), BLR.getVariable(mHb, :v, flatten=true))
+    @test !isequal(BLR.getVariable(mHa, :I, flatten=true), BLR.getVariable(mHb, :I, flatten=true))
+
+    # --- T3(a'): the SAME kind of α override on a mean-form (:DiskWindModelMean) model
+    # MOVES the grid -- DIFFERENT r arrays. Pins the honest (non-invariant) constructor
+    # semantics -- do not "fix" this.
+    mMeanA = BLR.DiskWindModel(500.0, 5.0, 1.0, 0.4; nr=6, nϕ=12, scale=:log,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=0.4)
+    cmMean = BLR.CompositeModel(mMeanA; line="A", lineCenter=1000.0)
+    BLR.addLine!(cmMean; line="B", lineCenter=2000.0, α=2.5)
+    @test !isequal(BLR.getVariable(cmMean["A"], :r, flatten=true), BLR.getVariable(cmMean["B"], :r, flatten=true))
+
+    # --- T3(b): philox cloud reuse without seed override -> identical r; new seed -> different ---
+    mC1 = BLR.cloudModel(64; rng=:philox, seed=42, cloudArgs...)
+    cmC = BLR.CompositeModel(mC1; line="C1", lineCenter=1.0)
+    BLR.addLine!(cmC; line="C2", lineCenter=2.0) #no seed override -> reuse stored seed
+    @test isequal(BLR.getVariable(cmC["C1"], :r, flatten=true), BLR.getVariable(cmC["C2"], :r, flatten=true))
+    BLR.addLine!(cmC; line="C3", lineCenter=3.0, seed=99) #new seed -> different clouds
+    @test !isequal(BLR.getVariable(cmC["C1"], :r, flatten=true), BLR.getVariable(cmC["C3"], :r, flatten=true))
+    # seed=nothing override is rejected (philox requires an explicit seed)
+    @test_throws ArgumentError BLR.addLine!(cmC; line="C4", lineCenter=4.0, seed=nothing)
+
+    # legacy-rng reuse warns once and rebuilds with GLOBAL_RNG (statistically different, not identical)
+    mLeg = BLR.cloudModel(16; rng=MersenneTwister(7), cloudArgs...)
+    cmLeg = BLR.CompositeModel(mLeg; line="L1", lineCenter=1.0)
+    @test_logs (:warn,) BLR.addLine!(cmLeg; line="L2", lineCenter=2.0)
+
+    # --- T3(c): reuse from a params-less model throws the documented error ---
+    mRaw = BLR.model(mHa.rings[1:2], nothing, nothing, [1]) #low-level constructor: params === nothing
+    cmRaw = BLR.CompositeModel(mRaw; line="R", lineCenter=1.0)
+    @test_throws ErrorException BLR.addLine!(cmRaw; line="R2", lineCenter=2.0)
+    # sanity: the explicit-model method doesn't care about params at all
+    BLR.addLine!(cmRaw, mHa; line="R3", lineCenter=3.0)
+    @test cmRaw.lines == ["R", "R3"]
+end
+
+@testset "composite forwarding + spectrum (W4-T4/T5/T6)" begin
+    # Models here are deliberately tiny -- this testset should add seconds, not minutes.
+    # rMin/rMax comfortably above 200 rₛ so |v| = √(rₛ/2r) stays well below 0.05c (T5 needs this).
+    mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+
+    # a two-line composite sharing the geometry: Hα (ref, fluxRatio 1.0) + Hβ (fluxRatio 0.35)
+    cm = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
+    BLR.addLine!(cm, mDisk; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
+
+    # --- T4: getProfile forwarding equals the direct call FIELD-WISE (profile has no ==) ---
+    for line in cm.lines
+        p = BLR.getProfile(cm, :line; line=line, bins=21, centered=true)
+        q = BLR.getProfile(cm[line], :line; bins=21, centered=true)
+        @test p.binSums == q.binSums
+        @test p.binCenters == q.binCenters
+        @test p.binEdges == q.binEdges
+    end
+
+    # --- T4: getVariable forwarding ---
+    @test isequal(BLR.getVariable(cm, :v; line="Ha", flatten=true),
+                  BLR.getVariable(cm["Ha"], :v, flatten=true))
+    @test isequal(BLR.getVariable(cm, :I; line="Hb", flatten=false),
+                  BLR.getVariable(cm["Hb"], :I, flatten=false))
+
+    # --- T4: :ratio is a W5 placeholder; a missing `line` kwarg errors naming the kwarg ---
+    @test_throws ErrorException BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"))
+    errNoLine = try; BLR.getProfile(cm, :line); nothing; catch e; e; end
+    @test errNoLine isa ErrorException && occursin("line", errNoLine.msg)
+
+    # --- T4: _fluxWeights identity -- default (centered=true) :line profile integrates to fluxRatio ---
+    w = BLR._fluxWeights(cm)
+    for line in cm.lines
+        lp = BLR.getProfile(cm, :line; line=line, centered=true) #default centered edges pad past data
+        @test isapprox(sum(lp.binSums) * w[line], cm.fluxRatios[line], rtol=1e-12)
+    end
+
+    # --- T4: raytrace! forwarding REASSIGNS the returned model; single-submodel lines are skipped ---
+    mCl = BLR.cloudModel(20; rng=:philox, seed=7, μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4,
+        γ=1.0, ξ=1.0, I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1)
+    mComb = mDisk + mCl #two submodels -> raytrace! does real work
+    cmRT = BLR.CompositeModel(mComb; line="X", lineCenter=6562.8)
+    BLR.addLine!(cmRT, mDisk; line="Y", lineCenter=4861.3) #single submodel -> skipped by raytrace!
+    @test cmRT["X"].camera.raytraced == false
+    origX = cmRT["X"]
+    BLR.raytrace!(cmRT)
+    @test cmRT["X"].camera.raytraced == true    #flipped
+    @test cmRT["X"] !== origX                    #reassigned to the NEW returned model
+    @test cmRT["Y"].camera.raytraced == false    #single-submodel line left unaltered (no warn-spam)
+
+    # --- T5: wavelength() scalar/vector round-trip ---
+    @test BLR.wavelength(0.0, 6562.8) == 6562.8
+    vvec = [-0.01, 0.0, 0.02]
+    λvec = BLR.wavelength(vvec, 6562.8)
+    @test λvec == 6562.8 .* (1.0 .+ vvec)
+    @test λvec ./ 6562.8 .- 1.0 ≈ vvec #recover v
+
+    # --- T5: overlap check. Hα/Hβ (widely separated centers) do NOT overlap ---
+    @test isempty(BLR.lineOverlap(cm))
+
+    # push centers together (same geometry) until the intervals DO overlap; check the reported interval
+    vmin, vmax = BLR._finiteVRange(mDisk)
+    @test vmin < 0.0 && vmax > 0.0 && abs(vmin) < 0.05 && abs(vmax) < 0.05
+    cA = 6563.0; cB = 6600.0 #cB/cA = 1.0056 < (1+vmax)/(1+vmin), so they overlap
+    cmO = BLR.CompositeModel(mDisk; line="A", lineCenter=cA)
+    BLR.addLine!(cmO, mDisk; line="B", lineCenter=cB)
+    ov = BLR.lineOverlap(cmO)
+    @test length(ov) == 1
+    @test ov[1].lineA == "A" && ov[1].lineB == "B"
+    @test isapprox(ov[1].λlo, cB*(1.0+vmin), rtol=1e-12) #hand computation: max(cA,cB)*(1+vmin)=cB*(1+vmin)
+    @test isapprox(ov[1].λhi, cA*(1.0+vmax), rtol=1e-12) #min(cA,cB)*(1+vmax)=cA*(1+vmax)
+
+    # --- T6: combined spectrum ---
+    edges, centers, flux, total = BLR.getSpectrum(cm; bins=64)
+    @test length(centers) == 64 && length(edges) == 65
+    # integrated flux per line equals its fluxRatio (overflow keeps the boundary points)
+    @test isapprox(sum(flux["Ha"]), 1.0, rtol=1e-12)
+    @test isapprox(sum(flux["Hb"]), 0.35, rtol=1e-12)
+    # total is the elementwise sum of the parts
+    @test total == flux["Ha"] .+ flux["Hb"]
+    # two non-overlapping lines -> two disjoint nonzero regions with a zero gap between them
+    haNZ = findall(>(0.0), flux["Ha"]); hbNZ = findall(>(0.0), flux["Hb"])
+    @test !isempty(haNZ) && !isempty(hbNZ)
+    @test isempty(intersect(haNZ, hbNZ))
+    @test any(==(0.0), total) #a gap of empty bins between the two lines
+
+    # redshift shifts the grid by (1+z); integrated fluxes are unchanged
+    e2, c2, flux2, total2 = BLR.getSpectrum(cm; bins=64, z=0.1)
+    @test isapprox(sum(flux2["Ha"]), 1.0, rtol=1e-12)
+    @test isapprox(edges[1]*1.1, e2[1], rtol=1e-12) && isapprox(edges[end]*1.1, e2[end], rtol=1e-12)
+
+    # a zero-flux line errors loudly by name instead of silently vanishing from the spectrum
+    # (adversarial review 2026-07-03: fluxRatio/0 = Inf weight would otherwise make binAccumulate!
+    # silently drop every weighted point of that line, breaking sum(flux[line]) == fluxRatio)
+    mZero = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, rescale=0.0, v=BLR.vCircularDisk, τ=0.4, reflect=false)
+    cmZero = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6563.0)
+    BLR.addLine!(cmZero, mZero; line="dark", lineCenter=4861.0)
+    errZ = try BLR._fluxWeights(cmZero); nothing; catch err; err; end
+    @test errZ isa ErrorException && occursin("dark", errZ.msg)
+    @test_throws ErrorException BLR.getSpectrum(cmZero; bins=32)
+
+    # --- T6 follow-up: the binnedSum binning kwargs (minX/maxX/centered/overflow) forward through
+    # getSpectrum like they do through the simple model methods (getProfile -> binModel -> binnedSum) ---
+    # pinning the grid via minX/maxX at the auto-computed ends reproduces the default bit-identically
+    eP, cP, fluxP, totalP = BLR.getSpectrum(cm; bins=64, minX=edges[1], maxX=edges[end])
+    @test eP == edges && cP == centers
+    @test fluxP["Ha"] == flux["Ha"] && fluxP["Hb"] == flux["Hb"] && totalP == total
+    # a padded window moves the grid ends and keeps the integrated-flux identity (extremes interior)
+    ePad, _, fluxPad, _ = BLR.getSpectrum(cm; bins=64, minX=edges[1]-1.0, maxX=edges[end]+1.0)
+    @test ePad[1] == edges[1]-1.0 && ePad[end] == edges[end]+1.0
+    @test isapprox(sum(fluxPad["Ha"]), 1.0, rtol=1e-12) && isapprox(sum(fluxPad["Hb"]), 0.35, rtol=1e-12)
+    # centered=true pads the edges half a bin past the data (the getProfile default convention);
+    # the integrated-flux identity still holds (nothing sits on a boundary)
+    eC, _, fluxC, _ = BLR.getSpectrum(cm; bins=64, centered=true)
+    @test eC[1] < edges[1] && eC[end] > edges[end]
+    @test isapprox(sum(fluxC["Ha"]), 1.0, rtol=1e-12) && isapprox(sum(fluxC["Hb"]), 0.35, rtol=1e-12)
+    # user-narrowed window: the default overflow=true accumulates out-of-window flux into the boundary
+    # bins (integrated-flux identity preserved); explicit overflow=false drops it (windowing semantics)
+    win = (centers[10], centers[50]) #interior window -- both lines have flux outside it
+    eN, _, fluxN, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2])
+    @test isapprox(sum(fluxN["Ha"]) + sum(fluxN["Hb"]), 1.35, rtol=1e-12)
+    eD, _, fluxD, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2], overflow=false)
+    @test eD == eN #same window, same edges -- only the boundary handling differs
+    @test sum(fluxD["Ha"]) + sum(fluxD["Hb"]) < 1.35 - 1e-6 #out-of-window flux dropped
+end
+
+@testset "composite multiline models (W4-T8)" begin
+    # End-to-end scenario from the W4 plan. Models are deliberately tiny -- seconds, not minutes.
+    # rMin/rMax-form (explicit) DiskWindModel as Hα (reference line; in this parameterization α is a
+    # source-function power law that reaches ONLY the intensity function -- see the W4-T3 testset) +
+    # Hβ added via addLine! parameter reuse with a different α and fluxRatio=0.35.
+    # Radii matter for (c): |v| = √(rₛ/2r) ≲ 0.05 needs r ≳ 200 rₛ, so rMin=300 keeps the Hα/Hβ
+    # wavelength intervals physically disjoint (at smaller radii the overlap would be REAL).
+    rMin, rMax, inc = 300.0, 900.0, 0.4
+    # f2-only (Keplerian shear) intensity gives a double-horned profile whose peaks sit at nonzero
+    # ±|v| -- a meaningful peak position to pin, in the style of the existing DiskWind peak tests.
+    mHα = BLR.DiskWindModel(rMin, rMax, inc; nr=6, nϕ=64, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=0.0, f2=1.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.0)
+    BLR.addLine!(cm; line="Hβ", lineCenter=4861.0, fluxRatio=0.35, α=2.5) #param reuse, intensity-only override
+
+    # (a) identical geometry arrays between the two lines (α override moved only I, not the grid)
+    for var in (:r, :ϕ, :v)
+        @test isequal(BLR.getVariable(cm, var; line="Hα", flatten=true),
+                      BLR.getVariable(cm, var; line="Hβ", flatten=true))
+    end
+
+    # (b) getSpectrum integrated fluxes = the fluxRatios (integrated-flux semantics, decision 3)
+    edges, centers, flux, total = BLR.getSpectrum(cm; bins=64)
+    @test isapprox(sum(flux["Hα"]), 1.0, rtol=1e-12)
+    @test isapprox(sum(flux["Hβ"]), 0.35, rtol=1e-12)
+
+    # (c) Hα/Hβ do not overlap in wavelength at these radii
+    @test isempty(BLR.lineOverlap(cm))
+
+    # (d) each line's profile peaks at the same |v| positions as the equivalent standalone model
+    # (standalones constructed independently -- disk-wind construction is deterministic)
+    mHαAlone = BLR.DiskWindModel(rMin, rMax, inc; nr=6, nϕ=64, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=0.0, f2=1.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    mHβAlone = BLR.DiskWindModel(rMin, rMax, inc; nr=6, nϕ=64, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=0.0, f2=1.0, f3=0.0, f4=0.0, α=2.5,
+        τ=0.4, reflect=false)
+    for (line, standalone) in (("Hα", mHαAlone), ("Hβ", mHβAlone))
+        p = BLR.getProfile(cm, :line; line=line, bins=41, centered=true)
+        q = BLR.getProfile(standalone, :line; bins=41, centered=true)
+        pPeak = p.binCenters[findmax(p.binSums)[2]]
+        qPeak = q.binCenters[findmax(q.binSums)[2]]
+        @test abs(pPeak) == abs(qPeak)
+        @test abs(pPeak) > 0.0 #double-horned: the peak is NOT at line center
+        # second horn mirrors the first (existing peak-pinning style)
+        firstMax = findmax(p.binSums)[2]
+        mask = [j != firstMax for j in eachindex(p.binSums)]
+        secondPeak = p.binCenters[mask][findmax(p.binSums[mask])[2]]
+        @test isapprox(secondPeak, -pPeak, atol=1e-12)
+    end
+
+    # (e) SIGN-CONVENTION PIN (locked decision 4: stored v is redshift-positive -- near-side inflow
+    # stores +v). A FULL disk with pure radial inflow is exactly front/back symmetric in v (the far
+    # side's blueshift mirrors the near side's redshift), so mask the emission to the NEAR side
+    # (ϕ ∈ (-π/2, π/2), the half tilted toward the camera -- IϕDiskWindMask's ϕ=0 is at the camera)
+    # with isotropic (f4-only) emission: pure near-side inflow must put essentially ALL the flux
+    # REDWARD of lineCenter. The symmetric peak tests above cannot catch a mirrored spectrum; this
+    # asymmetric case can. If this test fails, the velocity sign convention broke -- do NOT "fix"
+    # signs in src/ to make it pass (the convention was verified against the source 2026-07-01).
+    mIn = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=64, scale=:linear, τ=0.1, reflect=false,
+        I=BLR.IϕDiskWindMask, v=BLR.vCircularRadialDisk, vᵣFrac=1.0, inflow=true,
+        f1=0.0, f2=0.0, f3=0.0, f4=1.0, α=0.0, ϕMin=-π/2+0.02, ϕMax=π/2-0.02)
+    cmIn = BLR.CompositeModel(mIn; line="inflow", lineCenter=6563.0)
+    _, cIn, fluxIn, _ = BLR.getSpectrum(cmIn; bins=101)
+    lc = cmIn.lineCenters["inflow"]
+    redFlux = sum(fluxIn["inflow"][cIn .> lc])
+    blueFlux = sum(fluxIn["inflow"][cIn .< lc])
+    @test redFlux > blueFlux
+    @test redFlux > 0.99 && blueFlux < 0.01 #near-side pure inflow: all redshifted (unit integral)
+end
+
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
 include("recipes.jl")
 
 # GPU correctness tests are opt-in: they need a CUDA device and the CUDA.jl weak dependency in the
-# active environment. Run with `BLR_TEST_CUDA=1` from an env that has CUDA.jl available.
+# active environment. Run with `BLR_TEST_CUDA=1 julia --project=<env> test/runtests.jl` where <env>
+# has this package Pkg.develop'ed plus CUDA.jl AND the test extras (StableRNGs, Plots, RecipesBase,
+# KernelAbstractions) -- the extras aren't loadable outside Pkg.test's sandbox, so a bare CUDA env
+# is not enough to run this file directly.
 if get(ENV, "BLR_TEST_CUDA", "0") == "1"
     include("gpu_cuda.jl")
 else

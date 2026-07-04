@@ -894,6 +894,8 @@ end
 """
     profile(m::model, [variable], [kwargs...])
     profile(rm::ResidentModel, variable, [kwargs...])
+    profile(cm::CompositeModel, [name], [kwargs...])
+    profile(p::profile, [kwargs...])
 
 Plot line profiles, normalized to the maximum value of each profile.
 
@@ -904,50 +906,112 @@ Plot line profiles, normalized to the maximum value of each profile.
   `ResidentModel` stores no preset profiles, so a variable is **required** there and the profile is
   computed on demand via [`getProfile`](@ref) (choose from `:line, :delay, :r, :ϕ, :phase, :moment2`).
 - `kwargs...`: Additional keyword arguments passed to `Plots.plot`
+
+# CompositeModel and bare `profile` support (Workstream 4/5)
+- `cm::CompositeModel`: plots the requested `name` profile (default `:line`, computed on demand via
+  `getProfile(cm, name; line=...)`) for **every** line, one series per line labeled by the line name and
+  normalized by that line's own max `|binSums|` (the same convention the multi-profile `model` case
+  below uses) -- so lines are shape-comparable regardless of `fluxRatio`.
+- `p::profile`: plots a single bare `profile` struct directly (`binCenters` vs `binSums`, unnormalized).
+  Needed so Workstream 5's `:ratio` profile (also a plain `profile` struct) is directly plottable.
+  Note `profile` is both this struct's type and (via `@userplot Profile` above) the name of the
+  generated plotting function -- they're the same generic function, but the `@kwdef` constructor takes
+  *zero* positional arguments (kwargs only), while this plotting method takes one-or-more positional
+  arguments, so `profile(p)` is never ambiguous with `profile(name=..., binCenters=..., ...)`.
 """
 @userplot Profile
 @recipe function f(p::Profile)
     m, variable = nothing, nothing
     if length(p.args) == 2
         m, variable = p.args
-        variable = variable isa AbstractVector ? Symbol.(variable) : Symbol(variable)
     elseif length(p.args) == 1
         m = p.args[1]
     else
         error("expected arguments (model, variable[optional]), got $(p.args)")
     end
-    # Resolve the profiles to draw into a name => profile lookup for either representation: a host
-    # `model` exposes its preset `profiles`; a ResidentModel has none, so we compute the requested
-    # ones on demand (GPU columns evaluated on the device, results returned to the host).
-    if m isa ResidentModel
-        isnothing(variable) && error("plotting profiles for a ResidentModel requires an explicit variable (it stores no preset profiles), e.g. profile(rm, :line) -- choose from [:line, :delay, :r, :ϕ, :phase, :moment2]")
-        variable = variable isa AbstractVector ? variable : [variable]
-        profiles = Dict(v => getProfile(m, v) for v in variable)
-    else
-        length(m.profiles) == 0 && error("no profiles set in model")
-        if isnothing(variable)
-            variable = collect(keys(m.profiles))
-        elseif variable isa Symbol
-            variable = [variable]
-        end
-        profiles = m.profiles
-    end
-    title --> (length(variable) == 1 ? "Profile of $(variable[1])" : "Model profiles")
-    ylabel --> (length(variable) == 1 ? "$(variable[1])" : "normalized value")
-    xlabel --> "Δv [c]"
-    for (i,v) in enumerate(variable)
-        norm = length(variable) == 1 ? 1.0 : maximum(abs(i) for i in profiles[v].binSums if !isnan(i))
+    if m isa profile
+        # bare `profile` struct: plot binCenters vs binSums directly, no lookup/normalization needed.
+        title --> "Profile of $(m.name)"
+        ylabel --> "$(m.name)"
+        xlabel --> "Δv [c]"
         @series begin
             subplot := 1
             seriestype := :path
-            x := profiles[v].binCenters
-            y := profiles[v].binSums./norm
-            marker --> :circle 
+            x := m.binCenters
+            y := m.binSums
+            marker --> :circle
             markerstrokewidth --> 0.0
-            markersize --> 2. 
-            color --> i
-            label --> (length(variable) == 1 ? "" : "$v (max = $(round(norm, sigdigits=3)))")
+            markersize --> 2.
+            color --> 1
+            label --> ""
             ()
+        end
+    elseif m isa CompositeModel
+        # one series per line, of the requested profile `name` (default :line) vs velocity -- computed
+        # on demand via the CompositeModel forwarding `getProfile` (composite.jl, W4-T4), normalized per
+        # line by its own max |binSums| (the "multiple profiles" convention below).
+        name = variable === nothing ? :line :
+            (variable isa AbstractVector ? error("profile(cm, name): a CompositeModel plots one profile " *
+                "`name` across all its lines -- got a list $variable, expected a single Symbol/String") :
+             Symbol(variable))
+        title --> "Composite profile: $name"
+        ylabel --> "normalized value"
+        xlabel --> "Δv [c]"
+        for (i,line) in enumerate(m.lines)
+            pLine = getProfile(m, name; line=line)
+            norm = length(m.lines) == 1 ? 1.0 : maximum((abs(b) for b in pLine.binSums if !isnan(b)); init=0.0)
+            #degenerate line (all-NaN or all-zero bins, e.g. zero emission): plot unnormalized rather
+            #than throw on an empty iterator / divide by zero -- the other lines must still render
+            norm > 0.0 || (norm = 1.0)
+            @series begin
+                subplot := 1
+                seriestype := :path
+                x := pLine.binCenters
+                y := pLine.binSums./norm
+                marker --> :circle
+                markerstrokewidth --> 0.0
+                markersize --> 2.
+                color --> i
+                label --> line
+                ()
+            end
+        end
+    else
+        # existing model / ResidentModel handling, unchanged
+        variable = variable isa AbstractVector ? Symbol.(variable) : (variable === nothing ? variable : Symbol(variable))
+        # Resolve the profiles to draw into a name => profile lookup for either representation: a host
+        # `model` exposes its preset `profiles`; a ResidentModel has none, so we compute the requested
+        # ones on demand (GPU columns evaluated on the device, results returned to the host).
+        if m isa ResidentModel
+            isnothing(variable) && error("plotting profiles for a ResidentModel requires an explicit variable (it stores no preset profiles), e.g. profile(rm, :line) -- choose from [:line, :delay, :r, :ϕ, :phase, :moment2]")
+            variable = variable isa AbstractVector ? variable : [variable]
+            profiles = Dict(v => getProfile(m, v) for v in variable)
+        else
+            length(m.profiles) == 0 && error("no profiles set in model")
+            if isnothing(variable)
+                variable = collect(keys(m.profiles))
+            elseif variable isa Symbol
+                variable = [variable]
+            end
+            profiles = m.profiles
+        end
+        title --> (length(variable) == 1 ? "Profile of $(variable[1])" : "Model profiles")
+        ylabel --> (length(variable) == 1 ? "$(variable[1])" : "normalized value")
+        xlabel --> "Δv [c]"
+        for (i,v) in enumerate(variable)
+            norm = length(variable) == 1 ? 1.0 : maximum(abs(i) for i in profiles[v].binSums if !isnan(i))
+            @series begin
+                subplot := 1
+                seriestype := :path
+                x := profiles[v].binCenters
+                y := profiles[v].binSums./norm
+                marker --> :circle
+                markerstrokewidth --> 0.0
+                markersize --> 2.
+                color --> i
+                label --> (length(variable) == 1 ? "" : "$v (max = $(round(norm, sigdigits=3)))")
+                ()
+            end
         end
     end
 end
