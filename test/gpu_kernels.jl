@@ -709,4 +709,47 @@ end
     @test occursin("fluxRatio=0.35", shown)
     # gpu(cm) delegates per line -> without CUDA loaded the gpu(::Any) fallback error still fires
     @test_throws ErrorException BLR.gpu(cm)
+
+    # --- W4-G2: device flux weights agree with the CPU composite helper ---
+    wCPU = BLR._fluxWeights(cm)
+    wDev = BLR._fluxWeights(rcm)
+    for line in cm.lines
+        @test isapprox(wDev[line], wCPU[line], rtol=1e-12)
+    end
+    # the resident _finiteVRange method agrees with the host helper (exact: Float64 columns are copies
+    # and min/max are exact operations)
+    @test BLR._finiteVRange(rcm["Ha"]) == BLR._finiteVRange(cm["Ha"])
+
+    # --- W4-G2: getSpectrum matches the CPU composite path (Float64 resident) ---
+    for z in (0.0, 0.1)
+        eC, cC, fC, tC = BLR.getSpectrum(cm; bins=64, z=z)
+        eD, cD, fD, tD = BLR.getSpectrum(rcm; bins=64, z=z)
+        @test eD == eC #identical minX/maxX into the deterministic constructBinEdges -> identical edges
+        @test cD == cC
+        for line in cm.lines
+            @test isapprox(fD[line], fC[line], rtol=1e-12)
+            @test isapprox(sum(fD[line]), rcm.fluxRatios[line], rtol=1e-12) #integrated-flux semantics
+        end
+        @test isapprox(tD, tC, rtol=1e-12)
+    end
+
+    # user-supplied UNIFORM edge vector: overflow passes through untouched (default false), matching CPU
+    eU = collect(range(6400.0, 6700.0, length=33)) #covers only Ha; Hb flux drops without overflow
+    _, _, fU, _ = BLR.getSpectrum(cm; bins=eU)
+    _, _, fUD, _ = BLR.getSpectrum(rcm; bins=eU)
+    for line in cm.lines
+        @test isapprox(fUD[line], fU[line], rtol=1e-12)
+    end
+    @test sum(fUD["Hb"]) == 0.0 #entirely out of range -> dropped, as on CPU
+
+    # --- W4-G2: the zero-flux guard fires on device too, naming the line ---
+    # (same public-API zero-emission fixture as the CPU regression test in runtests.jl)
+    mZero = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, rescale=0.0, v=BLR.vCircularDisk, τ=0.4, reflect=false)
+    cmZero = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6563.0)
+    BLR.addLine!(cmZero, mZero; line="dark", lineCenter=4861.0)
+    rcmZero = BLR.resident(cmZero; backend=KernelAbstractions.CPU())
+    errZ = try BLR._fluxWeights(rcmZero); nothing; catch err; err; end
+    @test errZ isa ErrorException && occursin("dark", errZ.msg)
+    @test_throws ErrorException BLR.getSpectrum(rcmZero; bins=32)
 end
