@@ -324,3 +324,42 @@ function getSpectrum(rcm::ResidentCompositeModel; bins::Union{Int,Vector{Float64
     end
     return (edges, centers, flux, total)
 end
+
+#================= W4-G3: resident composite per-line forwarding =================#
+
+"""
+    getProfile(rcm::ResidentCompositeModel, name; line=nothing, lines=nothing, kwargs...) -> profile
+
+Per-line forwarding of the resident [`getProfile`](@ref): compute `name`'s profile for the
+[`ResidentModel`](@ref) registered under `line` (`getProfile(rcm[line], name; kwargs...)`), running
+the device kernels on that line's resident columns.
+
+Mirrors `getProfile(::CompositeModel, …)` exactly -- a *single* method covering the whole positional
+signature, branching at runtime (Julia cannot dispatch on keywords, and Workstream 5 adds `:ratio`,
+which needs `lines::Tuple`, to this same signature):
+- `name === :ratio` (velocity-resolved line ratio) is **implemented in Workstream 5** and currently
+  throws a clear error, exactly like the host composite method.
+- every other `name` requires the `line` keyword and forwards to the per-line `ResidentModel` method,
+  whose restrictions apply (uniform bins only, no custom `dx`, no custom-`Function` profiles).
+"""
+function getProfile(rcm::ResidentCompositeModel, name::Union{String,Symbol,Function};
+        line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
+    if name === :ratio
+        error("getProfile(rcm, :ratio; lines=...): the :ratio (velocity-resolved line-ratio) profile is " *
+              "implemented in Workstream 5 (Balmer decrement) and is not available yet.")
+    end
+    line === nothing && error("getProfile(rcm, $(repr(name)); line=...): the `line` keyword is required " *
+        "(which line's profile do you want?). Known lines: $(rcm.lines).")
+    return getProfile(rcm[line], name; kwargs...)
+end
+
+"""
+    lineOverlap(rcm::ResidentCompositeModel) -> Vector{NamedTuple}
+
+Resident counterpart of [`lineOverlap`](@ref) with identical pairwise-overlap semantics, via the
+shared `_lineOverlap` implementation (`src/composite.jl`); the only difference is that each line's
+velocity range comes from the device reductions of `_finiteVRange(::ResidentModel)` (W4-G2) instead
+of the host gathers. This is also what lets the `spectrum` plot recipe accept a
+[`ResidentCompositeModel`](@ref) with no recipe changes.
+"""
+lineOverlap(rcm::ResidentCompositeModel) = _lineOverlap(rcm)

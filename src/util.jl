@@ -895,6 +895,7 @@ end
     profile(m::model, [variable], [kwargs...])
     profile(rm::ResidentModel, variable, [kwargs...])
     profile(cm::CompositeModel, [name], [kwargs...])
+    profile(rcm::ResidentCompositeModel, [name], [kwargs...])
     profile(p::profile, [kwargs...])
 
 Plot line profiles, normalized to the maximum value of each profile.
@@ -912,6 +913,10 @@ Plot line profiles, normalized to the maximum value of each profile.
   `getProfile(cm, name; line=...)`) for **every** line, one series per line labeled by the line name and
   normalized by that line's own max `|binSums|` (the same convention the multi-profile `model` case
   below uses) -- so lines are shape-comparable regardless of `fluxRatio`.
+- `rcm::ResidentCompositeModel`: same as the `CompositeModel` case (one normalized series per line),
+  except each line's profile is computed on its device-resident columns via
+  `getProfile(rcm, name; line=...)` (W4-G3), with the resident restrictions (uniform bins, no custom
+  `Function` profiles).
 - `p::profile`: plots a single bare `profile` struct directly (`binCenters` vs `binSums`, unnormalized).
   Needed so Workstream 5's `:ratio` profile (also a plain `profile` struct) is directly plottable.
   Note `profile` is both this struct's type and (via `@userplot Profile` above) the name of the
@@ -946,12 +951,13 @@ Plot line profiles, normalized to the maximum value of each profile.
             label --> ""
             ()
         end
-    elseif m isa CompositeModel
+    elseif m isa CompositeModel || m isa ResidentCompositeModel
         # one series per line, of the requested profile `name` (default :line) vs velocity -- computed
-        # on demand via the CompositeModel forwarding `getProfile` (composite.jl, W4-T4), normalized per
+        # on demand via the composite forwarding `getProfile` (CompositeModel: composite.jl, W4-T4;
+        # ResidentCompositeModel: gpu_observables.jl, W4-G3 -- per-line device kernels), normalized per
         # line by its own max |binSums| (the "multiple profiles" convention below).
         name = variable === nothing ? :line :
-            (variable isa AbstractVector ? error("profile(cm, name): a CompositeModel plots one profile " *
+            (variable isa AbstractVector ? error("profile(cm, name): a composite model plots one profile " *
                 "`name` across all its lines -- got a list $variable, expected a single Symbol/String") :
              Symbol(variable))
         title --> "Composite profile: $name"

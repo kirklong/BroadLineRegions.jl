@@ -674,7 +674,7 @@ end
     @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0, backend=KernelAbstractions.CPU())
 end
 
-@testset "resident composite model (W4-G1/G2, CPU backend)" begin
+@testset "resident composite model (W4-G1/G2/G3, CPU backend)" begin
     # Mirrors the "composite forwarding + spectrum (W4-T4/T5/T6)" fixture in runtests.jl --
     # deliberately tiny (seconds, not minutes). Full-GPU agreement tests are W4-G4 (test/gpu_cuda.jl).
     mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
@@ -752,4 +752,38 @@ end
     errZ = try BLR._fluxWeights(rcmZero); nothing; catch err; err; end
     @test errZ isa ErrorException && occursin("dark", errZ.msg)
     @test_throws ErrorException BLR.getSpectrum(rcmZero; bins=32)
+
+    # --- W4-G3: per-line getProfile forwarding mirrors the CPU composite's one-method pattern ---
+    edges = collect(range(-0.06, 0.06, length=33))
+    for line in cm.lines
+        pF = BLR.getProfile(rcm, :line; line=line, bins=edges, centered=false)
+        pD = BLR.getProfile(rcm[line], :line; bins=edges, centered=false)
+        # forwarding equals the direct per-line resident call FIELD-WISE (same style as the CPU
+        # composite forwarding tests in runtests.jl -- `profile` defines no ==)
+        @test pF.name == pD.name
+        @test pF.binEdges == pD.binEdges
+        @test pF.binCenters == pD.binCenters
+        @test pF.binSums == pD.binSums
+        # and agrees with the CPU composite forwarding on the same explicit uniform edges (Float64)
+        pC = BLR.getProfile(cm, :line; line=line, bins=edges, centered=false)
+        @test isapprox(pF.binSums, pC.binSums, rtol=1e-12)
+    end
+    # missing `line` errors naming the kwarg + the known lines (same message as the CPU composite)
+    errLine = try BLR.getProfile(rcm, :line); nothing; catch e; e; end
+    @test errLine isa ErrorException && occursin("`line` keyword is required", errLine.msg) &&
+        occursin("Ha", errLine.msg) && occursin("Hb", errLine.msg)
+    # :ratio is a clear "implemented in W5" error, exactly like the CPU composite
+    errRatio = try BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb")); nothing; catch e; e; end
+    @test errRatio isa ErrorException && occursin("Workstream 5", errRatio.msg)
+    # an unknown line goes through the getindex miss (lists the known lines)
+    @test_throws ErrorException BLR.getProfile(rcm, :line; line="nope")
+
+    # --- W4-G3: lineOverlap on the resident composite == host (Float64 columns are exact copies) ---
+    @test BLR.lineOverlap(rcm) == BLR.lineOverlap(cm) #Ha/Hb here: both empty (no overlap)
+    cmO = BLR.CompositeModel(mDisk; line="A", lineCenter=6563.0)
+    BLR.addLine!(cmO, mDisk; line="B", lineCenter=6600.0)
+    rcmO = BLR.resident(cmO; backend=KernelAbstractions.CPU())
+    ovC = BLR.lineOverlap(cmO)
+    ovD = BLR.lineOverlap(rcmO)
+    @test length(ovD) == 1 && ovD == ovC
 end

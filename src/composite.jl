@@ -383,8 +383,21 @@ Report wavelength-space overlaps between lines. Each line spans
 `[lineCenter*(1+vmin), lineCenter*(1+vmax)]` from [`_finiteVRange`](@ref); every pair whose intervals
 intersect yields an entry `(lineA, lineB, λlo, λhi)` (the overlap interval `[λlo, λhi]`). An **empty**
 vector means no lines overlap. Lines with no finite points (`_finiteVRange` = `NaN`) are skipped.
+
+A [`ResidentCompositeModel`](@ref) is supported through the same shared implementation (the
+`::ResidentCompositeModel` method lives with its resident siblings in `gpu_observables.jl`, W4-G3);
+the only difference is that each line's velocity range then comes from the device reductions of
+`_finiteVRange(::ResidentModel)` instead of the host gathers.
 """
 function lineOverlap(cm::CompositeModel)
+    return _lineOverlap(cm)
+end
+
+#shared lineOverlap implementation -- deliberately UNtyped: the body is representation-generic (it
+#only touches `lines`/`models`/`lineCenters` and calls `_finiteVRange`, which dispatches on the
+#per-line model type, host `model` or `ResidentModel`), so the host and resident public methods
+#cannot disagree.
+function _lineOverlap(cm)
     ranges = Dict{String,Tuple{Float64,Float64}}()
     for line in cm.lines
         vmin, vmax = _finiteVRange(cm.models[line])
@@ -504,10 +517,16 @@ end
 
 """
     spectrum(cm::CompositeModel; z=0.0, bins=100, kwargs...)
+    spectrum(rcm::ResidentCompositeModel; z=0.0, bins=100, kwargs...)
 
 Combined wavelength-space spectrum plot: one series per line plus a black `"total"` series (both from
 [`getSpectrum`](@ref)), with pairwise line overlaps ([`lineOverlap`](@ref)) shaded as gray bands behind
 the curves.
+
+A [`ResidentCompositeModel`](@ref) works through the same recipe body with no extra branch (W4-G3):
+`getSpectrum` and `lineOverlap` resolve at call time and dispatch to the resident methods
+(`gpu_observables.jl`), which run the per-line reductions/binning on the device. The resident
+`getSpectrum` restrictions apply (a user-supplied `bins` edge vector must be uniform).
 
 # Keywords
 - `z::Real=0.0`: redshift, forwarded to `getSpectrum` (`z=0` = rest frame; matches `getSpectrum`'s
@@ -597,6 +616,15 @@ Per-line forwarding of the [`plot3d`](@ref) recipe for a [`CompositeModel`](@ref
 """
 function plot3d(cm::CompositeModel, args...; line::Union{Nothing,String}=nothing, kwargs...)
     line !== nothing && return plot3d(cm[line], args...; kwargs...)
+    return _plot3d_composite(cm, args...; kwargs...)
+end
+
+#shared all-lines overlay implementation -- deliberately UNtyped, like `_lineOverlap`: the body only
+#touches `lines`/getindex and calls `_plot3d_submodels`, which dispatches on the per-line model type
+#(host `model` or `ResidentModel`), so the host and resident overlays cannot disagree. For a resident
+#line the `_plot3d_submodels(::ResidentModel, …)` restrictions apply: a multi-submodel line needs
+#raytrace metadata (build with `raytrace=true`) and custom-`Function` mask variables are not supported.
+function _plot3d_composite(cm, args...; kwargs...)
     variable, annotate = geometry, true
     if length(args) == 1
         args[1] isa Bool ? (annotate = args[1]) : (variable = args[1])
@@ -671,4 +699,45 @@ the CUDA-backed `gpu(::model)` method — without it the `gpu(::Any)` fallback e
 function gpu(cm::CompositeModel; kwargs...)
     models = Dict{String,ResidentModel}(line => gpu(cm.models[line]; kwargs...) for line in cm.lines)
     return ResidentCompositeModel(copy(cm.lines), models, copy(cm.lineCenters), copy(cm.fluxRatios))
+end
+
+#===================== W4-G3: resident composite recipe forwarding (image/plot3d) =====================#
+# These mirror the `::CompositeModel` visualization forwarding above (W4-T7) one-for-one, so they live
+# next to those siblings; the per-line calls land on the existing ResidentModel recipe paths (host
+# copies of the device columns, see gpu_arrays.jl). The `getProfile`/`lineOverlap` resident-composite
+# forwarding lives with ITS resident siblings in gpu_observables.jl (W4-G2/G3), same split as the CPU
+# phase: recipes/forwarding here, observables there. The `spectrum` and `profile` recipes need no new
+# methods at all -- their bodies resolve `getSpectrum`/`lineOverlap`/`getProfile` at call time, which
+# dispatch to the resident methods (see the runtime-branch notes on each recipe).
+
+"""
+    image(rcm::ResidentCompositeModel, [variable]; line::String, kwargs...)
+
+Per-line forwarding of the [`image`](@ref) recipe for a [`ResidentCompositeModel`](@ref): renders
+`rcm[line]` exactly as `image(rcm[line], variable; kwargs...)` would (the [`ResidentModel`](@ref)
+recipe path -- host copies of that line's device columns). As on the host composite, `line` is
+required (no default): an intensity image has no meaningful "overlay all lines" mode. `variable`
+must be a `ModelArrays` column name (custom `Function` variables need the host `model` path).
+"""
+function image(rcm::ResidentCompositeModel, variable::Union{String,Symbol,Function}=:I; line::String, kwargs...)
+    return image(rcm[line], variable; kwargs...)
+end
+
+"""
+    plot3d(rcm::ResidentCompositeModel, [variable], [annotate]; line=nothing, kwargs...)
+
+Per-line forwarding of the [`plot3d`](@ref) recipe for a [`ResidentCompositeModel`](@ref), matching
+`plot3d(::CompositeModel, …)`:
+
+- `line::String`: identical to `plot3d(rcm[line], variable, annotate; kwargs...)` (the
+  [`ResidentModel`](@ref) recipe path).
+- `line=nothing` (default): overlay **every** line's geometry on one 3D plot, one solid color per
+  line, via the same shared implementation as the host composite overlay. The
+  `_plot3d_submodels(::ResidentModel, …)` restrictions apply per line: a multi-submodel line must
+  carry raytrace metadata (build the handle with `raytrace=true`), and custom-`Function` mask
+  variables are not supported (pass a column `Symbol`, or use the host `model`).
+"""
+function plot3d(rcm::ResidentCompositeModel, args...; line::Union{Nothing,String}=nothing, kwargs...)
+    line !== nothing && return plot3d(rcm[line], args...; kwargs...)
+    return _plot3d_composite(rcm, args...; kwargs...)
 end

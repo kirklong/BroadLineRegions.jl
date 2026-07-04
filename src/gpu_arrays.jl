@@ -194,8 +194,10 @@ end
 Host-side mirror of `CompositeModel` for device-resident multi-line work: the same
 `lines`/`lineCenters`/`fluxRatios` bookkeeping, but each line's model is a [`ResidentModel`](@ref)
 handle instead of a host `model`. Each line stays its own `ResidentModel` — there is no device-side
-composite kernel work, only orchestration (the resident `_fluxWeights`/`getSpectrum` methods in
-`gpu_observables.jl` run per-line device reductions and combine the small results on the host).
+composite kernel work, only orchestration (the resident `_fluxWeights`/`getSpectrum`/`getProfile`/
+`lineOverlap` methods in `gpu_observables.jl` run per-line device reductions/kernels and combine the
+small results on the host; the `image`/`plot3d` forwarding and the `profile`/`spectrum` recipe
+support mirror the host composite's — see `composite.jl` W4-G3 and the recipe docstrings).
 
 Built by `resident(cm::CompositeModel)` (CPU backend) or `gpu(cm::CompositeModel)` (device) — both
 of those constructors live in `src/composite.jl`, NOT here: this file is included before
