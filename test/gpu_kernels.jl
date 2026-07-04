@@ -742,6 +742,37 @@ end
     end
     @test sum(fUD["Hb"]) == 0.0 #entirely out of range -> dropped, as on CPU
 
+    # --- W4-T6/G2 follow-up: the binnedSum binning kwargs (minX/maxX/centered/overflow) forward
+    # through the resident getSpectrum with CPU-identical semantics ---
+    eRef, cRef, fRef, tRef = BLR.getSpectrum(cm; bins=64)
+    # pinning the grid via minX/maxX at the auto-computed ends reproduces the default bit-identically
+    eDP, cDP, fDP, tDP = BLR.getSpectrum(rcm; bins=64, minX=eRef[1], maxX=eRef[end])
+    @test eDP == eRef && cDP == cRef
+    for line in cm.lines
+        @test isapprox(fDP[line], fRef[line], rtol=1e-12)
+    end
+    # centered=true parity with the CPU composite (padded edges; integrated flux preserved)
+    eCC, _, fCC, _ = BLR.getSpectrum(cm; bins=64, centered=true)
+    eCD, _, fCD, _ = BLR.getSpectrum(rcm; bins=64, centered=true)
+    @test eCD == eCC && eCD[1] < eRef[1] && eCD[end] > eRef[end]
+    for line in cm.lines
+        @test isapprox(fCD[line], fCC[line], rtol=1e-12)
+        @test isapprox(sum(fCD[line]), rcm.fluxRatios[line], rtol=1e-12)
+    end
+    # user-narrowed window: default overflow=true clamps out-of-window flux into the boundary bins
+    # (integrated-flux identity preserved); explicit overflow=false drops it -- both matching CPU
+    win = (cRef[10], cRef[50])
+    _, _, fNC, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2])
+    _, _, fND, _ = BLR.getSpectrum(rcm; bins=32, minX=win[1], maxX=win[2])
+    _, _, fDC, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2], overflow=false)
+    _, _, fDD, _ = BLR.getSpectrum(rcm; bins=32, minX=win[1], maxX=win[2], overflow=false)
+    for line in cm.lines
+        @test isapprox(fND[line], fNC[line], rtol=1e-12)
+        @test isapprox(fDD[line], fDC[line], rtol=1e-12)
+    end
+    @test isapprox(sum(fND["Ha"]) + sum(fND["Hb"]), sum(rcm.fluxRatios[l] for l in rcm.lines), rtol=1e-12)
+    @test sum(fDD["Ha"]) + sum(fDD["Hb"]) < sum(rcm.fluxRatios[l] for l in rcm.lines) - 1e-6
+
     # --- W4-G2: the zero-flux guard fires on device too, naming the line ---
     # (same public-API zero-emission fixture as the CPU regression test in runtests.jl)
     mZero = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,

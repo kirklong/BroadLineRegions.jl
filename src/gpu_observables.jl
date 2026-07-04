@@ -266,39 +266,51 @@ function _fluxWeights(rcm::ResidentCompositeModel)
 end
 
 """
-    getSpectrum(rcm::ResidentCompositeModel; bins=100, z=0.0, kwargs...)
+    getSpectrum(rcm::ResidentCompositeModel; bins=100, z=0.0, minX=nothing, maxX=nothing,
+                centered=false, overflow=nothing, kwargs...)
         -> (edges, centers, flux::Dict{String,Vector{Float64}}, total::Vector{Float64})
 
-Resident counterpart of `getSpectrum(::CompositeModel)`, with an identical return shape. The shared
-wavelength range is computed on the host from per-line device min/max reductions of `v`
-([`_finiteVRange`](@ref), NaN-aware), each line is then binned on its own device via the existing
-resident binned-sum path with the **shared** `bins`/`minX`/`maxX` (`constructBinEdges` is
-deterministic, so every line gets bit-identical edges), and the per-line host vectors are combined
-into `total`.
+Resident counterpart of `getSpectrum(::CompositeModel)`, with an identical return shape and identical
+keyword semantics (see the CPU method for the full argument docs). The shared wavelength range is
+computed on the host from per-line device min/max reductions of `v` ([`_finiteVRange`](@ref),
+NaN-aware) unless pinned by the caller via `minX`/`maxX`; each line is then binned on its own device
+via the existing resident binned-sum path with the **shared** `bins`/`minX`/`maxX`
+(`constructBinEdges` is deterministic, so every line gets bit-identical edges), and the per-line host
+vectors are combined into `total`.
 
-As on the CPU: for integer `bins`, `overflow` is forced `true` (non-centered edges built at exactly
-`[λmin, λmax]` place each line's extremal points on the boundary, which the binning otherwise drops);
-for a user-supplied edge vector `overflow` passes through untouched (default `false`) — but the
-resident path additionally requires the edge vector to be **uniform** (the device histogram kernels
-assume uniform spacing; see `_rt_resident_edges`).
+As on the CPU, the binning keywords (`minX`/`maxX`/`centered`/`overflow`) forward to every line's
+binned sum, and `overflow` defaults to `true` for integer `bins` (flux-preserving -- non-centered
+edges built at exactly `[λmin, λmax]` place each line's extremal points on the boundary, which the
+binning otherwise drops; a user-narrowed window accumulates out-of-window flux into the boundary
+bins) and `false` for a user-supplied edge vector; an explicit `overflow` always wins. The resident
+path additionally requires a user edge vector to be **uniform** (the device histogram kernels assume
+uniform spacing; see `_rt_resident_edges`).
 """
-function getSpectrum(rcm::ResidentCompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0, kwargs...)
-    #shared wavelength range across all lines (observed frame), from per-line device v reductions
-    λmin = Inf; λmax = -Inf
-    for line in rcm.lines
-        vmin, vmax = _finiteVRange(rcm.models[line])
-        (isnan(vmin) || isnan(vmax)) && continue
-        λc = rcm.lineCenters[line]
-        lo = wavelength(vmin, λc)*(1.0+z); hi = wavelength(vmax, λc)*(1.0+z)
-        lo < λmin && (λmin = lo)
-        hi > λmax && (λmax = hi)
+function getSpectrum(rcm::ResidentCompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0,
+        minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
+        centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    #shared wavelength range across all lines (observed frame): any side not pinned by the caller via
+    #minX/maxX is auto-computed from per-line device v reductions (both pinned -> skip the reductions),
+    #mirroring the CPU method
+    λmin = minX === nothing ? Inf : Float64(minX)
+    λmax = maxX === nothing ? -Inf : Float64(maxX)
+    if minX === nothing || maxX === nothing
+        for line in rcm.lines
+            vmin, vmax = _finiteVRange(rcm.models[line])
+            (isnan(vmin) || isnan(vmax)) && continue
+            λc = rcm.lineCenters[line]
+            lo = wavelength(vmin, λc)*(1.0+z); hi = wavelength(vmax, λc)*(1.0+z)
+            minX === nothing && lo < λmin && (λmin = lo)
+            maxX === nothing && hi > λmax && (λmax = hi)
+        end
     end
     (isfinite(λmin) && isfinite(λmax)) || error("getSpectrum: no line has any finite points -- cannot " *
         "build a spectrum (every line's I*ΔA / v is NaN everywhere).")
 
-    #overflow: forced true for internally-constructed integer-bins edges (keeps boundary points);
-    #for a user edge vector, pass through untouched (default false -- out-of-range flux drops).
-    overflow = (typeof(bins) == Int) ? true : get(kwargs, :overflow, false)
+    #overflow default: true for integer-bins edges (keeps boundary/out-of-window points -- preserves the
+    #integrated-flux identity), false for a user edge vector (out-of-range flux drops against a data
+    #grid). An explicit user overflow always wins. Same rule as the CPU method.
+    overflow = overflow === nothing ? (bins isa Int) : overflow
 
     weights = _fluxWeights(rcm)
     flux = Dict{String,Vector{Float64}}()
@@ -312,7 +324,7 @@ function getSpectrum(rcm::ResidentCompositeModel; bins::Union{Int,Vector{Float64
         #(same evaluation order as the CPU path, so Float64-resident results are bit-comparable)
         x = Tt(λc) .* (one(Tt) .+ ma.v) .* Tt(1.0+z)
         y = (ma.I .* ma.ΔA) .* Tt(w)
-        e, c, r = _rt_resident_binsum(rm, x, y, bins; overflow=overflow, centered=false, minX=λmin, maxX=λmax)
+        e, c, r = _rt_resident_binsum(rm, x, y, bins; overflow=overflow, centered=centered, minX=λmin, maxX=λmax)
         if edges === nothing
             edges = e; centers = c
         end
