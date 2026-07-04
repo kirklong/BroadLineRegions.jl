@@ -177,3 +177,78 @@ end
         @test length(pNoAnnotate.series_list) == length(cm.lines)
     end
 end
+
+@testset "Plots recipes: ResidentCompositeModel (W4-G3)" begin
+    # Same tiny two-line fixture as the CompositeModel testset above; the resident composite (Float64
+    # on the CPU backend) must drive the same recipes with matching series.
+    mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
+    BLR.addLine!(cm, mDisk; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
+    rcm = BLR.resident(cm; backend=KernelAbstractions.CPU())
+
+    @testset "profile: series match the CompositeModel recipe" begin
+        rdsC = _recipe_series(BLR.Profile((cm,)))
+        rdsR = _recipe_series(BLR.Profile((rcm,)))
+        @test length(rdsR) == length(cm.lines)
+        for i in eachindex(rdsC)
+            @test rdsR[i].plotattributes[:label] == rdsC[i].plotattributes[:label]
+            # identical default edges (deterministic constructBinEdges from the same Float64 range)
+            @test rdsR[i].plotattributes[:x] == rdsC[i].plotattributes[:x]
+            @test isapprox(rdsR[i].plotattributes[:y], rdsC[i].plotattributes[:y], rtol=1e-10)
+        end
+        # an explicit profile name is honored too
+        rdsR2 = _recipe_series(BLR.Profile((rcm, :line)))
+        @test length(rdsR2) == length(cm.lines)
+        # :ratio isn't implemented until W5 -- the resident forwarding getProfile errors clearly
+        @test_throws ErrorException _recipe_series(BLR.Profile((rcm, :ratio)))
+    end
+
+    @testset "spectrum" begin
+        # same recipe body as the host composite: per-line series + black "total"
+        sp = BLR.spectrum(rcm; bins=40)
+        @test sp isa Plots.Plot
+        @test length(sp.series_list) == length(cm.lines) + 1
+        labels = [s[:label] for s in sp.series_list]
+        @test all(line -> line in labels, cm.lines)
+        @test "total" in labels
+        # the total series matches the host composite spectrum (Float64 CPU backend)
+        spC = BLR.spectrum(cm; bins=40)
+        totR = only(filter(s -> s[:label] == "total", sp.series_list))
+        totC = only(filter(s -> s[:label] == "total", spC.series_list))
+        @test isapprox(collect(totR[:y]), collect(totC[:y]), rtol=1e-10)
+
+        # overlapping lines shade a band, driven by lineOverlap(::ResidentCompositeModel)
+        cmO = BLR.CompositeModel(mDisk; line="A", lineCenter=6563.0)
+        BLR.addLine!(cmO, mDisk; line="B", lineCenter=6600.0)
+        rcmO = BLR.resident(cmO; backend=KernelAbstractions.CPU())
+        ov = BLR.lineOverlap(rcmO)
+        @test ov == BLR.lineOverlap(cmO) && length(ov) == 1
+        spO = BLR.spectrum(rcmO; bins=40)
+        @test length(spO.series_list) == length(cmO.lines) + 1 + length(ov)
+    end
+
+    @testset "image forwarding" begin
+        im = BLR.image(rcm, :I; line="Ha")
+        @test im isa Plots.Plot
+        @test length(im.series_list) == 1
+        # `line` has no default, matching the host composite forwarding
+        @test_throws UndefKeywordError BLR.image(rcm, :I)
+    end
+
+    @testset "plot3d forwarding" begin
+        # line=<name> is identical to plotting that line's resident handle directly
+        pLine = BLR.plot3d(rcm; line="Ha")
+        pDirect = BLR.plot3d(rcm["Ha"])
+        @test pLine isa Plots.Plot
+        @test length(pLine.series_list) == length(pDirect.series_list)
+
+        # line=nothing (default) overlays every line (+ camera annotation), like the host composite
+        pAll = BLR.plot3d(rcm)
+        @test pAll isa Plots.Plot
+        @test length(pAll.series_list) == length(cm.lines) + 1
+        pNoAnnotate = BLR.plot3d(rcm, false)
+        @test length(pNoAnnotate.series_list) == length(cm.lines)
+    end
+end

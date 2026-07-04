@@ -207,3 +207,171 @@ function secondMoment(rm::ResidentModel; returnAvg::Bool=false, offAxisInds::Uni
         return results
     end
 end
+
+#================= W4-G2: resident composite flux weights + spectrum =================#
+# Device counterparts of the CompositeModel `_fluxWeights`/`_finiteVRange`/`getSpectrum` helpers in
+# src/composite.jl. Same orchestration shape as the rest of this file: per-line device reductions /
+# binned sums, small results combined on the host. NaN sentinels are handled by the SAME finiteness
+# rule as the CPU helpers (`isfinite(v) && isfinite(I*ΔA)`, both conditions) — a plain `sum`/`extrema`
+# would return NaN the moment a sentinel survives on the device.
+
+"""
+    _finiteVRange(rm::ResidentModel) -> (vmin, vmax)
+
+Resident counterpart of `_finiteVRange(::model)`: min/max of the device `v` column over points where
+`isfinite(v) && isfinite(I*ΔA)` (the W4-T4 finiteness rule — finite `I*ΔA` alone would let a NaN `v`
+poison the range, and vice versa), computed as two device reductions with `±Inf` sentinels in the
+style of `_rt_device_nanmin`/`_rt_device_nanmax`. Returns host `Float64`s; `(NaN, NaN)` when the
+model has **no** finite points, exactly like the host helper.
+"""
+function _finiteVRange(rm::ResidentModel)
+    ma = rm.ma
+    Tt = eltype(ma.v)
+    vmin = mapreduce((vi, Ii, Ai) -> ifelse(isfinite(vi) & isfinite(Ii*Ai), vi, oftype(vi, Inf)),
+        min, ma.v, ma.I, ma.ΔA; init=typemax(Tt))
+    vmax = mapreduce((vi, Ii, Ai) -> ifelse(isfinite(vi) & isfinite(Ii*Ai), vi, oftype(vi, -Inf)),
+        max, ma.v, ma.I, ma.ΔA; init=typemin(Tt))
+    return vmin > vmax ? (NaN, NaN) : (Float64(vmin), Float64(vmax)) #vmin>vmax ⟺ no finite points
+end
+
+"""
+    _fluxWeights(rcm::ResidentCompositeModel) -> Dict{String,Float64}
+
+Resident counterpart of `_fluxWeights(::CompositeModel)`: per-line `Σ I*ΔA` as a **single device
+reduction** (result to host), counting only points where `isfinite(v) && isfinite(I*ΔA)` — the same
+finiteness rule as the CPU helper (both conditions, matching exactly what the histogram kernels
+count; a plain `sum` would return NaN the moment a sentinel survives). Returns
+`fluxRatios[line] / totalFlux(line)` per line.
+
+Errors (naming the offending line) if any line's total flux is not positive, matching the CPU
+zero-flux guard: a zero-emission line cannot be normalized to unit integral, and an `Inf` weight
+would make the line silently vanish from the spectrum instead.
+"""
+function _fluxWeights(rcm::ResidentCompositeModel)
+    weights = Dict{String,Float64}()
+    for line in rcm.lines
+        ma = rcm.models[line].ma
+        Tt = eltype(ma.I)
+        total = Float64(mapreduce((vi, Ii, Ai) -> begin
+                iΔA = Ii*Ai
+                ifelse(isfinite(vi) & isfinite(iΔA), iΔA, zero(iΔA))
+            end, +, ma.v, ma.I, ma.ΔA; init=zero(Tt)))
+        total > 0.0 || error("_fluxWeights: line \"$line\" has no positive integrated flux " *
+            "(Σ I*ΔA = $total over its finite points) -- cannot normalize its profile to unit " *
+            "integral. Check the line's intensity function/mask; a line with no emission cannot " *
+            "carry a fluxRatio.")
+        weights[line] = rcm.fluxRatios[line] / total
+    end
+    return weights
+end
+
+"""
+    getSpectrum(rcm::ResidentCompositeModel; bins=100, z=0.0, minX=nothing, maxX=nothing,
+                centered=false, overflow=nothing, kwargs...)
+        -> (edges, centers, flux::Dict{String,Vector{Float64}}, total::Vector{Float64})
+
+Resident counterpart of `getSpectrum(::CompositeModel)`, with an identical return shape and identical
+keyword semantics (see the CPU method for the full argument docs). The shared wavelength range is
+computed on the host from per-line device min/max reductions of `v` ([`_finiteVRange`](@ref),
+NaN-aware) unless pinned by the caller via `minX`/`maxX`; each line is then binned on its own device
+via the existing resident binned-sum path with the **shared** `bins`/`minX`/`maxX`
+(`constructBinEdges` is deterministic, so every line gets bit-identical edges), and the per-line host
+vectors are combined into `total`.
+
+As on the CPU, the binning keywords (`minX`/`maxX`/`centered`/`overflow`) forward to every line's
+binned sum, and `overflow` defaults to `true` for integer `bins` (flux-preserving -- non-centered
+edges built at exactly `[λmin, λmax]` place each line's extremal points on the boundary, which the
+binning otherwise drops; a user-narrowed window accumulates out-of-window flux into the boundary
+bins) and `false` for a user-supplied edge vector; an explicit `overflow` always wins. The resident
+path additionally requires a user edge vector to be **uniform** (the device histogram kernels assume
+uniform spacing; see `_rt_resident_edges`).
+"""
+function getSpectrum(rcm::ResidentCompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0,
+        minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
+        centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    #shared wavelength range across all lines (observed frame): any side not pinned by the caller via
+    #minX/maxX is auto-computed from per-line device v reductions (both pinned -> skip the reductions),
+    #mirroring the CPU method
+    λmin = minX === nothing ? Inf : Float64(minX)
+    λmax = maxX === nothing ? -Inf : Float64(maxX)
+    if minX === nothing || maxX === nothing
+        for line in rcm.lines
+            vmin, vmax = _finiteVRange(rcm.models[line])
+            (isnan(vmin) || isnan(vmax)) && continue
+            λc = rcm.lineCenters[line]
+            lo = wavelength(vmin, λc)*(1.0+z); hi = wavelength(vmax, λc)*(1.0+z)
+            minX === nothing && lo < λmin && (λmin = lo)
+            maxX === nothing && hi > λmax && (λmax = hi)
+        end
+    end
+    (isfinite(λmin) && isfinite(λmax)) || error("getSpectrum: no line has any finite points -- cannot " *
+        "build a spectrum (every line's I*ΔA / v is NaN everywhere).")
+
+    #overflow default: true for integer-bins edges (keeps boundary/out-of-window points -- preserves the
+    #integrated-flux identity), false for a user edge vector (out-of-range flux drops against a data
+    #grid). An explicit user overflow always wins. Same rule as the CPU method.
+    overflow = overflow === nothing ? (bins isa Int) : overflow
+
+    weights = _fluxWeights(rcm)
+    flux = Dict{String,Vector{Float64}}()
+    edges = nothing; centers = nothing
+    for line in rcm.lines
+        rm = rcm.models[line]
+        ma = rm.ma
+        Tt = eltype(ma.I)
+        λc = rcm.lineCenters[line]; w = weights[line]
+        #device columns: λ = lineCenter*(1+v)*(1+z) and I*ΔA*w, fused broadcasts in the model's eltype
+        #(same evaluation order as the CPU path, so Float64-resident results are bit-comparable)
+        x = Tt(λc) .* (one(Tt) .+ ma.v) .* Tt(1.0+z)
+        y = (ma.I .* ma.ΔA) .* Tt(w)
+        e, c, r = _rt_resident_binsum(rm, x, y, bins; overflow=overflow, centered=centered, minX=λmin, maxX=λmax)
+        if edges === nothing
+            edges = e; centers = c
+        end
+        flux[line] = r
+    end
+    total = zeros(length(centers))
+    for line in rcm.lines
+        total .+= flux[line]
+    end
+    return (edges, centers, flux, total)
+end
+
+#================= W4-G3: resident composite per-line forwarding =================#
+
+"""
+    getProfile(rcm::ResidentCompositeModel, name; line=nothing, lines=nothing, kwargs...) -> profile
+
+Per-line forwarding of the resident [`getProfile`](@ref): compute `name`'s profile for the
+[`ResidentModel`](@ref) registered under `line` (`getProfile(rcm[line], name; kwargs...)`), running
+the device kernels on that line's resident columns.
+
+Mirrors `getProfile(::CompositeModel, …)` exactly -- a *single* method covering the whole positional
+signature, branching at runtime (Julia cannot dispatch on keywords, and Workstream 5 adds `:ratio`,
+which needs `lines::Tuple`, to this same signature):
+- `name === :ratio` (velocity-resolved line ratio) is **implemented in Workstream 5** and currently
+  throws a clear error, exactly like the host composite method.
+- every other `name` requires the `line` keyword and forwards to the per-line `ResidentModel` method,
+  whose restrictions apply (uniform bins only, no custom `dx`, no custom-`Function` profiles).
+"""
+function getProfile(rcm::ResidentCompositeModel, name::Union{String,Symbol,Function};
+        line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
+    if name === :ratio
+        error("getProfile(rcm, :ratio; lines=...): the :ratio (velocity-resolved line-ratio) profile is " *
+              "implemented in Workstream 5 (Balmer decrement) and is not available yet.")
+    end
+    line === nothing && error("getProfile(rcm, $(repr(name)); line=...): the `line` keyword is required " *
+        "(which line's profile do you want?). Known lines: $(rcm.lines).")
+    return getProfile(rcm[line], name; kwargs...)
+end
+
+"""
+    lineOverlap(rcm::ResidentCompositeModel) -> Vector{NamedTuple}
+
+Resident counterpart of [`lineOverlap`](@ref) with identical pairwise-overlap semantics, via the
+shared `_lineOverlap` implementation (`src/composite.jl`); the only difference is that each line's
+velocity range comes from the device reductions of `_finiteVRange(::ResidentModel)` (W4-G2) instead
+of the host gathers. This is also what lets the `spectrum` plot recipe accept a
+[`ResidentCompositeModel`](@ref) with no recipe changes.
+"""
+lineOverlap(rcm::ResidentCompositeModel) = _lineOverlap(rcm)

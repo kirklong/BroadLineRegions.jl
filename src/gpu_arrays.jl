@@ -188,6 +188,70 @@ function gpu(::Any; kwargs...)
     error("GPU support requires CUDA.jl — run `using CUDA` (with a functional CUDA device) to activate the BroadLineRegions CUDA extension")
 end
 
+"""
+    ResidentCompositeModel
+
+Host-side mirror of `CompositeModel` for device-resident multi-line work: the same
+`lines`/`lineCenters`/`fluxRatios` bookkeeping, but each line's model is a [`ResidentModel`](@ref)
+handle instead of a host `model`. Each line stays its own `ResidentModel` — there is no device-side
+composite kernel work, only orchestration (the resident `_fluxWeights`/`getSpectrum`/`getProfile`/
+`lineOverlap` methods in `gpu_observables.jl` run per-line device reductions/kernels and combine the
+small results on the host; the `image`/`plot3d` forwarding and the `profile`/`spectrum` recipe
+support mirror the host composite's — see `composite.jl` W4-G3 and the recipe docstrings).
+
+Built by `resident(cm::CompositeModel)` (CPU backend) or `gpu(cm::CompositeModel)` (device) — both
+of those constructors live in `src/composite.jl`, NOT here: this file is included before
+`composite.jl` (see `src/BroadLineRegions.jl`), so a method *signature* annotated `::CompositeModel`
+would `UndefVarError` at load time. The struct itself only references `ResidentModel` and can live
+here with the rest of the resident machinery.
+
+# Fields
+- `lines::Vector{String}`: unique line names, in creation order (`lines[1]` is the reference line,
+  as on the host `CompositeModel`).
+- `models::Dict{String,ResidentModel}`: the per-line device-resident handle.
+- `lineCenters::Dict{String,Float64}`: central wavelength per line, any consistent units.
+- `fluxRatios::Dict{String,Float64}`: each line's velocity-integrated flux relative to `lines[1]`.
+"""
+struct ResidentCompositeModel
+    lines::Vector{String}
+    models::Dict{String,ResidentModel}
+    lineCenters::Dict{String,Float64}
+    fluxRatios::Dict{String,Float64}
+end
+
+"""
+    Base.getindex(rcm::ResidentCompositeModel, line::String) -> ResidentModel
+
+Retrieve the [`ResidentModel`](@ref) registered for `line`. Errors (listing the known line names)
+if `line` is not present, matching the host `CompositeModel` indexing behavior.
+"""
+function Base.getindex(rcm::ResidentCompositeModel, line::String)
+    haskey(rcm.models, line) || error("ResidentCompositeModel: unknown line \"$line\" (known lines: $(rcm.lines))")
+    return rcm.models[line]
+end
+
+"""
+    Base.length(rcm::ResidentCompositeModel) -> Int
+
+Number of lines registered in `rcm`.
+"""
+Base.length(rcm::ResidentCompositeModel) = length(rcm.lines)
+
+"""
+    Base.show(io::IO, rcm::ResidentCompositeModel)
+
+Print one row per line — name, `lineCenter`, `fluxRatio`, number of flattened points, element type,
+and backend — mirroring the host `CompositeModel` show.
+"""
+function Base.show(io::IO, rcm::ResidentCompositeModel)
+    println(io, "ResidentCompositeModel with $(length(rcm)) line(s):")
+    for line in rcm.lines
+        rm = rcm.models[line]
+        println(io, "\t- $line: lineCenter=$(rcm.lineCenters[line]), fluxRatio=$(rcm.fluxRatios[line]), " *
+            "npoints=$(length(rm.ma.I)), T=$(eltype(rm.ma.I)), backend=$(nameof(typeof(rm.backend)))")
+    end
+end
+
 # --- Plots.jl recipe support for ResidentModel ----------------------------------------------------
 # The visualization recipes (image/plot3d/profile in util.jl) accept either a host `model` or a
 # ResidentModel. The accessors below return host (`Array`) data from the flat columns so the recipes

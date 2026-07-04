@@ -673,3 +673,148 @@ end
     @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0)
     @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0, backend=KernelAbstractions.CPU())
 end
+
+@testset "resident composite model (W4-G1/G2/G3, CPU backend)" begin
+    # Mirrors the "composite forwarding + spectrum (W4-T4/T5/T6)" fixture in runtests.jl --
+    # deliberately tiny (seconds, not minutes). Full-GPU agreement tests are W4-G4 (test/gpu_cuda.jl).
+    mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
+    BLR.addLine!(cm, mDisk; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
+
+    # --- W4-G1: resident forwarding (Float64 on the CPU backend, like the other resident CPU tests) ---
+    rcm = BLR.resident(cm; backend=KernelAbstractions.CPU())
+    @test rcm isa BLR.ResidentCompositeModel
+    @test length(rcm) == 2
+    @test rcm.lines == cm.lines
+    @test rcm.lineCenters == cm.lineCenters
+    @test rcm.fluxRatios == cm.fluxRatios
+    for line in cm.lines
+        rm = rcm[line]
+        @test rm isa BLR.ResidentModel
+        @test eltype(rm.ma.I) == Float64
+        @test isequal(rm.ma.v, BLR.getVariable(cm[line], :v, flatten=true))
+        @test isequal(rm.ma.I, BLR.getVariable(cm[line], :I, flatten=true))
+    end
+    # per-line kwargs forward (e.g. T=Float32)
+    rcm32 = BLR.resident(cm; T=Float32)
+    @test eltype(rcm32["Ha"].ma.I) == Float32 && eltype(rcm32["Hb"].ma.I) == Float32
+    # getindex miss errors listing the known lines (same message style as the CPU CompositeModel)
+    errIdx = try; rcm["nope"]; nothing; catch e; e; end
+    @test errIdx isa ErrorException && occursin("nope", errIdx.msg) && occursin("Ha", errIdx.msg)
+    # show prints one row per line
+    shown = sprint(show, rcm)
+    @test occursin("2 line(s)", shown) && occursin("Ha", shown) && occursin("Hb", shown)
+    @test occursin("fluxRatio=0.35", shown)
+    # gpu(cm) delegates per line -> without CUDA loaded the gpu(::Any) fallback error still fires
+    @test_throws ErrorException BLR.gpu(cm)
+
+    # --- W4-G2: device flux weights agree with the CPU composite helper ---
+    wCPU = BLR._fluxWeights(cm)
+    wDev = BLR._fluxWeights(rcm)
+    for line in cm.lines
+        @test isapprox(wDev[line], wCPU[line], rtol=1e-12)
+    end
+    # the resident _finiteVRange method agrees with the host helper (exact: Float64 columns are copies
+    # and min/max are exact operations)
+    @test BLR._finiteVRange(rcm["Ha"]) == BLR._finiteVRange(cm["Ha"])
+
+    # --- W4-G2: getSpectrum matches the CPU composite path (Float64 resident) ---
+    for z in (0.0, 0.1)
+        eC, cC, fC, tC = BLR.getSpectrum(cm; bins=64, z=z)
+        eD, cD, fD, tD = BLR.getSpectrum(rcm; bins=64, z=z)
+        @test eD == eC #identical minX/maxX into the deterministic constructBinEdges -> identical edges
+        @test cD == cC
+        for line in cm.lines
+            @test isapprox(fD[line], fC[line], rtol=1e-12)
+            @test isapprox(sum(fD[line]), rcm.fluxRatios[line], rtol=1e-12) #integrated-flux semantics
+        end
+        @test isapprox(tD, tC, rtol=1e-12)
+    end
+
+    # user-supplied UNIFORM edge vector: overflow passes through untouched (default false), matching CPU
+    eU = collect(range(6400.0, 6700.0, length=33)) #covers only Ha; Hb flux drops without overflow
+    _, _, fU, _ = BLR.getSpectrum(cm; bins=eU)
+    _, _, fUD, _ = BLR.getSpectrum(rcm; bins=eU)
+    for line in cm.lines
+        @test isapprox(fUD[line], fU[line], rtol=1e-12)
+    end
+    @test sum(fUD["Hb"]) == 0.0 #entirely out of range -> dropped, as on CPU
+
+    # --- W4-T6/G2 follow-up: the binnedSum binning kwargs (minX/maxX/centered/overflow) forward
+    # through the resident getSpectrum with CPU-identical semantics ---
+    eRef, cRef, fRef, tRef = BLR.getSpectrum(cm; bins=64)
+    # pinning the grid via minX/maxX at the auto-computed ends reproduces the default bit-identically
+    eDP, cDP, fDP, tDP = BLR.getSpectrum(rcm; bins=64, minX=eRef[1], maxX=eRef[end])
+    @test eDP == eRef && cDP == cRef
+    for line in cm.lines
+        @test isapprox(fDP[line], fRef[line], rtol=1e-12)
+    end
+    # centered=true parity with the CPU composite (padded edges; integrated flux preserved)
+    eCC, _, fCC, _ = BLR.getSpectrum(cm; bins=64, centered=true)
+    eCD, _, fCD, _ = BLR.getSpectrum(rcm; bins=64, centered=true)
+    @test eCD == eCC && eCD[1] < eRef[1] && eCD[end] > eRef[end]
+    for line in cm.lines
+        @test isapprox(fCD[line], fCC[line], rtol=1e-12)
+        @test isapprox(sum(fCD[line]), rcm.fluxRatios[line], rtol=1e-12)
+    end
+    # user-narrowed window: default overflow=true clamps out-of-window flux into the boundary bins
+    # (integrated-flux identity preserved); explicit overflow=false drops it -- both matching CPU
+    win = (cRef[10], cRef[50])
+    _, _, fNC, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2])
+    _, _, fND, _ = BLR.getSpectrum(rcm; bins=32, minX=win[1], maxX=win[2])
+    _, _, fDC, _ = BLR.getSpectrum(cm; bins=32, minX=win[1], maxX=win[2], overflow=false)
+    _, _, fDD, _ = BLR.getSpectrum(rcm; bins=32, minX=win[1], maxX=win[2], overflow=false)
+    for line in cm.lines
+        @test isapprox(fND[line], fNC[line], rtol=1e-12)
+        @test isapprox(fDD[line], fDC[line], rtol=1e-12)
+    end
+    @test isapprox(sum(fND["Ha"]) + sum(fND["Hb"]), sum(rcm.fluxRatios[l] for l in rcm.lines), rtol=1e-12)
+    @test sum(fDD["Ha"]) + sum(fDD["Hb"]) < sum(rcm.fluxRatios[l] for l in rcm.lines) - 1e-6
+
+    # --- W4-G2: the zero-flux guard fires on device too, naming the line ---
+    # (same public-API zero-emission fixture as the CPU regression test in runtests.jl)
+    mZero = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
+        I=BLR.IsotropicIntensity, rescale=0.0, v=BLR.vCircularDisk, τ=0.4, reflect=false)
+    cmZero = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6563.0)
+    BLR.addLine!(cmZero, mZero; line="dark", lineCenter=4861.0)
+    rcmZero = BLR.resident(cmZero; backend=KernelAbstractions.CPU())
+    errZ = try BLR._fluxWeights(rcmZero); nothing; catch err; err; end
+    @test errZ isa ErrorException && occursin("dark", errZ.msg)
+    @test_throws ErrorException BLR.getSpectrum(rcmZero; bins=32)
+
+    # --- W4-G3: per-line getProfile forwarding mirrors the CPU composite's one-method pattern ---
+    edges = collect(range(-0.06, 0.06, length=33))
+    for line in cm.lines
+        pF = BLR.getProfile(rcm, :line; line=line, bins=edges, centered=false)
+        pD = BLR.getProfile(rcm[line], :line; bins=edges, centered=false)
+        # forwarding equals the direct per-line resident call FIELD-WISE (same style as the CPU
+        # composite forwarding tests in runtests.jl -- `profile` defines no ==)
+        @test pF.name == pD.name
+        @test pF.binEdges == pD.binEdges
+        @test pF.binCenters == pD.binCenters
+        @test pF.binSums == pD.binSums
+        # and agrees with the CPU composite forwarding on the same explicit uniform edges (Float64)
+        pC = BLR.getProfile(cm, :line; line=line, bins=edges, centered=false)
+        @test isapprox(pF.binSums, pC.binSums, rtol=1e-12)
+    end
+    # missing `line` errors naming the kwarg + the known lines (same message as the CPU composite)
+    errLine = try BLR.getProfile(rcm, :line); nothing; catch e; e; end
+    @test errLine isa ErrorException && occursin("`line` keyword is required", errLine.msg) &&
+        occursin("Ha", errLine.msg) && occursin("Hb", errLine.msg)
+    # :ratio is a clear "implemented in W5" error, exactly like the CPU composite
+    errRatio = try BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb")); nothing; catch e; e; end
+    @test errRatio isa ErrorException && occursin("Workstream 5", errRatio.msg)
+    # an unknown line goes through the getindex miss (lists the known lines)
+    @test_throws ErrorException BLR.getProfile(rcm, :line; line="nope")
+
+    # --- W4-G3: lineOverlap on the resident composite == host (Float64 columns are exact copies) ---
+    @test BLR.lineOverlap(rcm) == BLR.lineOverlap(cm) #Ha/Hb here: both empty (no overlap)
+    cmO = BLR.CompositeModel(mDisk; line="A", lineCenter=6563.0)
+    BLR.addLine!(cmO, mDisk; line="B", lineCenter=6600.0)
+    rcmO = BLR.resident(cmO; backend=KernelAbstractions.CPU())
+    ovC = BLR.lineOverlap(cmO)
+    ovD = BLR.lineOverlap(rcmO)
+    @test length(ovD) == 1 && ovD == ovC
+end
