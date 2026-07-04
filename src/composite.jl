@@ -634,3 +634,41 @@ function plot3d(cm::CompositeModel, args...; line::Union{Nothing,String}=nothing
     end
     return p
 end
+
+#===================== W4-G1: device-resident composite (gpu/resident forwarding) =====================#
+# Include-order note: `ResidentCompositeModel` (and the per-model `resident`/`gpu` entry points) live in
+# src/gpu_arrays.jl, which is included BEFORE this file -- but the `::CompositeModel` method signatures
+# below cannot live there, because gpu_arrays.jl is parsed before the CompositeModel type exists (same
+# rule as W4-T7's recipe placement). Both types are defined by the time this file is included, so the
+# delegating methods go here. `gpu(::model)` itself lives in the CUDA package extension
+# (ext/BroadLineRegionsCUDAExt.jl; CUDA is a weakdep) -- the delegating `gpu(cm::CompositeModel)` can
+# live in src because it only calls `gpu` per line, so without CUDA loaded the existing `gpu(::Any)`
+# fallback error still fires.
+
+"""
+    resident(cm::CompositeModel; T=Float64, backend=KernelAbstractions.CPU(), raytrace=false)
+        -> ResidentCompositeModel
+
+Flatten every line's model with the per-model [`resident`](@ref) (each line gets the same keyword
+arguments) and wrap the per-line [`ResidentModel`](@ref) handles as a
+[`ResidentCompositeModel`](@ref). The default `CPU()` backend keeps everything on the host — useful
+for testing the resident composite pipeline without a GPU. Use `gpu(cm)` (with CUDA.jl loaded) to
+build a device-resident composite.
+"""
+function resident(cm::CompositeModel; kwargs...)
+    models = Dict{String,ResidentModel}(line => resident(cm.models[line]; kwargs...) for line in cm.lines)
+    return ResidentCompositeModel(copy(cm.lines), models, copy(cm.lineCenters), copy(cm.fluxRatios))
+end
+
+"""
+    gpu(cm::CompositeModel; T=Float32, kwargs...) -> ResidentCompositeModel
+
+Move every line's model onto the GPU with the per-model [`gpu`](@ref) (each line gets the same
+keyword arguments, e.g. `T=Float32`) and wrap the per-line [`ResidentModel`](@ref) handles as a
+[`ResidentCompositeModel`](@ref). Requires CUDA.jl to be loaded so the package extension can provide
+the CUDA-backed `gpu(::model)` method — without it the `gpu(::Any)` fallback error fires per line.
+"""
+function gpu(cm::CompositeModel; kwargs...)
+    models = Dict{String,ResidentModel}(line => gpu(cm.models[line]; kwargs...) for line in cm.lines)
+    return ResidentCompositeModel(copy(cm.lines), models, copy(cm.lineCenters), copy(cm.fluxRatios))
+end

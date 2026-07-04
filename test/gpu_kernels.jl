@@ -673,3 +673,40 @@ end
     @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0)
     @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0, backend=KernelAbstractions.CPU())
 end
+
+@testset "resident composite model (W4-G1/G2, CPU backend)" begin
+    # Mirrors the "composite forwarding + spectrum (W4-T4/T5/T6)" fixture in runtests.jl --
+    # deliberately tiny (seconds, not minutes). Full-GPU agreement tests are W4-G4 (test/gpu_cuda.jl).
+    mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
+        τ=0.4, reflect=false)
+    cm = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
+    BLR.addLine!(cm, mDisk; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
+
+    # --- W4-G1: resident forwarding (Float64 on the CPU backend, like the other resident CPU tests) ---
+    rcm = BLR.resident(cm; backend=KernelAbstractions.CPU())
+    @test rcm isa BLR.ResidentCompositeModel
+    @test length(rcm) == 2
+    @test rcm.lines == cm.lines
+    @test rcm.lineCenters == cm.lineCenters
+    @test rcm.fluxRatios == cm.fluxRatios
+    for line in cm.lines
+        rm = rcm[line]
+        @test rm isa BLR.ResidentModel
+        @test eltype(rm.ma.I) == Float64
+        @test isequal(rm.ma.v, BLR.getVariable(cm[line], :v, flatten=true))
+        @test isequal(rm.ma.I, BLR.getVariable(cm[line], :I, flatten=true))
+    end
+    # per-line kwargs forward (e.g. T=Float32)
+    rcm32 = BLR.resident(cm; T=Float32)
+    @test eltype(rcm32["Ha"].ma.I) == Float32 && eltype(rcm32["Hb"].ma.I) == Float32
+    # getindex miss errors listing the known lines (same message style as the CPU CompositeModel)
+    errIdx = try; rcm["nope"]; nothing; catch e; e; end
+    @test errIdx isa ErrorException && occursin("nope", errIdx.msg) && occursin("Ha", errIdx.msg)
+    # show prints one row per line
+    shown = sprint(show, rcm)
+    @test occursin("2 line(s)", shown) && occursin("Ha", shown) && occursin("Hb", shown)
+    @test occursin("fluxRatio=0.35", shown)
+    # gpu(cm) delegates per line -> without CUDA loaded the gpu(::Any) fallback error still fires
+    @test_throws ErrorException BLR.gpu(cm)
+end
