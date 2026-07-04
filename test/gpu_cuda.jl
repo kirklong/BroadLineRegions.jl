@@ -345,5 +345,70 @@ using KernelAbstractions
             # the suggested fix works: bring the GPU model to the CPU, then combine there
             @test (BLR.cpu(d) + cpuRm) isa BLR.ResidentModel
         end
+
+        @testset "resident composite model on CUDABackend (W4-G4)" begin
+            # Two-line composite -- disk Hα + cloud Hβ -- reusing this file's small fixtures.
+            # gpu(cm) uses gpu(m)'s default T=Float32, so comparisons use the Float32 tolerances
+            # already used above (rtol=1e-4, atol=1e-6). This is also the first code path that
+            # exercises the W4-G2 multi-array `mapreduce((vi,Ii,Ai)->…, op, v, I, ΔA)` reductions
+            # (_finiteVRange/_fluxWeights) on a real CUDA device.
+            dm = disk()
+            cl = clouds(80, 105)
+            cm = BLR.CompositeModel(dm; line="Ha", lineCenter=6562.8)
+            BLR.addLine!(cm, cl; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
+            rcm = BLR.gpu(cm)
+            @test rcm isa BLR.ResidentCompositeModel
+            @test rcm["Ha"].ma.I isa CuArray && eltype(rcm["Ha"].ma.I) == Float32
+            @test rcm["Hb"].ma.v isa CuArray && eltype(rcm["Hb"].ma.v) == Float32
+
+            # (a) device _fluxWeights (NaN-aware multi-array mapreduce) vs the CPU composite helper
+            wC = BLR._fluxWeights(cm)
+            wD = BLR._fluxWeights(rcm)
+            for line in cm.lines
+                @test isapprox(wD[line], wC[line]; rtol=1e-4)
+            end
+            # the _finiteVRange device reductions agree with the host helper at Float32 precision
+            for line in cm.lines
+                vminC, vmaxC = BLR._finiteVRange(cm[line])
+                vminD, vmaxD = BLR._finiteVRange(rcm[line])
+                @test isapprox(vminD, vminC; rtol=1e-5, atol=1e-7)
+                @test isapprox(vmaxD, vmaxC; rtol=1e-5, atol=1e-7)
+            end
+
+            # (b) getSpectrum per-line flux + totals vs CPU on a SHARED user-supplied uniform edge
+            # grid (identical edges on both paths so the bins line up; the integer-bins path builds
+            # its edges from the Float32 device v reductions, whose λ range differs from the CPU's
+            # at Float32 rounding, so boundary points could legitimately land one bin over there)
+            lo = minimum(BLR.wavelength(BLR._finiteVRange(cm[l])[1], cm.lineCenters[l]) for l in cm.lines)
+            hi = maximum(BLR.wavelength(BLR._finiteVRange(cm[l])[2], cm.lineCenters[l]) for l in cm.lines)
+            pad = (hi - lo) / 32
+            eU = collect(range(lo - pad, hi + pad, length=49))
+            _, _, fC, tC = BLR.getSpectrum(cm; bins=eU)
+            _, _, fD, tD = BLR.getSpectrum(rcm; bins=eU)
+            for line in cm.lines
+                @test approx_eq(fD[line], fC[line]; rtol=1e-4, atol=1e-6)
+            end
+            @test approx_eq(tD, tC; rtol=1e-4, atol=1e-6)
+
+            # (c) integrated-flux semantics survive Float32 (integer-bins path; overflow forced true
+            # internally so the boundary points are kept): sum(flux[line]) ≈ fluxRatios[line]
+            eD2, _, fD2, tD2 = BLR.getSpectrum(rcm; bins=48)
+            for line in cm.lines
+                @test isapprox(sum(fD2[line]), cm.fluxRatios[line]; rtol=1e-4)
+            end
+            @test isapprox(sum(tD2), sum(cm.fluxRatios[l] for l in cm.lines); rtol=1e-4)
+            # and the internally-constructed shared edges agree with the CPU ones at Float32 precision
+            eC2 = BLR.getSpectrum(cm; bins=48)[1]
+            @test length(eD2) == length(eC2) && all(isapprox.(eD2, eC2; rtol=1e-5))
+
+            # (d) per-line getProfile forwarding agrees with the CPU composite on shared uniform
+            # v-edges (explicit edges, like the other profile comparisons in this file)
+            vEdges = collect(range(-0.09, 0.09, length=37))
+            for line in cm.lines
+                a = BLR.getProfile(cm, :line; line=line, bins=vEdges, centered=false).binSums
+                b = BLR.getProfile(rcm, :line; line=line, bins=vEdges, centered=false).binSums
+                @test approx_eq(b, a; rtol=1e-4, atol=1e-6)
+            end
+        end
     end
 end
