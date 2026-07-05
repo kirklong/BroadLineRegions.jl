@@ -586,33 +586,36 @@ With several lines in one `CompositeModel` we can also model the *velocity-resol
 In recent work by Chen et al. the observed BD(v) is centrally peaked (declining ~2× toward the wings), which their photoionization modeling attributes to Hβ being suppressed relative to Hα at large radii (lower density/ionization). We can easily model this kind of behavior with `BroadLineRegions.jl` through per-line differences in the radial emissivity:
 
 ```julia
-mHα = BLR.DiskWindModel(3000., 100., 1., 75/180*π; nr=1024, nϕ=1024, scale=:log,
+# an LRD-scale BLR: r̄ = 3×10⁴ rₛ puts the line widths at FWHM ~1000-2000 km/s as observed
+mHα = BLR.DiskWindModel(30_000., 100., 1., 75/180*π; nr=1024, nϕ=1024, scale=:log,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=1.0, f3=0.0, f4=0.0,
         τ=5.0, reflect=false)
 cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.)
 # Hβ reuses the recorded Hα parameters with a steeper source-function power law (S(r) ∝ r^(-α)),
 # suppressing its emissivity at the large radii that dominate the line core (v ↔ r in a virialized
-# flow) relative to Hα, so the decrement peaks at line center -- the paper's stratification. Each
-# line generates its own grid about the shared intensity-weighted r̄ (the two lines do NOT share
-# geometry, the typical situation for real line pairs); widening rFac alongside α keeps Hβ's
-# regenerated window reaching inside Hα's rMin, so the DENOMINATOR line stays the velocity-broader
-# one (see the notes below).
-BLR.addLine!(cm; line="Hβ", lineCenter=4861., fluxRatio=1/2.86, from="Hα", α=1.25, rFac=400.) #Case B integrated decrement
+# flow) relative to Hα, so the decrement peaks at line center -- the paper's stratification. The
+# paper's picture is the SAME gas emitting both lines, so we want Hβ's regenerated radial window to
+# match Hα's -- and because r̄ is defined as the intensity-weighted mean radius, steeper emissivity
+# on the same gas necessarily means a smaller r̄ (here 2/3 the Hα value restores the shared
+# 3000-300,000 rₛ window; keeping r̄ EQUAL would instead shove Hβ's window outward). A convenient
+# side effect: the denominator line stays the (marginally) velocity-broader one (see notes below).
+BLR.addLine!(cm; line="Hβ", lineCenter=4861., fluxRatio=1/2.86, from="Hα", α=1.25, r̄=20_000.) #Case B integrated decrement
 # bin both lines onto one shared velocity grid to form the ratio -- here a data-like grid in km/s
-# converted to units of c (with an integer `bins` count the shared grid is instead built
-# automatically from the union of the two lines' velocity ranges):
+# converted to units of c, truncated to the well-covered line core as in the paper's figures
+# (with an integer `bins` count the shared grid is instead built automatically from the union of
+# the two lines' full velocity ranges):
 c_kms = 2.99792458e5
-vEdges = collect(-15_000.:250.:15_000.) ./ c_kms
+vEdges = collect(-2_500.:100.:2_500.) ./ c_kms
 bd = BLR.getProfile(cm, :ratio; lines=("Hα", "Hβ"), bins=vEdges) #the velocity-resolved Balmer decrement BD(v)
 BLR.profile(cm)   #both line profiles, overlaid
 BLR.profile(bd)   #BD(v) itself -- centrally peaked, declining toward the wings
 ```
 
-An important subtlety of the integrated-flux semantics: each line's profile is normalized to unit integral before being scaled by its `fluxRatio`, so any constant prefactor on a line's intensity divides out &mdash; the per-line model sets only the velocity *shape* of BD(v), while the *integrated* decrement is pinned by `fluxRatio` alone (that is why we could pin the Case B value 2.86 independently of the `α`/`rFac` overrides). The flip side is that an override whose model-implied flux ratio disagrees with `1/fluxRatio` is silently internally inconsistent. If you would rather let the per-line models themselves set the integrated decrement, compute the `fluxRatio` from them directly:
+An important subtlety of the integrated-flux semantics: each line's profile is normalized to unit integral before being scaled by its `fluxRatio`, so any constant prefactor on a line's intensity divides out &mdash; the per-line model sets only the velocity *shape* of BD(v), while the *integrated* decrement is pinned by `fluxRatio` alone (that is why we could pin the Case B value 2.86 independently of the `α`/`r̄` overrides). The flip side is that an override whose model-implied flux ratio disagrees with `1/fluxRatio` is silently internally inconsistent. If you would rather let the per-line models themselves set the integrated decrement, compute the `fluxRatio` from them directly:
 
 ```julia
 IΔA(m) = sum(x for x in BLR.getVariable(m, :I, flatten=true) .* BLR.getVariable(m, :ΔA, flatten=true) if isfinite(x))
-mHβ = BLR.rebuild(mHα.params; α=1.25, rFac=400.) #the same model addLine! builds internally
+mHβ = BLR.rebuild(mHα.params; α=1.25, r̄=20_000.) #the same model addLine! builds internally
 cm2 = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.)
 BLR.addLine!(cm2, mHβ; line="Hβ", lineCenter=4861., fluxRatio=IΔA(mHβ)/IΔA(mHα)) #model-implied integrated decrement
 ```
@@ -626,7 +629,7 @@ A few practical notes for laying model BD(v) over published measurements:
 - **Empty and noisy bins**: bins where the denominator line has no flux are `NaN` (never `Inf`), so they drop out of plots naturally. For sparse cloud models the `floor` keyword additionally NaN-masks bins below `floor × maximum(denominator)`, an SNR-like guard against a handful of clouds producing wild ratio values. Mind also which line sits in the denominator: as the denominator runs out of velocity coverage the ratio blows up before going `NaN`, so prefer the velocity-broader line as the denominator (as in the example above) &mdash; or restrict the grid / use `floor` if that is not an option.
 - **Instrumental broadening**: LSF convolution is deliberately left outside the package (Chen et al. convolve the narrower line to match the broader one's LSF before dividing). To reproduce that, bin each line separately via `getProfile(cm, :line; line=...)` on the shared grid, convolve as appropriate for your instrument, and divide.
 
-Finally, the power law above is just the simplest radial stratification &mdash; the fully general mechanism for *any* radial ratio profile is a closure wrapping the reference line's intensity function (any callable with the right keyword signature works as `I`, see [Defining your own custom models](@ref)), passed as the `I` override. Unlike the `α`/`rFac` overrides above, an intensity-only override reuses the `from` line's grid rather than regenerating it (so no `rFac` compensation is needed):
+Finally, the power law above is just the simplest radial stratification &mdash; the fully general mechanism for *any* radial ratio profile is a closure wrapping the reference line's intensity function (any callable with the right keyword signature works as `I`, see [Defining your own custom models](@ref)), passed as the `I` override. Unlike the `α`/`r̄` overrides above, an intensity-only override reuses the `from` line's grid rather than regenerating it (so no window compensation is needed):
 
 ```julia
 IHβ(; r, kwargs...) = BLR.DiskWindIntensity(; r=r, kwargs...) ./ r #a pure power-law suppression (equivalent to α → α+1 on a shared grid; constant prefactors divide out)
