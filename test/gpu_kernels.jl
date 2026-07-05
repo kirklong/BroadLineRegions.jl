@@ -803,11 +803,41 @@ end
     errLine = try BLR.getProfile(rcm, :line); nothing; catch e; e; end
     @test errLine isa ErrorException && occursin("`line` keyword is required", errLine.msg) &&
         occursin("Ha", errLine.msg) && occursin("Hb", errLine.msg)
-    # :ratio is a clear "implemented in W5" error, exactly like the CPU composite
-    errRatio = try BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb")); nothing; catch e; e; end
-    @test errRatio isa ErrorException && occursin("Workstream 5", errRatio.msg)
     # an unknown line goes through the getindex miss (lists the known lines)
     @test_throws ErrorException BLR.getProfile(rcm, :line; line="nope")
+
+    # --- W5-G1: :ratio velocity-resolved line ratio matches the CPU composite (Float64 resident;
+    # this fixture shares one model between the lines, so the ratio is flat at the fluxRatio
+    # quotient -- the stratified/morphology tests live in the CPU W5-T1/T2 testset) ---
+    pC = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=31)
+    pD = BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=31)
+    @test pD.name == Symbol("Ha/Hb")
+    @test pD.binEdges == pC.binEdges #identical union vmin/vmax into deterministic constructBinEdges
+    @test pD.binCenters == pC.binCenters
+    @test isequal(isnan.(pD.binSums), isnan.(pC.binSums)) #NaN (empty-denominator) bins match
+    finR = findall(isfinite, pC.binSums)
+    @test !isempty(finR) && isapprox(pD.binSums[finR], pC.binSums[finR], rtol=1e-12)
+    @test all(isapprox.(pD.binSums[finR], 1.0/0.35, rtol=1e-12)) #flat fixture: the fluxRatio quotient
+    # the floor guard produces the same NaN mask as the CPU path
+    pCf = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=31, floor=0.5)
+    pDf = BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=31, floor=0.5)
+    @test isequal(isnan.(pDf.binSums), isnan.(pCf.binSums))
+    # a user-supplied UNIFORM edge vector passes through with CPU-identical (data-grid) semantics
+    vEdgesR = collect(range(-0.05, 0.05, length=33))
+    pCu = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=vEdgesR)
+    pDu = BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=vEdgesR)
+    @test pDu.binEdges == vEdgesR
+    @test isequal(isnan.(pDu.binSums), isnan.(pCu.binSums))
+    finRu = findall(isfinite, pCu.binSums)
+    @test !isempty(finRu) && isapprox(pDu.binSums[finRu], pCu.binSums[finRu], rtol=1e-12)
+    # :ratio error paths mirror the CPU composite (lines required, line rejected, lines :ratio-only)
+    errR = try BLR.getProfile(rcm, :ratio); nothing; catch e; e; end
+    @test errR isa ErrorException && occursin("lines", errR.msg)
+    @test_throws ErrorException BLR.getProfile(rcm, :ratio; line="Ha")
+    @test_throws ErrorException BLR.getProfile(rcm, :line; line="Ha", lines=("Ha", "Hb"))
+    # lineRatio: shared _lineRatio implementation over the host fluxRatios metadata
+    @test BLR.lineRatio(rcm, "Ha", "Hb") == BLR.lineRatio(cm, "Ha", "Hb") == 1.0/0.35
+    @test_throws ErrorException BLR.lineRatio(rcm, "Ha", "nope")
 
     # --- W4-G3: lineOverlap on the resident composite == host (Float64 columns are exact copies) ---
     @test BLR.lineOverlap(rcm) == BLR.lineOverlap(cm) #Ha/Hb here: both empty (no overlap)

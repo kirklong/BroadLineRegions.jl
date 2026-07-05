@@ -327,10 +327,17 @@ function _ratioProfile(cm::CompositeModel, lines::Tuple{String,String};
         end
     end
 
+    return profile(name=Symbol(a, "/", b), binCenters=centers, binEdges=edges, binSums=_ratioDivide(num, den, floor))
+end
+
+#shared num/den division for the :ratio profile -- used by both the host path above and the resident
+#path (gpu_observables.jl, W5-G1; num/den are small host vectors on both), so the NaN/floor semantics
+#cannot drift between them. Empty (0.0) or below-floor denominator bins become NaN, never Inf.
+function _ratioDivide(num::Vector{Float64}, den::Vector{Float64}, floor::Real)
     #NaN-proof floor threshold: `floor` times a finite-only maximum of den. den comes straight from
-    #binnedSum (zero-initialized, accumulates only finite values) so it is in fact always finite, but
-    #the finite-only reduction costs nothing and keeps the guard correct if a stored/derived vector is
-    #ever fed through this path.
+    #the binned sums (zero-initialized, accumulate only finite values) so it is in fact always finite,
+    #but the finite-only reduction costs nothing and keeps the guard correct if a stored/derived
+    #vector is ever fed through this path.
     thresh = 0.0
     if floor > 0.0
         denMax = -Inf
@@ -344,7 +351,7 @@ function _ratioProfile(cm::CompositeModel, lines::Tuple{String,String};
         dk = den[k]
         binSums[k] = (dk == 0.0 || (floor > 0.0 && dk < thresh)) ? NaN : num[k]/dk
     end
-    return profile(name=Symbol(a, "/", b), binCenters=centers, binEdges=edges, binSums=binSums)
+    return binSums
 end
 
 """
@@ -355,8 +362,18 @@ end
 is exactly `cm.fluxRatios[a] / cm.fluxRatios[b]` -- the constant that the velocity-resolved
 `getProfile(cm, :ratio; lines=(a, b))` profile integrates to (and equals bin-by-bin in the degenerate
 identical-geometry case). Errors (listing the known lines) if either name is not registered.
+
+A [`ResidentCompositeModel`](@ref) is supported through the same shared implementation (the
+`::ResidentCompositeModel` method lives with its resident siblings in `gpu_observables.jl`, W5-G1) --
+`fluxRatios` is host metadata on both, so the two methods are identical.
 """
 function lineRatio(cm::CompositeModel, a::String, b::String)
+    return _lineRatio(cm, a, b)
+end
+
+#shared lineRatio implementation -- deliberately UNtyped, like `_lineOverlap`: the body only touches
+#the host `fluxRatios`/`lines` metadata, which host and resident composites carry identically.
+function _lineRatio(cm, a::String, b::String)
     for l in (a, b)
         haskey(cm.fluxRatios, l) || error("lineRatio: unknown line \"$l\" (known lines: $(cm.lines))")
     end
