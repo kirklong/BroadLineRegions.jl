@@ -583,9 +583,7 @@ Velocities map to wavelengths at first order, `λ = lineCenter*(1+v)` (see [`wav
 
 With several lines in one `CompositeModel` we can also model the *velocity-resolved* ratio of any two of them &mdash; for the Balmer lines this is the velocity-resolved Balmer decrement BD(v) = F_Hα(v)/F_Hβ(v), recently measured for the "Little Red Dots" in [Chen et al. 2026](https://arxiv.org/abs/2606.04711) (§5.3). On the data side this quantity is simply the ratio of the two continuum-subtracted broad-line profiles interpolated onto a common velocity grid, and the model side mirrors that exactly: `getProfile(cm, :ratio; lines=(a, b))` bins both lines' fluxes onto shared velocity bins and divides, returning a `profile` struct named `Symbol("a/b")`.
 
-The physics that makes BD(v) non-flat is radial stratification: in a virialized BLR velocity maps to radius (|v| ≲ √(rₛ/2r), so the line core is dominated by large-radius material while only small radii can reach the wings), and any *difference between the two lines' radial emissivity profiles* therefore imprints structure on the ratio. If the two lines share identical geometry and intensity shape the ratio is exactly flat at `fluxRatios[a]/fluxRatios[b]`. In Chen et al. the observed BD(v) is centrally peaked (declining ~2× toward the wings), which their photoionization modeling attributes to Hβ being suppressed relative to Hα at large radii (lower density/ionization) &mdash; in `BroadLineRegions.jl` that enters entirely through the per-line intensity functions, no new physics code required.
-
-Here is a two-line disk-wind example implementing a power-law ratio Hα/Hβ(r) ∝ (r/rMin) via an intensity closure on the Hβ line:
+In recent work by Chen et al. the observed BD(v) is centrally peaked (declining ~2× toward the wings), which their photoionization modeling attributes to Hβ being suppressed relative to Hα at large radii (lower density/ionization). We can easily model this kind of behavior with `BroadLineRegions.jl`through different intensity functions in each line:
 
 ```julia
 rMin, rMax, inc = 500., 4000., 30/180*π
@@ -593,24 +591,26 @@ mHα = BLR.DiskWindModel(rMin, rMax, inc; nr=256, nϕ=512, scale=:log,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=1.0, f3=0.0, f4=0.0, α=1.0,
         τ=5.0, reflect=false)
 cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.)
-# Hβ reuses the recorded Hα parameters, overriding only the intensity function: the same
-# DiskWindIntensity multiplied by a DECREASING function of r, so that Hα/Hβ(r) = (r/rMin) rises
-# outward and the ratio is centrally peaked (the line core sees mostly large-r material).
-IHβ(; r, kwargs...) = BLR.DiskWindIntensity(; r=r, kwargs...) .* (rMin ./ r)
-BLR.addLine!(cm; line="Hβ", lineCenter=4861., fluxRatio=1/2.86, from="Hα", I=IHβ) #Case B integrated decrement
+# Hβ reuses the recorded Hα parameters, overriding only the source-function power law: DiskWindIntensity
+# has S(r) ∝ r^(-α), so a STEEPER α for Hβ suppresses it at large radii relative to Hα -- here
+# Hα/Hβ(r) ∝ r^(αHβ - αHα) = r rises outward, and the ratio is centrally peaked (the line core sees
+# mostly large-r material).
+BLR.addLine!(cm; line="Hβ", lineCenter=4861., fluxRatio=1/2.86, from="Hα", α=2.) #Case B integrated decrement
 bd = BLR.getProfile(cm, :ratio; lines=("Hα", "Hβ")) #the velocity-resolved Balmer decrement BD(v)
 BLR.profile(cm)          #both line profiles, overlaid
 BLR.spectrum(cm; bins=200) #the combined wavelength-space spectrum
 BLR.profile(bd)          #BD(v) itself -- centrally peaked, declining toward the wings
 ```
 
-An important subtlety of the integrated-flux semantics: each line's profile is normalized to unit integral before being scaled by its `fluxRatio`, so any constant prefactor on the `IHβ` closure divides out &mdash; the closure sets only the velocity *shape* of BD(v), while the *integrated* decrement is pinned by `fluxRatio` alone (that is why no normalization constant appears in `IHβ` above, and why we could pin the Case B value 2.86 independently of the closure). The flip side is that a closure whose flux-weighted mean ratio disagrees with `1/fluxRatio` is silently internally inconsistent. If you would rather let the closure itself set the integrated decrement, compute the `fluxRatio` from it directly:
+Note the α override only works this cleanly because we built `mHα` with the explicit `(rMin, rMax, i)` parameterization, where `α` reaches only the intensity function &mdash; in the mean-radius parameterization `DiskWindModel(r̄, rFac, α, i; ...)`, `α` also helps set `rMin`/`rMax`, so overriding it there would *move the grid* and the two lines would no longer share geometry (see the [`rebuild`](@ref BLR.rebuild) docstring on override semantics).
+
+An important subtlety of the integrated-flux semantics: each line's profile is normalized to unit integral before being scaled by its `fluxRatio`, so any constant prefactor on a line's intensity divides out &mdash; the intensity shape sets only the velocity *shape* of BD(v), while the *integrated* decrement is pinned by `fluxRatio` alone (that is why we could pin the Case B value 2.86 independently of the α override). The flip side is that an intensity override whose flux-weighted mean ratio disagrees with `1/fluxRatio` is silently internally inconsistent. If you would rather let the intensity functions themselves set the integrated decrement, compute the `fluxRatio` from them directly:
 
 ```julia
 IΔA(m) = sum(x for x in BLR.getVariable(m, :I, flatten=true) .* BLR.getVariable(m, :ΔA, flatten=true) if isfinite(x))
-mHβ = BLR.rebuild(mHα.params; I=IHβ) #the same model addLine! builds internally
+mHβ = BLR.rebuild(mHα.params; α=2.) #the same model addLine! builds internally
 cm2 = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.)
-BLR.addLine!(cm2, mHβ; line="Hβ", lineCenter=4861., fluxRatio=IΔA(mHβ)/IΔA(mHα)) #closure-implied integrated decrement
+BLR.addLine!(cm2, mHβ; line="Hβ", lineCenter=4861., fluxRatio=IΔA(mHβ)/IΔA(mHα)) #intensity-implied integrated decrement
 ```
 
 The integrated ratio of any two registered lines is available as [`lineRatio`](@ref BLR.lineRatio)`(cm, "Hα", "Hβ")` (`== fluxRatios["Hα"]/fluxRatios["Hβ"]` by the semantics above, and also what the finite bins of BD(v) integrate to).
@@ -627,13 +627,16 @@ bdModel = BLR.getProfile(cm, :ratio; lines=("Hα", "Hβ"), bins=dataEdges_kms ./
 - **Empty and noisy bins**: bins where the denominator line has no flux are `NaN` (never `Inf`), so they drop out of plots naturally. For sparse cloud models the `floor` keyword additionally NaN-masks bins below `floor × maximum(denominator)`, an SNR-like guard against a handful of clouds producing wild ratio values.
 - **Instrumental broadening**: LSF convolution is deliberately left outside the package (Chen et al. convolve the narrower line to match the broader one's LSF before dividing). To reproduce that, bin each line separately via `getProfile(cm, :line; line=...)` on the shared grid, convolve as appropriate for your instrument, and divide.
 
-Finally, the power law above is just the simplest radial stratification; anything callable works, e.g. a table-interpolated photoionization ratio:
+Finally, the α override above works because the desired stratification happened to be a pure power law &mdash; the general mechanism for *any* radial line-ratio profile is a closure wrapping the reference line's intensity function (any callable with the right keyword signature works as `I`, see [Defining your own custom models](@ref)), passed as the `I` override instead:
 
 ```julia
-# using Interpolations #user-built radial ratio profile from a published (n_H, U) -> Hα/Hβ grid,
-# rGrid, ratioGrid = ... #e.g. mapping r -> (n_H(r), U(r)) -> Hα/Hβ(r) from Yan et al./Korista et al. tables
+IHβ(; r, kwargs...) = BLR.DiskWindIntensity(; r=r, kwargs...) .* (rMin ./ r) #equivalent to the α=2. override (constants divide out)
+# ...or a table-interpolated photoionization ratio, e.g. with Interpolations.jl:
+# rGrid, ratioGrid = ... #user-built radial ratio profile from a published (n_H, U) -> Hα/Hβ grid
 # itp = linear_interpolation(rGrid, ratioGrid)
-# IHβtable(; r, kwargs...) = BLR.DiskWindIntensity(; r=r, kwargs...) ./ itp.(r)
+# IHβ(; r, kwargs...) = BLR.DiskWindIntensity(; r=r, kwargs...) ./ itp.(r)
+cm3 = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.)
+BLR.addLine!(cm3; line="Hβ", lineCenter=4861., fluxRatio=1/2.86, from="Hα", I=IHβ)
 ```
 
 ## Running on the GPU
