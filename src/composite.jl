@@ -261,9 +261,14 @@ binned flux (an SNR-like guard for sparse cloud models, off by default), are set
   *unconvolved* binned profiles; to match LSF-matched data (the paper convolves the narrower line to
   the broader one's LSF before dividing), bin each line separately, convolve, and divide yourself.
 """
+#the :ratio gate must accept the String spelling too -- the public `name` signature is
+#Union{String,Symbol,Function} and every other profile name works in both forms (Codex adversarial
+#review 2026-07-06). Shared by the host and resident composite getProfile methods.
+_isRatioName(name) = name === :ratio || (name isa AbstractString && name == "ratio")
+
 function getProfile(cm::CompositeModel, name::Union{String,Symbol,Function};
         line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
-    if name === :ratio
+    if _isRatioName(name)
         line === nothing || error("getProfile(cm, :ratio; ...): use `lines=(numerator, denominator)`, " *
             "not `line` -- the :ratio profile is computed from a PAIR of lines.")
         lines isa Tuple{String,String} || error("getProfile(cm, :ratio; lines=...): the `lines` keyword " *

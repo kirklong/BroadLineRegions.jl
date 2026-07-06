@@ -360,7 +360,7 @@ signature, branching at runtime (Julia cannot dispatch on keywords):
 """
 function getProfile(rcm::ResidentCompositeModel, name::Union{String,Symbol,Function};
         line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
-    if name === :ratio
+    if _isRatioName(name) #accepts :ratio and "ratio", like every other profile name's dual spelling
         line === nothing || error("getProfile(rcm, :ratio; ...): use `lines=(numerator, denominator)`, " *
             "not `line` -- the :ratio profile is computed from a PAIR of lines.")
         lines isa Tuple{String,String} || error("getProfile(rcm, :ratio; lines=...): the `lines` keyword " *

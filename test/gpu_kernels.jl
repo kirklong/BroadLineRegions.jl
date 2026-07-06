@@ -830,6 +830,17 @@ end
     @test isequal(isnan.(pDu.binSums), isnan.(pCu.binSums))
     finRu = findall(isfinite, pCu.binSums)
     @test !isempty(finRu) && isapprox(pDu.binSums[finRu], pCu.binSums[finRu], rtol=1e-12)
+    # the String spelling reaches the ratio branch on the resident path too
+    pDstr = BLR.getProfile(rcm, "ratio"; lines=("Ha", "Hb"), bins=31)
+    @test pDstr.binEdges == pD.binEdges && isequal(pDstr.binSums, pD.binSums)
+    # the documented resident restriction is guarded: a NONuniform user edge vector is rejected
+    # with a clear ArgumentError, while the CPU path accepts arbitrary edges (deliberate
+    # device-kernel divergence -- the histogram kernels assume uniform spacing, W4-G2)
+    nonUni = [-0.05, -0.01, 0.0, 0.002, 0.05]
+    @test_throws ArgumentError BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=nonUni)
+    pCnu = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=nonUni)
+    @test pCnu.binEdges == nonUni #CPU path: data-grid semantics on any monotone edge vector
+
     # :ratio error paths mirror the CPU composite (lines required, line rejected, lines :ratio-only)
     errR = try BLR.getProfile(rcm, :ratio); nothing; catch e; e; end
     @test errR isa ErrorException && occursin("lines", errR.msg)

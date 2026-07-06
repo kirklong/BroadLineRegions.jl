@@ -931,6 +931,22 @@ end
     # storable via the per-line setProfile! under the pair name
     BLR.setProfile!(cmC, p; line="Ha")
     @test isequal(cmC["Ha"].profiles[Symbol("Ha/Hb")].binSums, p.binSums) #isequal: binSums has NaN bins
+    # the String spelling reaches the ratio branch like every other profile name's dual spelling
+    # (Codex adversarial review 2026-07-06: `name === :ratio` alone broke getProfile(cm, "ratio"))
+    pStr = BLR.getProfile(cmC, "ratio"; lines=("Ha", "Hb"), bins=31)
+    @test pStr.binEdges == p.binEdges && isequal(pStr.binSums, p.binSums)
+    # centered=true pads the shared edges past the union range; the flat quotient is unchanged
+    pCen = BLR.getProfile(cmC, :ratio; lines=("Ha", "Hb"), bins=31, centered=true)
+    @test pCen.binEdges[1] < p.binEdges[1] && pCen.binEdges[end] > p.binEdges[end]
+    finC = findall(isfinite, pCen.binSums)
+    @test !isempty(finC) && all(isapprox.(pCen.binSums[finC], 1.0/0.35, rtol=1e-12))
+    # explicit overflow=false on integer bins drops the boundary points from num and den alike:
+    # same edges, flat quotient unchanged wherever finite, and only MORE bins can be NaN
+    pNoOv = BLR.getProfile(cmC, :ratio; lines=("Ha", "Hb"), bins=31, overflow=false)
+    @test pNoOv.binEdges == p.binEdges
+    finN = findall(isfinite, pNoOv.binSums)
+    @test !isempty(finN) && all(isapprox.(pNoOv.binSums[finN], 1.0/0.35, rtol=1e-12))
+    @test count(isnan, pNoOv.binSums) >= count(isnan, p.binSums)
 
     # --- T1 error paths: `lines` required (a 2-tuple of names), `line` rejected for :ratio,
     # `lines` rejected for everything else, unknown names error listing the known lines ---
