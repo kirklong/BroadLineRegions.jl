@@ -585,7 +585,7 @@ With several lines in one `CompositeModel` we can also model the velocity-resolv
 As a simple example, consider two Balmer series lines modeled as `DiskWindModel`s in `BroadLineRegions.jl` with different radial emissivity profiles:
 
 ```julia
-mHα = BLR.DiskWindModel(7500., 100., 1., 75/180*π; nr=1024, nϕ=1024, scale=:log,
+mHα = BLR.DiskWindModel(7500., 100., 1., 75/180*π; nr=2048, nϕ=4096, scale=:log,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=1.0, f3=0.0, f4=0.0,
         τ=5.0, reflect=false) # a simple disk-wind model that will have a singly peaked line profile, power-law source function α = 1
 cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.) #initialize the CompositeModel 
