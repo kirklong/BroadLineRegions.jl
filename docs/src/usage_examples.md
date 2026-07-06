@@ -587,7 +587,7 @@ As a simple example, consider two Balmer series lines modeled as `DiskWindModel`
 ```julia
 mHα = BLR.DiskWindModel(7500., 100., 1., 75/180*π; nr=1024, nϕ=1024, scale=:log,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=1.0, f3=0.0, f4=0.0,
-        τ=5.0, reflect=false) # a simple disk-wind model that will ahve a singly peaked line profile, power-law source function α = 1
+        τ=5.0, reflect=false) # a simple disk-wind model that will have a singly peaked line profile, power-law source function α = 1
 cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.) #initialize the CompositeModel 
 
 BLR.addLine!(cm; line="Hβ", lineCenter=4861., fluxRatio=1/2.86, from="Hα", α=1.25, r̄=5000.) #Case B integrated decrement
@@ -600,9 +600,9 @@ BLR.profile(cm)   #both line profiles, overlaid
 BLR.profile(bd)   #BD(v) itself -- centrally peaked, declining toward the wings
 ```
 
-This example was chosen to get the shape of the BD(v) profile to roughly match what was observed and described in Chen+ 2026, where they observed Balmer decrements with ~single peaks and decreasing roughly by a factor of two between the center and the wings. Of course this is a very simple example, and many further complications are possible, including passing your own custom itensity functions as described in earlier sections of the documentation.
+This example was chosen to get the shape of the BD(v) profile to roughly match what was observed and described in Chen+ 2026, where they observed Balmer decrements with ~single peaks and decreasing roughly by a factor of two between the center and the wings. Of course this is a very simple example, and many further complications are possible, including passing your own custom intensity functions as described in earlier sections of the documentation.
 
-An important subtlety of the integrated-flux semantics: each line's profile is normalized to unit integral before being scaled by its `fluxRatio`, so any constant prefactor on a line's intensity divides out &mdash; the per-line model sets only the velocity *shape* of BD(v), while the *integrated* decrement is pinned by `fluxRatio` alone (so you can scale it any way you like after generation). This means that there could be a discrepancy between the "real" ratio in between the two models and the ratio shown in the plot, but of course if you would rather let the per-line models themselves set the integrated decrement without you can compute the `fluxRatio` from them directly:
+An important subtlety of the integrated-flux semantics: each line's profile is normalized to unit integral before being scaled by its `fluxRatio`, so any constant prefactor on a line's intensity divides out &mdash; the per-line model sets only the velocity *shape* of BD(v), while the *integrated* decrement is pinned by `fluxRatio` alone (so you can scale it any way you like after generation). This means that there could be a discrepancy between the "real" ratio in between the two models and the ratio shown in the plot, but of course if you would rather let the per-line models themselves set the integrated decrement without pinning it by hand, you can compute the `fluxRatio` from them directly:
 
 ```julia
 IΔA(m) = sum(x for x in BLR.getVariable(m, :I, flatten=true) .* BLR.getVariable(m, :ΔA, flatten=true) if isfinite(x))
@@ -611,7 +611,7 @@ cm2 = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.)
 BLR.addLine!(cm2, mHβ; line="Hβ", lineCenter=4861., fluxRatio=IΔA(mHβ)/IΔA(mHα)) #model-implied integrated decrement
 ```
 
-The integrated ratio of any two registered lines is always available as [`lineRatio`](@ref BLR.lineRatio)`(cm, "Hα", "Hβ")` (`== fluxRatios["Hα"]/fluxRatios["Hβ"]` by the semantics above.
+The integrated ratio of any two registered lines is always available as [`lineRatio`](@ref BLR.lineRatio)`(cm, "Hα", "Hβ")` (`== fluxRatios["Hα"]/fluxRatios["Hβ"]` by the semantics above).
 
 ## Running on the GPU
 
