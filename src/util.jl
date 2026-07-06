@@ -912,7 +912,14 @@ Plot line profiles, normalized to the maximum value of each profile.
 - `cm::CompositeModel`: plots the requested `name` profile (default `:line`, computed on demand via
   `getProfile(cm, name; line=...)`) for **every** line, one series per line labeled by the line name and
   normalized by that line's own max `|binSums|` (the same convention the multi-profile `model` case
-  below uses) -- so lines are shape-comparable regardless of `fluxRatio`.
+  below uses) -- so lines are shape-comparable regardless of `fluxRatio`. The one exception is
+  `profile(cm, :ratio, (a, b))` (W5): the velocity-resolved line ratio is computed from the PAIR of
+  lines via `getProfile(cm, :ratio; lines=(a, b))` and rendered as a single **unnormalized** series
+  (the ratio's absolute scale is the point), identical to plotting the returned bare `profile`. The
+  pair is a *positional* argument because Plots reserves `lines` as a magic line-attribute alias --
+  a `lines=...` keyword would be consumed by the attribute preprocessing and never reach the recipe.
+  Other `:ratio` keywords (`bins`, `floor`, ...) are not forwarded -- for those, call `getProfile`
+  yourself and plot the returned struct.
 - `rcm::ResidentCompositeModel`: same as the `CompositeModel` case (one normalized series per line),
   except each line's profile is computed on its device-resident columns via
   `getProfile(rcm, name; line=...)` (W4-G3), with the resident restrictions (uniform bins, no custom
@@ -926,14 +933,20 @@ Plot line profiles, normalized to the maximum value of each profile.
 """
 @userplot Profile
 @recipe function f(p::Profile)
-    m, variable = nothing, nothing
-    if length(p.args) == 2
+    m, variable, ratioLines = nothing, nothing, nothing
+    if length(p.args) == 3
+        m, variable, ratioLines = p.args #(cm, :ratio, (a, b)) -- the lines PAIR is positional because
+        #Plots reserves `lines` as a magic line-attribute alias (a `lines=...` keyword is consumed by
+        #the attribute preprocessing and never reaches this recipe)
+    elseif length(p.args) == 2
         m, variable = p.args
     elseif length(p.args) == 1
         m = p.args[1]
     else
-        error("expected arguments (model, variable[optional]), got $(p.args)")
+        error("expected arguments (model, variable[optional], lines[:ratio only]), got $(p.args)")
     end
+    ratioLines === nothing || m isa CompositeModel || m isa ResidentCompositeModel ||
+        error("profile(m, name, lines): the positional lines pair is only for composite models' :ratio profile.")
     if m isa profile
         # bare `profile` struct: plot binCenters vs binSums directly, no lookup/normalization needed.
         title --> "Profile of $(m.name)"
@@ -960,26 +973,51 @@ Plot line profiles, normalized to the maximum value of each profile.
             (variable isa AbstractVector ? error("profile(cm, name): a composite model plots one profile " *
                 "`name` across all its lines -- got a list $variable, expected a single Symbol/String") :
              Symbol(variable))
-        title --> "Composite profile: $name"
-        ylabel --> "normalized value"
-        xlabel --> "Δv [c]"
-        for (i,line) in enumerate(m.lines)
-            pLine = getProfile(m, name; line=line)
-            norm = length(m.lines) == 1 ? 1.0 : maximum((abs(b) for b in pLine.binSums if !isnan(b)); init=0.0)
-            #degenerate line (all-NaN or all-zero bins, e.g. zero emission): plot unnormalized rather
-            #than throw on an empty iterator / divide by zero -- the other lines must still render
-            norm > 0.0 || (norm = 1.0)
+        if name === :ratio
+            #W5 follow-up (adversarial review 2026-07-06): :ratio is the one profile name the per-line
+            #loop below cannot compute (it needs a PAIR of lines, not `line`), so forward the recipe's
+            #positional lines pair and render the single ratio series exactly as the bare-`profile`
+            #branch above does (unnormalized -- the ratio's absolute scale is the point).
+            pR = getProfile(m, :ratio; lines=ratioLines) #errors clearly if the pair is missing/invalid
+            title --> "Profile of $(pR.name)"
+            ylabel --> "$(pR.name)"
+            xlabel --> "Δv [c]"
             @series begin
                 subplot := 1
                 seriestype := :path
-                x := pLine.binCenters
-                y := pLine.binSums./norm
+                x := pR.binCenters
+                y := pR.binSums
                 marker --> :circle
                 markerstrokewidth --> 0.0
                 markersize --> 2.
-                color --> i
-                label --> line
+                color --> 1
+                label --> ""
                 ()
+            end
+        else
+            ratioLines === nothing || error("profile(cm, name, lines): the positional lines pair is " *
+                "only used by the :ratio profile -- got name = $(repr(name)).")
+            title --> "Composite profile: $name"
+            ylabel --> "normalized value"
+            xlabel --> "Δv [c]"
+            for (i,line) in enumerate(m.lines)
+                pLine = getProfile(m, name; line=line)
+                norm = length(m.lines) == 1 ? 1.0 : maximum((abs(b) for b in pLine.binSums if !isnan(b)); init=0.0)
+                #degenerate line (all-NaN or all-zero bins, e.g. zero emission): plot unnormalized rather
+                #than throw on an empty iterator / divide by zero -- the other lines must still render
+                norm > 0.0 || (norm = 1.0)
+                @series begin
+                    subplot := 1
+                    seriestype := :path
+                    x := pLine.binCenters
+                    y := pLine.binSums./norm
+                    marker --> :circle
+                    markerstrokewidth --> 0.0
+                    markersize --> 2.
+                    color --> i
+                    label --> line
+                    ()
+                end
             end
         end
     else

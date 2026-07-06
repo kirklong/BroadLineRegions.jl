@@ -598,6 +598,8 @@ vEdges = collect(-2500.:100.:2500.) ./ c_kms #use 100 km/s bins between -2500 an
 bd = BLR.getProfile(cm, :ratio; lines=("Hα", "Hβ"), bins=vEdges) #the velocity-resolved Balmer decrement BD(v)
 BLR.profile(cm)   #both line profiles, overlaid
 BLR.profile(bd)   #BD(v) itself -- centrally peaked, declining toward the wings
+# equivalently, plot straight from the composite without computing `bd` first (the lines pair is
+# positional here because Plots reserves `lines` as a keyword): BLR.profile(cm, :ratio, ("Hα", "Hβ"))
 ```
 
 This example was chosen to get the shape of the BD(v) profile to roughly match what was observed and described in Chen+ 2026, where they observed Balmer decrements with ~single peaks and decreasing roughly by a factor of two between the center and the wings. Of course this is a very simple example, and many further complications are possible, including passing your own custom intensity functions as described in earlier sections of the documentation.
