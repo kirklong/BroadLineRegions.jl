@@ -409,6 +409,26 @@ using KernelAbstractions
                 b = BLR.getProfile(rcm, :line; line=line, bins=vEdges, centered=false).binSums
                 @test approx_eq(b, a; rtol=1e-4, atol=1e-6)
             end
+
+            # (e) W5-G1: :ratio velocity-resolved line ratio vs the CPU composite on the same shared
+            # uniform v-edges (explicit edges for the Float32-boundary reason in (b)/(d)), including
+            # that the NaN (empty-denominator) bins match bin-for-bin -- the sparse cloud denominator
+            # leaves empty bins inside the shared range, so the NaN path is genuinely exercised
+            pC = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=vEdges)
+            pD = BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=vEdges)
+            @test pD.name == Symbol("Ha/Hb") && pD.binEdges == vEdges
+            nanC = isnan.(pC.binSums)
+            @test any(nanC) && !any(isinf, pD.binSums)
+            @test isnan.(pD.binSums) == nanC #NaN bins match
+            @test approx_eq(pD.binSums[.!nanC], pC.binSums[.!nanC]; rtol=1e-4, atol=1e-6)
+            # integer-bins path: the device-constructed shared edges (union of the two lines' Float32
+            # v reductions) agree with the CPU edges at Float32 precision
+            pC2 = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=25)
+            pD2 = BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=25)
+            @test length(pD2.binEdges) == length(pC2.binEdges)
+            @test all(isapprox.(pD2.binEdges, pC2.binEdges; rtol=1e-5, atol=1e-7))
+            # lineRatio on the GPU composite: host metadata only, exact
+            @test BLR.lineRatio(rcm, "Ha", "Hb") == BLR.lineRatio(cm, "Ha", "Hb")
         end
     end
 end

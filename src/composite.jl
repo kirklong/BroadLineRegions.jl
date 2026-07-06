@@ -212,20 +212,177 @@ Per-line forwarding of [`getProfile`](@ref): compute `name`'s profile for the mo
 
 Julia cannot dispatch on keywords, so this is a *single* method covering the whole positional signature
 `getProfile(cm, name; ...)` -- branching happens at runtime:
-- `name === :ratio` (velocity-resolved line ratio, which needs `lines::Tuple`) is **implemented in
-  Workstream 5** and currently throws a clear error. This same method will be filled in there; two
-  keyword-only "methods" would silently overwrite each other.
+- `name === :ratio` computes the **velocity-resolved line ratio** (below); it requires the
+  `lines::Tuple{String,String}` keyword instead of `line`.
 - every other `name` requires the `line` keyword and forwards to the per-line `model` method.
+
+# `:ratio` -- velocity-resolved line ratio (Workstream 5)
+
+    getProfile(cm, :ratio; lines=(a, b), bins=100, floor=0.0,
+               minX=nothing, maxX=nothing, centered=false, overflow=nothing) -> profile
+
+The per-velocity-bin flux ratio of line `a` (numerator) to line `b` (denominator) on **shared**
+velocity bins -- e.g. the velocity-resolved Balmer decrement BD(v) = F_Hα(v)/F_Hβ(v) of
+Chen et al. 2026 (arXiv:2606.04711 §5.3) with `lines=("Hα", "Hβ")`. Each line's flattened points are
+binned by `v` weighted by `I*ΔA*_fluxWeights(cm)[line]` (the same integrated-flux weighting as
+[`getSpectrum`](@ref), so the ratio of the two lines' *integrated* fluxes is pinned to
+`fluxRatios[a]/fluxRatios[b]` = [`lineRatio`](@ref)`(cm, a, b)`; the per-line radial emissivity
+profiles set only the velocity *shape*). Two lines with identical realized geometry and intensity
+have a flat ratio equal to that constant.
+
+The returned [`profile`](@ref) has `name = Symbol(a, "/", b)` (e.g. `Symbol("Hα/Hβ")`), so it can be
+stored via `setProfile!(cm, p; line=...)` and plotted via the `profile`-struct recipe. Bins where the
+denominator is empty (`0.0`), or below `floor` times the finite-only maximum of the denominator's
+binned flux (an SNR-like guard for sparse cloud models, off by default), are set to `NaN` -- never
+`Inf` -- per the package NaN-sentinel convention.
+
+## `:ratio` keywords
+- `lines::Tuple{String,String}`: `(numerator, denominator)` line names. Required.
+- `bins::Union{Int,Vector{Float64}}=100`: bin count or explicit edge vector, as in [`binnedSum`](@ref).
+  Both lines always share bit-identical edges.
+- `floor::Real=0.0`: denominator threshold as a fraction of the denominator's largest binned flux;
+  bins below it become `NaN`. `0.0` disables the guard (only empty bins are `NaN`).
+- `minX`/`maxX::Union{Real,Nothing}=nothing`: pin one or both ends of the shared velocity grid instead
+  of auto-computing them as the **union** of the two lines' finite ranges ([`_finiteVRange`](@ref)).
+  Ignored when `bins` is an edge vector.
+- `centered::Bool=false` and `overflow::Union{Bool,Nothing}=nothing`: forwarded to each line's
+  [`binnedSum`](@ref) with exactly the [`getSpectrum`](@ref) semantics -- the `overflow` default
+  resolves to `true` for integer `bins` (keeps boundary/out-of-window points, making the two binned
+  totals exact) and `false` for a user edge vector (out-of-range model flux drops against a data grid).
+
+## Comparing with data
+- **Data-side velocity grids**: pass the measurement's bin edges as `bins` (a `Vector{Float64}`).
+  Stored `v` is in units of c, so convert km/s edges first: `edges_c = edges_kms ./ 2.99792458e5`.
+- **Velocity shift**: there is deliberately no `vShift` keyword -- shifting the model by `v_shift` is
+  exactly evaluating it on shifted edges, so subtract it from the data grid instead:
+  `bins = edges_kms ./ 2.99792458e5 .- v_shift_c`. (With auto-constructed edges a common shift is a
+  no-op on the ratio: both lines and the edges move together.)
+- **Instrumental broadening**: LSF convolution stays outside the package. `:ratio` divides the
+  *unconvolved* binned profiles; to match LSF-matched data (the paper convolves the narrower line to
+  the broader one's LSF before dividing), bin each line separately, convolve, and divide yourself.
 """
+#the :ratio gate must accept the String spelling too -- the public `name` signature is
+#Union{String,Symbol,Function} and every other profile name works in both forms (Codex adversarial
+#review 2026-07-06). Shared by the host and resident composite getProfile methods.
+_isRatioName(name) = name === :ratio || (name isa AbstractString && name == "ratio")
+
 function getProfile(cm::CompositeModel, name::Union{String,Symbol,Function};
         line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
-    if name === :ratio
-        error("getProfile(cm, :ratio; lines=...): the :ratio (velocity-resolved line-ratio) profile is " *
-              "implemented in Workstream 5 (Balmer decrement) and is not available yet.")
+    if _isRatioName(name)
+        line === nothing || error("getProfile(cm, :ratio; ...): use `lines=(numerator, denominator)`, " *
+            "not `line` -- the :ratio profile is computed from a PAIR of lines.")
+        lines isa Tuple{String,String} || error("getProfile(cm, :ratio; lines=...): the `lines` keyword " *
+            "is required and must be a Tuple{String,String} of (numerator, denominator) line names " *
+            "(got $(repr(lines))). Known lines: $(cm.lines).")
+        return _ratioProfile(cm, lines; kwargs...)
     end
+    lines === nothing || error("getProfile(cm, $(repr(name)); ...): the `lines` keyword is only used by " *
+        "the :ratio profile -- pass `line` to select a single line's profile.")
     line === nothing && error("getProfile(cm, $(repr(name)); line=...): the `line` keyword is required " *
         "(which line's profile do you want?). Known lines: $(cm.lines).")
     return getProfile(cm[line], name; kwargs...)
+end
+
+#W5-T1 implementation of the :ratio branch above (all user-facing documentation lives on getProfile).
+#Mirrors getSpectrum's structure: per-side range fill from _finiteVRange, the same overflow default
+#rule, integer `bins` + shared minX/maxX (bit-identical deterministic edges, direct-index fast path)
+#or a user edge vector passed straight through.
+function _ratioProfile(cm::CompositeModel, lines::Tuple{String,String};
+        bins::Union{Int,Vector{Float64}}=100, floor::Real=0.0,
+        minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
+        centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    a, b = lines
+    mA = cm[a]; mB = cm[b] #errors listing the known lines on a miss
+    floor >= 0.0 || error("getProfile(cm, :ratio; ...): `floor` must be >= 0 (got $floor)")
+    #shared velocity range: any side not pinned by the caller via minX/maxX is auto-computed as the
+    #union of the two lines' finite velocity ranges (both pinned -> skip the pass)
+    vmin = minX === nothing ? Inf : Float64(minX)
+    vmax = maxX === nothing ? -Inf : Float64(maxX)
+    if minX === nothing || maxX === nothing
+        for m in (mA, mB)
+            lo, hi = _finiteVRange(m)
+            (isnan(lo) || isnan(hi)) && continue
+            minX === nothing && lo < vmin && (vmin = lo)
+            maxX === nothing && hi > vmax && (vmax = hi)
+        end
+    end
+    (isfinite(vmin) && isfinite(vmax)) || error("getProfile(cm, :ratio; lines=$(repr(lines))): neither " *
+        "line has any finite points -- cannot build shared velocity bins.")
+
+    #overflow default: true for integer-bins edges (keeps boundary/out-of-window points -- the two
+    #binned totals stay exact), false for a user edge vector (out-of-range flux drops against a data
+    #grid). An explicit user overflow always wins. Same rule as getSpectrum.
+    overflow = overflow === nothing ? (bins isa Int) : overflow
+
+    weights = _fluxWeights(cm)
+    edges = nothing; centers = nothing; num = nothing; den = nothing
+    for line in (a, b)
+        m = cm.models[line]
+        v = getVariable(m, :v, flatten=true)
+        I = getVariable(m, :I, flatten=true)
+        ΔA = getVariable(m, :ΔA, flatten=true)
+        y = (I .* ΔA) .* weights[line]
+        #integer bins -> pass minX/maxX (no edge vector); constructBinEdges is deterministic so both
+        #lines get bit-identical edges. A user edge vector ignores minX/maxX inside binnedSum.
+        e, c, s = binnedSum(v, y; bins=bins, minX=vmin, maxX=vmax, centered=centered, overflow=overflow)
+        if num === nothing
+            edges = e; centers = c; num = s
+        else
+            den = s
+        end
+    end
+
+    return profile(name=Symbol(a, "/", b), binCenters=centers, binEdges=edges, binSums=_ratioDivide(num, den, floor))
+end
+
+#shared num/den division for the :ratio profile -- used by both the host path above and the resident
+#path (gpu_observables.jl, W5-G1; num/den are small host vectors on both), so the NaN/floor semantics
+#cannot drift between them. Empty (0.0) or below-floor denominator bins become NaN, never Inf.
+function _ratioDivide(num::Vector{Float64}, den::Vector{Float64}, floor::Real)
+    #NaN-proof floor threshold: `floor` times a finite-only maximum of den. den comes straight from
+    #the binned sums (zero-initialized, accumulate only finite values) so it is in fact always finite,
+    #but the finite-only reduction costs nothing and keeps the guard correct if a stored/derived
+    #vector is ever fed through this path.
+    thresh = 0.0
+    if floor > 0.0
+        denMax = -Inf
+        @inbounds for d in den
+            isfinite(d) && d > denMax && (denMax = d)
+        end
+        thresh = isfinite(denMax) ? floor*denMax : 0.0
+    end
+    binSums = similar(den)
+    @inbounds for k in eachindex(num, den, binSums)
+        dk = den[k]
+        binSums[k] = (dk == 0.0 || (floor > 0.0 && dk < thresh)) ? NaN : num[k]/dk
+    end
+    return binSums
+end
+
+"""
+    lineRatio(cm::CompositeModel, a::String, b::String) -> Float64
+
+**Integrated** flux ratio of line `a` to line `b`. By the integrated-flux semantics of `fluxRatio`
+(each line's profile is normalized to unit integral before scaling, see [`_fluxWeights`](@ref)) this
+is exactly `cm.fluxRatios[a] / cm.fluxRatios[b]` -- the constant that the velocity-resolved
+`getProfile(cm, :ratio; lines=(a, b))` profile integrates to (and equals bin-by-bin in the degenerate
+identical-geometry case). Errors (listing the known lines) if either name is not registered.
+
+A [`ResidentCompositeModel`](@ref) is supported through the same shared implementation (the
+`::ResidentCompositeModel` method lives with its resident siblings in `gpu_observables.jl`, W5-G1) --
+`fluxRatios` is host metadata on both, so the two methods are identical.
+"""
+function lineRatio(cm::CompositeModel, a::String, b::String)
+    return _lineRatio(cm, a, b)
+end
+
+#shared lineRatio implementation -- deliberately UNtyped, like `_lineOverlap`: the body only touches
+#the host `fluxRatios`/`lines` metadata, which host and resident composites carry identically.
+function _lineRatio(cm, a::String, b::String)
+    for l in (a, b)
+        haskey(cm.fluxRatios, l) || error("lineRatio: unknown line \"$l\" (known lines: $(cm.lines))")
+    end
+    return cm.fluxRatios[a] / cm.fluxRatios[b]
 end
 
 """

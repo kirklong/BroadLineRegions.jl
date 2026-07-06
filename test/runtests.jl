@@ -731,8 +731,10 @@ end
     @test isequal(BLR.getVariable(cm, :I; line="Hb", flatten=false),
                   BLR.getVariable(cm["Hb"], :I, flatten=false))
 
-    # --- T4: :ratio is a W5 placeholder; a missing `line` kwarg errors naming the kwarg ---
-    @test_throws ErrorException BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"))
+    # --- T4: :ratio is implemented in W5 (full tests in the W5-T1/T2 testset); a missing `line`
+    # kwarg errors naming the kwarg ---
+    pRatio = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"))
+    @test pRatio.name == Symbol("Ha/Hb")
     errNoLine = try; BLR.getProfile(cm, :line); nothing; catch e; e; end
     @test errNoLine isa ErrorException && occursin("line", errNoLine.msg)
 
@@ -903,6 +905,129 @@ end
     blueFlux = sum(fluxIn["inflow"][cIn .< lc])
     @test redFlux > blueFlux
     @test redFlux > 0.99 && blueFlux < 0.01 #near-side pure inflow: all redshifted (unit integral)
+end
+
+@testset "velocity-resolved line ratio + lineRatio (W5-T1/T2)" begin
+    # Models here are deliberately tiny -- this testset should add seconds, not minutes.
+
+    # --- T1(a): FLAT case -- philox same-seed reuse (identical realized gas), only fluxRatio
+    # differs -> every finite bin equals fluxRatios[a]/fluxRatios[b]. The degenerate identical-
+    # geometry case is a test fixture, not a bug (see the W5 plan). ---
+    cloudArgs = (; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=1.0,
+        I=BLR.IsotropicIntensity, v=BLR.vCircularCloud, τ=0.1)
+    mC = BLR.cloudModel(256; rng=:philox, seed=11, cloudArgs...)
+    cmC = BLR.CompositeModel(mC; line="Ha", lineCenter=6563.0)
+    BLR.addLine!(cmC; line="Hb", lineCenter=4861.0, fluxRatio=0.35) #same-seed reuse -> identical gas
+    p = BLR.getProfile(cmC, :ratio; lines=("Ha", "Hb"), bins=31)
+    @test p.name == Symbol("Ha/Hb")
+    @test length(p.binEdges) == 32 && length(p.binCenters) == 31 && length(p.binSums) == 31
+    fin = findall(isfinite, p.binSums)
+    @test !isempty(fin)
+    @test all(isapprox.(p.binSums[fin], 1.0/0.35, rtol=1e-12))
+    @test !any(isinf, p.binSums) #T1(c): empty-denominator bins are NaN, never Inf
+    # reversing the pair inverts the ratio
+    q = BLR.getProfile(cmC, :ratio; lines=("Hb", "Ha"), bins=31)
+    @test all(isapprox.(q.binSums[findall(isfinite, q.binSums)], 0.35, rtol=1e-12))
+    # storable via the per-line setProfile! under the pair name
+    BLR.setProfile!(cmC, p; line="Ha")
+    @test isequal(cmC["Ha"].profiles[Symbol("Ha/Hb")].binSums, p.binSums) #isequal: binSums has NaN bins
+    # the String spelling reaches the ratio branch like every other profile name's dual spelling
+    # (Codex adversarial review 2026-07-06: `name === :ratio` alone broke getProfile(cm, "ratio"))
+    pStr = BLR.getProfile(cmC, "ratio"; lines=("Ha", "Hb"), bins=31)
+    @test pStr.binEdges == p.binEdges && isequal(pStr.binSums, p.binSums)
+    # centered=true pads the shared edges past the union range; the flat quotient is unchanged
+    pCen = BLR.getProfile(cmC, :ratio; lines=("Ha", "Hb"), bins=31, centered=true)
+    @test pCen.binEdges[1] < p.binEdges[1] && pCen.binEdges[end] > p.binEdges[end]
+    finC = findall(isfinite, pCen.binSums)
+    @test !isempty(finC) && all(isapprox.(pCen.binSums[finC], 1.0/0.35, rtol=1e-12))
+    # explicit overflow=false on integer bins drops the boundary points from num and den alike:
+    # same edges, flat quotient unchanged wherever finite, and only MORE bins can be NaN
+    pNoOv = BLR.getProfile(cmC, :ratio; lines=("Ha", "Hb"), bins=31, overflow=false)
+    @test pNoOv.binEdges == p.binEdges
+    finN = findall(isfinite, pNoOv.binSums)
+    @test !isempty(finN) && all(isapprox.(pNoOv.binSums[finN], 1.0/0.35, rtol=1e-12))
+    @test count(isnan, pNoOv.binSums) >= count(isnan, p.binSums)
+
+    # --- T1 error paths: `lines` required (a 2-tuple of names), `line` rejected for :ratio,
+    # `lines` rejected for everything else, unknown names error listing the known lines ---
+    @test_throws ErrorException BLR.getProfile(cmC, :ratio) #no lines
+    errLine = try; BLR.getProfile(cmC, :ratio; line="Ha"); nothing; catch e; e; end
+    @test errLine isa ErrorException && occursin("lines", errLine.msg)
+    @test_throws ErrorException BLR.getProfile(cmC, :ratio; lines=["Ha", "Hb"]) #Vector, not Tuple
+    @test_throws ErrorException BLR.getProfile(cmC, :ratio; lines=("Ha", "nope")) #unknown line
+    @test_throws ErrorException BLR.getProfile(cmC, :ratio; lines=("Ha", "Hb"), floor=-0.1)
+    @test_throws ErrorException BLR.getProfile(cmC, :line; line="Ha", lines=("Ha", "Hb")) #lines is :ratio-only
+
+    # --- T1(d): a user-supplied bin-edge vector is respected (data-grid semantics) ---
+    vmin, vmax = BLR._finiteVRange(mC)
+    userEdges = collect(range(vmin - 0.01*(vmax-vmin), vmax + 0.01*(vmax-vmin), length=25))
+    pu = BLR.getProfile(cmC, :ratio; lines=("Ha", "Hb"), bins=userEdges)
+    @test pu.binEdges == userEdges
+    @test length(pu.binSums) == 24
+    finU = findall(isfinite, pu.binSums)
+    @test !isempty(finU) && all(isapprox.(pu.binSums[finU], 1.0/0.35, rtol=1e-12))
+
+    # --- T1(b): STRATIFIED case -- same (deterministic disk-wind) geometry, the DENOMINATOR line's
+    # intensity multiplied by a DECREASING function of r -> centrally-PEAKED ratio: the line center
+    # is dominated by large-r material (|v| ≤ √(rₛ/2r), so high-|v| bins draw only from small r), and
+    # a denominator suppressed at large r inflates the ratio there. Matches the paper's BD(v)
+    # morphology. Robust-trend assertions only (v↔r is an envelope, not a bijection). ---
+    rMin, rMax, inc = 300.0, 900.0, 0.4
+    diskArgs = (; nr=24, nϕ=64, scale=:linear, v=BLR.vCircularDisk,
+        f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0, τ=0.4, reflect=false)
+    mNum = BLR.DiskWindModel(rMin, rMax, inc; I=BLR.DiskWindIntensity, diskArgs...)
+    IDecr(; r, kwargs...) = BLR.DiskWindIntensity(; r=r, kwargs...) .* (rMin ./ r)
+    mDen = BLR.DiskWindModel(rMin, rMax, inc; I=IDecr, diskArgs...)
+    cmS = BLR.CompositeModel(mNum; line="Ha", lineCenter=6563.0)
+    BLR.addLine!(cmS, mDen; line="Hb", lineCenter=4861.0, fluxRatio=0.35)
+    ps = BLR.getProfile(cmS, :ratio; lines=("Ha", "Hb"), bins=31)
+    finS = findall(isfinite, ps.binSums)
+    @test !isempty(finS)
+    vAbs = abs.(ps.binCenters[finS]); vals = ps.binSums[finS]
+    central = vals[vAbs .<= 0.25*maximum(vAbs)]; wings = vals[vAbs .>= 0.75*maximum(vAbs)]
+    @test !isempty(central) && !isempty(wings)
+    @test minimum(central) > maximum(wings) #centrally peaked
+    # an INCREASING denominator multiplier produces the opposite (centrally-suppressed) morphology
+    IIncr(; r, kwargs...) = BLR.DiskWindIntensity(; r=r, kwargs...) .* (r ./ rMin)
+    cmS2 = BLR.CompositeModel(mNum; line="Ha", lineCenter=6563.0)
+    BLR.addLine!(cmS2, BLR.DiskWindModel(rMin, rMax, inc; I=IIncr, diskArgs...);
+        line="Hb", lineCenter=4861.0, fluxRatio=0.35)
+    ps2 = BLR.getProfile(cmS2, :ratio; lines=("Ha", "Hb"), bins=31)
+    finS2 = findall(isfinite, ps2.binSums)
+    vAbs2 = abs.(ps2.binCenters[finS2]); vals2 = ps2.binSums[finS2]
+    central2 = vals2[vAbs2 .<= 0.25*maximum(vAbs2)]; wings2 = vals2[vAbs2 .>= 0.75*maximum(vAbs2)]
+    @test maximum(central2) < minimum(wings2) #centrally suppressed
+
+    # --- T1 floor regression: sparse cloud model with empty INTERIOR bins present; floor > 0
+    # demonstrably fires on nonempty below-threshold bins while (i) empty bins are NaN,
+    # (ii) below-threshold bins are NaN, (iii) all remaining bins are finite ---
+    mSp = BLR.cloudModel(24; rng=:philox, seed=5, cloudArgs...)
+    cmF = BLR.CompositeModel(mSp; line="A", lineCenter=1000.0)
+    BLR.addLine!(cmF; line="B", lineCenter=2000.0, fluxRatio=0.5) #same-seed reuse -> identical gas
+    p0 = BLR.getProfile(cmF, :ratio; lines=("A", "B"), bins=41) #floor=0: only empty bins are NaN
+    pF = BLR.getProfile(cmF, :ratio; lines=("A", "B"), bins=41, floor=0.5)
+    nan0 = isnan.(p0.binSums); nanF = isnan.(pF.binSums)
+    @test any(nan0[2:end-1])                      #(i) empty interior bins exist and are NaN
+    @test !any(isinf, p0.binSums) && !any(isinf, pF.binSums)
+    @test count(nanF) > count(nan0)               #(ii) the floor fires on nonempty bins too
+    @test all(nanF[nan0])                         #empty bins stay NaN under the floor
+    @test all(isfinite, pF.binSums[.!nanF])       #(iii) surviving bins are finite
+
+    # --- T2: lineRatio is the fluxRatios quotient; the long-way binned computation agrees to
+    # rtol 1e-12 (the guard that the _fluxWeights unit-integral identity stays true) ---
+    @test BLR.lineRatio(cmS, "Ha", "Hb") == cmS.fluxRatios["Ha"]/cmS.fluxRatios["Hb"]
+    @test isapprox(BLR.lineRatio(cmS, "Hb", "Ha"), 0.35, rtol=1e-12)
+    @test_throws ErrorException BLR.lineRatio(cmS, "Ha", "nope")
+    wS = BLR._fluxWeights(cmS)
+    longWay = map(("Ha", "Hb")) do line
+        m = cmS[line]
+        v = BLR.getVariable(m, :v, flatten=true)
+        I = BLR.getVariable(m, :I, flatten=true)
+        ΔA = BLR.getVariable(m, :ΔA, flatten=true)
+        _, _, s = BLR.binnedSum(v, (I .* ΔA) .* wS[line]; bins=64) #default centered=true keeps the boundary points
+        sum(s)
+    end
+    @test isapprox(longWay[1]/longWay[2], BLR.lineRatio(cmS, "Ha", "Hb"), rtol=1e-12)
 end
 
 include("raytrace_reference.jl")

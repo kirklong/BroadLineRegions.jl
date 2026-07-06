@@ -347,23 +347,93 @@ Per-line forwarding of the resident [`getProfile`](@ref): compute `name`'s profi
 the device kernels on that line's resident columns.
 
 Mirrors `getProfile(::CompositeModel, …)` exactly -- a *single* method covering the whole positional
-signature, branching at runtime (Julia cannot dispatch on keywords, and Workstream 5 adds `:ratio`,
-which needs `lines::Tuple`, to this same signature):
-- `name === :ratio` (velocity-resolved line ratio) is **implemented in Workstream 5** and currently
-  throws a clear error, exactly like the host composite method.
+signature, branching at runtime (Julia cannot dispatch on keywords):
+- `name === :ratio` (velocity-resolved line ratio, W5-G1) requires `lines::Tuple{String,String}` and
+  computes the ratio of the two lines' device-binned velocity profiles with identical keyword
+  semantics to the host method (see the `:ratio` section of `getProfile(::CompositeModel, …)` for the
+  full argument docs): shared bins from the union of the two lines' `_finiteVRange` device reductions,
+  one device binned sum per line, the division and NaN/`floor` handling on the small host vectors via
+  the shared `_ratioDivide`. The resident restriction applies: a user-supplied `bins` edge vector must
+  be **uniform** (`_rt_resident_edges`).
 - every other `name` requires the `line` keyword and forwards to the per-line `ResidentModel` method,
   whose restrictions apply (uniform bins only, no custom `dx`, no custom-`Function` profiles).
 """
 function getProfile(rcm::ResidentCompositeModel, name::Union{String,Symbol,Function};
         line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
-    if name === :ratio
-        error("getProfile(rcm, :ratio; lines=...): the :ratio (velocity-resolved line-ratio) profile is " *
-              "implemented in Workstream 5 (Balmer decrement) and is not available yet.")
+    if _isRatioName(name) #accepts :ratio and "ratio", like every other profile name's dual spelling
+        line === nothing || error("getProfile(rcm, :ratio; ...): use `lines=(numerator, denominator)`, " *
+            "not `line` -- the :ratio profile is computed from a PAIR of lines.")
+        lines isa Tuple{String,String} || error("getProfile(rcm, :ratio; lines=...): the `lines` keyword " *
+            "is required and must be a Tuple{String,String} of (numerator, denominator) line names " *
+            "(got $(repr(lines))). Known lines: $(rcm.lines).")
+        return _ratioProfile(rcm, lines; kwargs...)
     end
+    lines === nothing || error("getProfile(rcm, $(repr(name)); ...): the `lines` keyword is only used by " *
+        "the :ratio profile -- pass `line` to select a single line's profile.")
     line === nothing && error("getProfile(rcm, $(repr(name)); line=...): the `line` keyword is required " *
         "(which line's profile do you want?). Known lines: $(rcm.lines).")
     return getProfile(rcm[line], name; kwargs...)
 end
+
+#W5-G1 resident implementation of the :ratio branch above -- mirrors _ratioProfile(::CompositeModel)
+#(src/composite.jl) exactly, with device reductions/binned sums in place of the host gathers and the
+#same getSpectrum-style structure as the resident getSpectrum: per-side range fill from _finiteVRange,
+#the same overflow default rule, integer `bins` + shared minX/maxX (deterministic bit-identical
+#edges) or a user (uniform) edge vector passed straight through. num/den come back as small host
+#vectors, so the division/floor semantics are literally shared with the CPU path (_ratioDivide).
+function _ratioProfile(rcm::ResidentCompositeModel, lines::Tuple{String,String};
+        bins::Union{Int,Vector{Float64}}=100, floor::Real=0.0,
+        minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
+        centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    a, b = lines
+    rmA = rcm[a]; rmB = rcm[b] #errors listing the known lines on a miss
+    floor >= 0.0 || error("getProfile(rcm, :ratio; ...): `floor` must be >= 0 (got $floor)")
+    #shared velocity range: any side not pinned by the caller via minX/maxX is auto-computed as the
+    #union of the two lines' finite velocity ranges (both pinned -> skip the device reductions)
+    vmin = minX === nothing ? Inf : Float64(minX)
+    vmax = maxX === nothing ? -Inf : Float64(maxX)
+    if minX === nothing || maxX === nothing
+        for rm in (rmA, rmB)
+            lo, hi = _finiteVRange(rm)
+            (isnan(lo) || isnan(hi)) && continue
+            minX === nothing && lo < vmin && (vmin = lo)
+            maxX === nothing && hi > vmax && (vmax = hi)
+        end
+    end
+    (isfinite(vmin) && isfinite(vmax)) || error("getProfile(rcm, :ratio; lines=$(repr(lines))): neither " *
+        "line has any finite points -- cannot build shared velocity bins.")
+
+    #overflow default: true for integer-bins edges (keeps boundary/out-of-window points -- the two
+    #binned totals stay exact), false for a user edge vector (out-of-range flux drops against a data
+    #grid). An explicit user overflow always wins. Same rule as the CPU method.
+    overflow = overflow === nothing ? (bins isa Int) : overflow
+
+    weights = _fluxWeights(rcm)
+    edges = nothing; centers = nothing; num = nothing; den = nothing
+    for (line, rm) in ((a, rmA), (b, rmB))
+        ma = rm.ma
+        Tt = eltype(ma.I)
+        #device weight column I*ΔA*w, fused broadcast in the model's eltype (same evaluation order as
+        #the CPU path, so Float64-resident results are bit-comparable)
+        y = (ma.I .* ma.ΔA) .* Tt(weights[line])
+        e, c, s = _rt_resident_binsum(rm, ma.v, y, bins; overflow=overflow, centered=centered, minX=vmin, maxX=vmax)
+        if num === nothing
+            edges = e; centers = c; num = s
+        else
+            den = s
+        end
+    end
+    return profile(name=Symbol(a, "/", b), binCenters=centers, binEdges=edges, binSums=_ratioDivide(num, den, floor))
+end
+
+"""
+    lineRatio(rcm::ResidentCompositeModel, a::String, b::String) -> Float64
+
+Resident counterpart of [`lineRatio`](@ref) via the shared `_lineRatio` implementation
+(`src/composite.jl`) -- `fluxRatios` is host metadata on both composite types, so no device work is
+involved.
+"""
+lineRatio(rcm::ResidentCompositeModel, a::String, b::String) = _lineRatio(rcm, a, b)
 
 """
     lineOverlap(rcm::ResidentCompositeModel) -> Vector{NamedTuple}

@@ -578,6 +578,43 @@ Of course all the usual single-model entry points work per line on this new `Com
 
 Velocities map to wavelengths at first order, `λ = lineCenter*(1+v)` (see [`wavelength`](@ref BLR.wavelength)), with the stored line-of-sight velocity `v` in units of c. 
 
+## Velocity-resolved line ratios
+
+With several lines in one `CompositeModel` we can also model the velocity-resolved ratio of any two of them, i.e. the Balmer decrement BD(v) = F_Hα(v)/F_Hβ(v), for example recently measured for a sample of "Little Red Dots" in [Chen et al. 2026](https://arxiv.org/abs/2606.04711) (§5.3). This quantity is simply the ratio of the two continuum-subtracted broad-line profiles interpolated onto a common velocity grid, which we can calculate from our `CompositeModel` with the `getProfile(cm, :ratio; lines=(a, b))` method. This bins the fluxes from both lines onto shared velocity bins and divides, returning a `profile` struct named `Symbol("a/b")`.
+
+As a simple example, consider two Balmer series lines modeled as `DiskWindModel`s in `BroadLineRegions.jl` with different radial emissivity profiles:
+
+```julia
+mHα = BLR.DiskWindModel(7500., 100., 1., 75/180*π; nr=2048, nϕ=4096, scale=:log,
+        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=1.0, f3=0.0, f4=0.0,
+        τ=5.0, reflect=false) # a simple disk-wind model that will have a singly peaked line profile, power-law source function α = 1
+cm = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.) #initialize the CompositeModel 
+
+BLR.addLine!(cm; line="Hβ", lineCenter=4861., fluxRatio=1/2.86, from="Hα", α=1.25, r̄=5000.) #Case B integrated decrement
+# Hβ reuses all the parameters from Hα but with a steeper power-law and different intensity-weighted mean radius to compensate for this 
+# steeper power-law such that the radial grids are roughly the same size in both Hα and Hβ
+c_kms = 2.99792458e5
+vEdges = collect(-2500.:100.:2500.) ./ c_kms #use 100 km/s bins between -2500 and 2500 km/s, converted to units of c
+bd = BLR.getProfile(cm, :ratio; lines=("Hα", "Hβ"), bins=vEdges) #the velocity-resolved Balmer decrement BD(v)
+BLR.profile(cm)   #both line profiles, overlaid
+BLR.profile(bd)   #BD(v) itself -- centrally peaked, declining toward the wings
+# equivalently, plot straight from the composite without computing `bd` first (the lines pair is
+# positional here because Plots reserves `lines` as a keyword): BLR.profile(cm, :ratio, ("Hα", "Hβ"))
+```
+
+This example was chosen to get the shape of the BD(v) profile to roughly match what was observed and described in Chen+ 2026, where they observed Balmer decrements with ~single peaks and decreasing roughly by a factor of two between the center and the wings. Of course this is a very simple example, and many further complications are possible, including passing your own custom intensity functions as described in earlier sections of the documentation.
+
+An important subtlety of the integrated-flux semantics: each line's profile is normalized to unit integral before being scaled by its `fluxRatio`, so any constant prefactor on a line's intensity divides out &mdash; the per-line model sets only the velocity *shape* of BD(v), while the *integrated* decrement is pinned by `fluxRatio` alone (so you can scale it any way you like after generation). This means that there could be a discrepancy between the "real" ratio in between the two models and the ratio shown in the plot, but of course if you would rather let the per-line models themselves set the integrated decrement without pinning it by hand, you can compute the `fluxRatio` from them directly:
+
+```julia
+IΔA(m) = sum(x for x in BLR.getVariable(m, :I, flatten=true) .* BLR.getVariable(m, :ΔA, flatten=true) if isfinite(x))
+mHβ = BLR.rebuild(mHα.params; α=1.25, r̄=5000.) #the same model addLine! builds internally
+cm2 = BLR.CompositeModel(mHα; line="Hα", lineCenter=6563.)
+BLR.addLine!(cm2, mHβ; line="Hβ", lineCenter=4861., fluxRatio=IΔA(mHβ)/IΔA(mHα)) #model-implied integrated decrement
+```
+
+The integrated ratio of any two registered lines is always available as [`lineRatio`](@ref BLR.lineRatio)`(cm, "Hα", "Hβ")` (`== fluxRatios["Hα"]/fluxRatios["Hβ"]` by the semantics above).
+
 ## Running on the GPU
 
 As of version 0.3.0, `BroadLineRegions.jl` can now generate/port models to the GPU (only tested on NVIDIA for now) for significant performance gains on some workflows.

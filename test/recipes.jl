@@ -109,8 +109,24 @@ end
         # an explicit profile name is honored too
         rdsR = _recipe_series(BLR.Profile((cm, :line)))
         @test length(rdsR) == length(cm.lines)
-        # :ratio isn't implemented until W5 -- the CompositeModel getProfile forwarding errors clearly
-        @test_throws ErrorException _recipe_series(BLR.Profile((cm, :ratio)))
+        # :ratio (W5) plots through the composite recipe with the lines pair passed POSITIONALLY
+        # (`lines` is a Plots magic-attribute alias, so a keyword would never reach the recipe),
+        # rendering the single unnormalized ratio series -- identical to plotting the bare struct
+        pR = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"))
+        rdsRatio = _recipe_series(BLR.Profile((cm, :ratio, ("Ha", "Hb"))))
+        @test length(rdsRatio) == 1
+        @test rdsRatio[1].plotattributes[:x] == pR.binCenters
+        @test isequal(rdsRatio[1].plotattributes[:y], pR.binSums) #isequal: empty-denominator bins are NaN
+        # the full Plots pipeline call works too (this is the user-facing entry point)
+        pltRatio = BLR.profile(cm, :ratio, ("Ha", "Hb"))
+        @test pltRatio isa Plots.Plot
+        @test isequal(collect(pltRatio.series_list[1][:y]), pR.binSums)
+        # without the lines pair the getProfile error still surfaces, naming the kwarg
+        errRatio = try; _recipe_series(BLR.Profile((cm, :ratio))); nothing; catch e; e; end
+        @test errRatio isa ErrorException && occursin("lines", errRatio.msg)
+        # the pair is rejected for any other profile name (both arms of the guard)
+        @test_throws ErrorException _recipe_series(BLR.Profile((cm, :line, ("Ha", "Hb"))))
+        @test_throws ErrorException _recipe_series(BLR.Profile((mDisk, :line, ("Ha", "Hb"))))
     end
 
     @testset "profile: degenerate (zero-emission) line does not throw" begin
@@ -201,7 +217,13 @@ end
         # an explicit profile name is honored too
         rdsR2 = _recipe_series(BLR.Profile((rcm, :line)))
         @test length(rdsR2) == length(cm.lines)
-        # :ratio isn't implemented until W5 -- the resident forwarding getProfile errors clearly
+        # :ratio (W5) drives the same recipe branch as the host composite, via the resident getProfile
+        rdsRatioC = _recipe_series(BLR.Profile((cm, :ratio, ("Ha", "Hb"))))
+        rdsRatioR = _recipe_series(BLR.Profile((rcm, :ratio, ("Ha", "Hb"))))
+        @test length(rdsRatioR) == 1
+        @test rdsRatioR[1].plotattributes[:x] == rdsRatioC[1].plotattributes[:x]
+        @test _nanapprox(collect(rdsRatioR[1].plotattributes[:y]), collect(rdsRatioC[1].plotattributes[:y]))
+        # without the lines pair the resident getProfile error still surfaces
         @test_throws ErrorException _recipe_series(BLR.Profile((rcm, :ratio)))
     end
 
