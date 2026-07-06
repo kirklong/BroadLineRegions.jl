@@ -1,7 +1,7 @@
 name = "BroadLineRegions"
 uuid = "0ba2ffe9-29ae-4dc1-9466-6a4b513121e6"
 authors = ["Kirk Long <kirk.long@colorado.edu>"]
-version = "0.3.3"
+version = "0.4.0"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
