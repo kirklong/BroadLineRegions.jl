@@ -168,7 +168,7 @@ function _rt_resident_raytrace(rm::ResidentModel; IRatios::Union{Float64,Array{F
         τCutOff::Float64=1.0, raytraceFreeClouds::Bool=false)
     meta = rm.rt
     meta === nothing && error("raytrace!(::ResidentModel) needs raytrace metadata; build the handle " *
-        "with gpu(m) (CUDA loaded) or the on-device constructors so it carries an output grid")
+        "with gpu(m) (CUDA or Metal loaded) or the on-device constructors so it carries an output grid")
     ma = rm.ma
     backend = rm.backend
     T = eltype(ma.I)
@@ -294,7 +294,7 @@ end
 Device-resident dispatch of [`raytrace!`](@ref BLR.raytrace!): run the full bin→sort→segmented-scan→
 compact combine on `rm`'s backend with no host round-trips, returning a freshly raytraced
 [`ResidentModel`](@ref) (drop-in for the observable methods). `rm` must carry raytrace metadata — build
-it with `gpu(m)` (CUDA loaded) or `resident(m; raytrace=true)`.
+it with `gpu(m)` (CUDA or Metal loaded) or `resident(m; raytrace=true)`.
 
 Like `raytrace!(::model)` this returns a new combined handle rather than mutating in place (the point
 count changes: one combined point per active output pixel + surviving free clouds), so write

@@ -617,23 +617,24 @@ The integrated ratio of any two registered lines is always available as [`lineRa
 
 ## Running on the GPU
 
-As of version 0.3.0, `BroadLineRegions.jl` can now generate/port models to the GPU (only tested on NVIDIA for now) for significant performance gains on some workflows.
+As of version 0.3.0, `BroadLineRegions.jl` can now generate/port models to a GPU for significant performance gains on some workflows. NVIDIA GPUs are supported through `CUDA.jl`, and as of version 0.4.1 Apple-silicon Macs are supported through `Metal.jl`. The GPU kernels are shared, so everything on this page works with both.
 Below we repeat the CM96 example from above showcasing how to access these capabilities and the kind of 
 performance gains one might expect from using `BroadLineRegions.jl` on your GPU. 
-First, we must load `CUDA.jl` alongside `BroadLineRegions` to enable these features:
+First, we must load a GPU backend (`CUDA.jl` for NVIDIA devices and `Metal.jl` for Apple Silicon) alongside `BroadLineRegions` to enable these features:
 
 ```julia
-using BroadLineRegions, CUDA
+using BroadLineRegions
+using CUDA #or using Metal, if you are on a Mac and want to use Apple Silicon GPU
 ```
 
 !!! note "Float32 by default"
     The GPU entry points default to `Float32` (`T=Float32`) because consumer (GeForce) cards run
     `Float64` at roughly 1/64 the `Float32` rate. `Float32` is plenty for most line-profile and
     transfer-function work; pass `T=Float64` if you are on a data-center card or need the extra
-    precision.
+    precision. Apple Silicon can *only* support Float32 so passing Float64 will error on a Mac if trying to use the GPU. 
 
-Following the [CM96](#Reproducing-the-line-profile-and-transfer-function-shown-in-CM96) disk model from the
-top of this page, we can modify this slightly to showcase two ways to get this model onto the GPU instead of the CPU: 
+After loading whatever package (CUDA/Metal) is relevant for your hardware, with simple syntax (that is agnostic to GPU backend) we 
+can now port our models and many of our calculations to the GPU. To replicate the [CM96](#Reproducing-the-line-profile-and-transfer-function-shown-in-CM96) disk model example from the beginning of these docs with calculations now done on the GPU we just need a tiny bit of extra new syntax. Shown below are two ways to get this CM96 model onto the GPU instead of the CPU: 
 
 **(1) Build on the CPU, then transfer.** Construct the model exactly as before and hand it to
 [`gpu`](@ref BLR.gpu), which returns a *device-resident handle* you can call the observable functions
@@ -650,6 +651,17 @@ tEdges = collect(range(0.0,stop=20.0/rsDay,length=101)) #will generate 100 bins,
 vEdges = collect(range(-0.04,stop=0.04,length=101)) #0.04c ~12*1e8 cm/s
 Ψ = BLR.getΨ(mGPU, vEdges, tEdges)   #same vEdges/tEdges as the CM96 example
 ```
+
+!!! note "Choosing a device"
+    With no `backend` keyword the GPU functions use
+    [`defaultGPUBackend`](@ref BLR.defaultGPUBackend)`()`: CUDA if `CUDA.jl` is loaded and functional,
+    otherwise Metal. To force one, pass it explicitly, e.g. `BLR.gpu(m; backend=Metal.MetalBackend())`.
+    Time GPU work with `Metal.@sync` (instead of `CUDA.@sync`).
+    Random cloud draws (`gpuCloudModel`) come from counter-based Philox substreams whose integer output is
+    bit-identical on the CPU, CUDA, and Metal backends, so the same seed gives the same clouds on every
+    device to `Float32` rounding (a few per 10⁴ can differ where device math rounding flips a
+    rejection-sampling decision).
+
 
 The handle is built once and reused across as many observable calls as you like — nothing is
 re-flattened or re-copied per call. Results come back as ordinary host arrays/`profile`s, identical in
@@ -745,7 +757,6 @@ GPU-safe closures: [`_rt_disk_intensity_fn`](@ref BLR._rt_disk_intensity_fn) (th
 direct port of the CPU [`DiskWind_I_`](@ref BLR.DiskWind_I_)) and
 [`_rt_disk_velocity_fn`](@ref BLR._rt_disk_velocity_fn) /
 [`_rt_disk_radial_velocity_fn`](@ref BLR._rt_disk_radial_velocity_fn) for an example velocity calculation.
-
 
 ### Summary of everything else that works on the GPU
 

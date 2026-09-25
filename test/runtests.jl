@@ -1046,6 +1046,14 @@ else
     @info "skipping GPU correctness tests (set BLR_TEST_CUDA=1 with CUDA.jl available to run them)"
 end
 
+# Apple-silicon (Metal) GPU tests, opt-in the same way: `BLR_TEST_METAL=1 julia --project=<env>
+# test/runtests.jl` where <env> has this package Pkg.develop'ed plus Metal.jl and the test extras.
+if get(ENV, "BLR_TEST_METAL", "0") == "1"
+    include("gpu_metal.jl")
+else
+    @info "skipping Metal GPU tests (set BLR_TEST_METAL=1 with Metal.jl available to run them)"
+end
+
 ## NOTE add JET to the test environment, then uncomment
 # using JET
 # @testset "static analysis with JET.jl" begin

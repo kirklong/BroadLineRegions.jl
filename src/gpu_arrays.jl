@@ -112,7 +112,7 @@ ResidentModel(ma::ModelArrays, backend, nSubModels::Int) = ResidentModel(ma, bac
 
 Flatten `m` and wrap it as a [`ResidentModel`](@ref) on `backend`. The default `CPU()` backend keeps
 everything on the host — useful for testing the resident pipeline without a GPU. Use `gpu(m)` (with
-CUDA.jl loaded) to build a device-resident handle.
+CUDA.jl or Metal.jl loaded) to build a device-resident handle.
 
 Pass `raytrace=true` to attach the metadata that `raytrace!(::ResidentModel)` needs. It is only built for
 host models with more than one submodel (single-submodel handles keep `rt === nothing`); on-device
@@ -176,16 +176,84 @@ const _RESIDENT_MIX_MSG = string(
 Base.:+(::model, ::ResidentModel) = throw(ArgumentError(_RESIDENT_MIX_MSG))
 Base.:+(::ResidentModel, ::model) = throw(ArgumentError(_RESIDENT_MIX_MSG))
 
-"""
-    gpu(m::model; T=Float32) -> ResidentModel
-    gpu(ma::ModelArrays) -> ModelArrays
+# ---------------------------------------------------------------------------------------------------
+# GPU backend selection. Core owns every public GPU entry point (`gpu`, `gpuDiskWindModel`,
+# `gpuCloudModel`, `defaultGPUBackend`); the package extensions (BroadLineRegionsCUDAExt,
+# BroadLineRegionsMetalExt) only supply small hooks that dispatch on their OWN backend/array types, so
+# two extensions never define the same method signature and can be loaded side by side:
+#   _gpu_backend(::Val{:Name})        -> the backend object (registers the extension as loaded)
+#   _gpu_functional(backend)          -> whether a usable device is present
+#   _gpu_array_type(backend)          -> the array constructor Adapt should move host columns into
+#   _check_gpu_eltype(backend, T)     -> reject element types the device cannot run (Metal: Float64)
+#   _rt_backend_adapt / _rt_sortperm_by_key_depth specializations on the device vector type
+# ---------------------------------------------------------------------------------------------------
 
-Move a host model or flat [`ModelArrays`](@ref) snapshot onto the GPU and return a device-resident
-handle for repeated observable calls. Requires CUDA.jl to be loaded so the package extension can
-provide the CUDA-backed methods.
+# Deterministic preference order when more than one GPU extension is loaded.
+const _GPU_BACKEND_ORDER = (:CUDA, :Metal)
+
+_gpu_backend(::Val) = nothing
+_gpu_functional(backend) = true
+_gpu_array_type(::KernelAbstractions.CPU) = Array
+_gpu_array_type(backend) = error("no device array type registered for backend $(typeof(backend)); " *
+    "load the matching extension (e.g. `using CUDA` for CUDABackend, `using Metal` for MetalBackend)")
+_check_gpu_eltype(backend, ::Type) = nothing
+
 """
+    defaultGPUBackend() -> KernelAbstractions.Backend
+
+The `KernelAbstractions` backend that [`gpu`](@ref), [`gpuDiskWindModel`](@ref) and
+[`gpuCloudModel`](@ref) use when no `backend` keyword is given. It is chosen from the loaded GPU
+extensions in a fixed order — **CUDA first, then Metal** — taking the first one whose device is
+functional (`CUDA.functional()` / `Metal.functional()`). If extensions are loaded but none is
+functional, the first loaded one is returned so its own error surfaces on use. Errors if no GPU
+extension is loaded (`using CUDA` on NVIDIA hardware, `using Metal` on Apple silicon).
+
+To pick a backend explicitly (e.g. Metal while CUDA is also loaded), pass it:
+`gpu(m; backend=Metal.MetalBackend())`.
+"""
+function defaultGPUBackend()
+    loaded = Any[]
+    for name in _GPU_BACKEND_ORDER
+        b = _gpu_backend(Val(name))
+        b === nothing || push!(loaded, b)
+    end
+    isempty(loaded) && error("GPU support requires a GPU package — run `using CUDA` (NVIDIA) or " *
+        "`using Metal` (Apple silicon) to activate the matching BroadLineRegions extension")
+    for b in loaded
+        _gpu_functional(b) && return b
+    end
+    return first(loaded)
+end
+
+"""
+    gpu(m::model; backend=defaultGPUBackend(), T=Float32) -> ResidentModel
+    gpu(ma::ModelArrays; backend=defaultGPUBackend()) -> ModelArrays
+
+Move a host model or flat [`ModelArrays`](@ref) snapshot onto a GPU and return a device-resident
+handle for repeated observable calls. Requires a GPU extension: `using CUDA` (NVIDIA) or
+`using Metal` (Apple silicon). With both loaded, CUDA is preferred (see [`defaultGPUBackend`](@ref));
+pass `backend` to choose explicitly. Metal has no `Float64`, so `T=Float64` errors on `MetalBackend`.
+
+For combined models (>1 submodel) the handle also carries device-resident raytrace metadata (output
+grid + per-point submodel / discrete info) built once here on the host, so `raytrace!(rm)` runs
+entirely on the device.
+"""
+function gpu(ma::ModelArrays; backend=defaultGPUBackend())
+    _check_gpu_eltype(backend, eltype(ma.I))
+    return Adapt.adapt(_gpu_array_type(backend), ma)
+end
+
+function gpu(m::model; backend=defaultGPUBackend(), T=Float32)
+    _check_gpu_eltype(backend, T)
+    ma = gpu(flatten(m; T=T); backend=backend)
+    meta = length(m.subModelStartInds) > 1 ?
+        Adapt.adapt(_gpu_array_type(backend), _rt_build_meta(m; T=T)) : nothing
+    return ResidentModel(ma, backend, length(m.subModelStartInds), meta)
+end
+
 function gpu(::Any; kwargs...)
-    error("GPU support requires CUDA.jl — run `using CUDA` (with a functional CUDA device) to activate the BroadLineRegions CUDA extension")
+    error("gpu: unsupported argument — pass a `model`, `ModelArrays` or `CompositeModel` " *
+        "(and load a GPU package: `using CUDA` or `using Metal`)")
 end
 
 """

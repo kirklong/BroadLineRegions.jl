@@ -762,7 +762,9 @@ removed. Note that this function will mutate the input model objects.
   - If `true`, clouds will be checked for overlap with other clouds and raytraced accordingly
 - `backend=nothing`: Optional `KernelAbstractions` backend to run the bin→sort→scan on a device.
   - If `nothing`, uses the CPU implementation.
-  - Pass `CUDABackend()` (with CUDA.jl loaded) to run on the GPU; see also [`gpu`](@ref BLR.gpu).
+  - Pass `CUDABackend()` (with CUDA.jl loaded) or `MetalBackend()` (with Metal.jl loaded; requires `T=Float32`) to run on the GPU; see also [`gpu`](@ref BLR.gpu).
+  - Apple Silicon (Metal) GPUs have no `Float64`, and `T` defaults to `Float64`, so pass `T=Float32` with `MetalBackend()` or it errors.
+  - On Metal the (pixel, depth) sort runs on the host (Metal.jl cannot `sortperm` tuples on the device); the order is identical to the CPU/CUDA paths and the copy is cheap on unified memory.
 - `T=Float64`: Element type for the device arrays when `backend` is set (use `Float32` on GeForce GPUs for speed).
 
 # Returns
