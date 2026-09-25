@@ -10,7 +10,9 @@ function _rt_uniform_bin_index(xi, edges, nbins::Int, overflow::Bool)
     else
         x0 = edges[1]
         invΔ = nbins / (edges[nbins+1] - x0)
-        bin = clamp(floor(Int, (xi - x0) * invΔ) + 1, 1, nbins)
+        # unsafe_trunc∘floor == floor(Int, ·) here (the operand is finite and in [0, nbins]), but has no
+        # InexactError path: throwing a boxed Float32 needs device malloc, which Metal lacks.
+        bin = clamp(unsafe_trunc(Int, floor((xi - x0) * invΔ)) + 1, 1, nbins)
         while bin > 1 && xi <= edges[bin]
             bin -= 1
         end
@@ -245,10 +247,11 @@ function _rt_disk_deproject_scalar(a, b, inc, rot, θₒ, m11, m12, m21, m22,
     return r, ϕ, ϕ₀, η, x, y, z
 end
 
-@kernel function _rt_disk_deproject_kernel!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem,
-        α, β, inc, rot, θₒ, m11, m12, m21, m22, r3d11, r3d12, r3d21, r3d22,
-        r3d31, r3d32, rMin, rMax, ηₒ, η₁, αRM, rNorm)
+# Scalars packed into one isbits tuple `P` (Metal's 31-buffer-argument cap).
+@kernel function _rt_disk_deproject_kernel!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β, P)
     idx = @index(Global)
+    (inc, rot, θₒ, m11, m12, m21, m22, r3d11, r3d12, r3d21, r3d22, r3d31, r3d32,
+        rMin, rMax, ηₒ, η₁, αRM, rNorm) = P
     rt, ϕt, ϕ₀t, ηt, xt, yt, zt = _rt_disk_deproject_scalar(α[idx], β[idx], inc, rot, θₒ,
         m11, m12, m21, m22, r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMin, rMax,
         ηₒ, η₁, αRM, rNorm)
@@ -268,10 +271,12 @@ function _rt_disk_deproject!(rSystem::AbstractArray, ϕSystem::AbstractArray, ϕ
         backend=KernelAbstractions.CPU())
     size(rSystem) == size(α) == size(β) || throw(DimensionMismatch("disk deprojection arrays must have matching sizes"))
     kernel! = _rt_disk_deproject_kernel!(backend)
-    event = kernel!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β, inc, rot, θₒ,
-        M[1,1], M[1,2], M[2,1], M[2,2], r3D[1,1], r3D[1,2], r3D[2,1], r3D[2,2],
-        r3D[3,1], r3D[3,2], round(rMin, sigdigits=9), round(rMax, sigdigits=9),
-        ηₒ, η₁, αRM, rNorm; ndrange=length(α))
+    Tk = eltype(rSystem)   # scalars in the device element type (Float64 arrays: unchanged)
+    P = (Tk(inc), Tk(rot), Tk(θₒ),
+        Tk(M[1,1]), Tk(M[1,2]), Tk(M[2,1]), Tk(M[2,2]), Tk(r3D[1,1]), Tk(r3D[1,2]), Tk(r3D[2,1]), Tk(r3D[2,2]),
+        Tk(r3D[3,1]), Tk(r3D[3,2]), Tk(round(rMin, sigdigits=9)), Tk(round(rMax, sigdigits=9)),
+        Tk(ηₒ), Tk(η₁), Tk(αRM), Tk(rNorm))
+    event = kernel!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem, α, β, P; ndrange=length(α))
     event !== nothing && wait(event)
     return rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem
 end
@@ -287,7 +292,8 @@ function _rt_v_circular_disk!(v::AbstractArray, r::AbstractArray, ϕ::AbstractAr
         rₛ=1.0, backend=KernelAbstractions.CPU())
     size(v) == size(r) == size(ϕ) || throw(DimensionMismatch("velocity arrays must have matching sizes"))
     kernel! = _rt_v_circular_disk_kernel!(backend)
-    event = kernel!(v, r, ϕ, inc, rₛ; ndrange=length(v))
+    Tk = eltype(v)
+    event = kernel!(v, r, ϕ, Tk(inc), Tk(rₛ); ndrange=length(v))
     event !== nothing && wait(event)
     return v
 end
@@ -298,9 +304,10 @@ function _rt_disk_wind_i_scalar(r, ϕ, inc, f1, f2, f3, f4, α)
     sini = sin(inc)
     cosi = cos(inc)
     pre = sqrt(1 / (2 * r^3))
-    term12 = (3*sini^2) * cosϕ * (sqrt(2)*f1*cosϕ + f2/2*sinϕ)
+    sqrt2 = sqrt(oftype(r, 2))      # typed: a bare sqrt(2) is a Float64 literal (no FP64 on Metal)
+    term12 = (3*sini^2) * cosϕ * (sqrt2*f1*cosϕ + f2/2*sinϕ)
     term3 = (-f3*3*sini*cosi) * cosϕ
-    term4 = sqrt(2)*f4*cosi^2
+    term4 = sqrt2*f4*cosi^2
     return r^(-α) * abs(pre * (term12 + term3 + term4))
 end
 
@@ -321,8 +328,9 @@ function _rt_disk_wind_i!(I::AbstractArray, r::AbstractArray, ϕ::AbstractArray,
         backend=KernelAbstractions.CPU())
     size(I) == size(r) == size(ϕ) || throw(DimensionMismatch("intensity arrays must have matching sizes"))
     kernel! = _rt_disk_wind_i_kernel!(backend)
-    event = kernel!(I, r, ϕ, inc, f1, f2, f3, f4, α, round(rMin, sigdigits=9),
-        round(rMax, sigdigits=9); ndrange=length(I))
+    Tk = eltype(I)
+    event = kernel!(I, r, ϕ, Tk(inc), Tk(f1), Tk(f2), Tk(f3), Tk(f4), Tk(α), Tk(round(rMin, sigdigits=9)),
+        Tk(round(rMax, sigdigits=9)); ndrange=length(I))
     event !== nothing && wait(event)
     return I
 end
@@ -407,8 +415,9 @@ end
         while interval <= nIntervals
             if rCam >= rMin[interval] && rCam <= rMax[interval]
                 dϕ = Δϕ[interval]
-                shifted = mod(atan(sin(ϕCam), cos(ϕCam)) - (-π - dϕ/2), 2π)
-                col = floor(Int, shifted/dϕ) + 1
+                πT = oftype(dϕ, π)   # typed π: bare -π / 2π are Float64 literals (no FP64 on Metal)
+                shifted = mod(atan(sin(ϕCam), cos(ϕCam)) - (-πT - dϕ/2), 2 * πT)
+                col = unsafe_trunc(Int, floor(shifted/dϕ)) + 1   # no-throw floor(Int, ·) (Metal)
                 col = col > nϕ[interval] ? 1 : col
                 key = pixelKeys[pixelStarts[interval] + col - 1]
                 break
@@ -524,15 +533,25 @@ function _rt_scan_output(n::Int; T=Float64)
 end
 
 _rt_backend_model_arrays(m::model, ::KernelAbstractions.CPU; T=Float64) = flatten(m; T=T)
-_rt_backend_model_arrays(m::model, backend; T=Float64) =
-    error("no device ModelArrays transfer defined for backend $(typeof(backend)); load the matching extension (e.g. `using CUDA` for CUDABackend)")
+# Any device backend: host flatten -> Adapt into the extension-registered array type (errors with an
+# actionable message if no extension registered one, or if the device cannot run element type T).
+function _rt_backend_model_arrays(m::model, backend; T=Float64)
+    _check_gpu_eltype(backend, T)
+    return gpu(flatten(m; T=T); backend=backend)
+end
 _rt_backend_adapt(x, ma::ModelArrays) = x
 
-@kernel function _rt_segmented_scan_kernel!(outI, outv, outr, outϕ, outϕ₀, outi, outrot, outθₒ,
-        outτ, outη, outx, outy, outz, outreflect, outactive, perm, keys, outputΔA, IRatios,
-        submodel, segmentStarts, segmentStops, r, ϕ, ϕ₀, i, rot, θₒ, v, I, ΔA, τ, η,
-        x, α, β, reflect, τCutOff)
+# The 37 column arguments travel as three structs (`out`, `scan`, `ma`): Metal caps a kernel at 31
+# buffer arguments. Packing only renames the loads, so CPU/CUDA arithmetic is unchanged.
+@kernel function _rt_segmented_scan_kernel!(out, perm, keys, scan, ma, τCutOff)
     pix = @index(Global)
+    outI, outv, outr, outϕ, outϕ₀, outi, outrot = out.I, out.v, out.r, out.ϕ, out.ϕ₀, out.i, out.rot
+    outθₒ, outτ, outη, outx, outy, outz = out.θₒ, out.τ, out.η, out.x, out.y, out.z
+    outreflect, outactive = out.reflect, out.active
+    outputΔA, IRatios, submodel = scan.outputΔA, scan.IRatios, scan.submodel
+    segmentStarts, segmentStops = scan.segmentStarts, scan.segmentStops
+    r, ϕ, ϕ₀, i, rot, θₒ, v, I, ΔA = ma.r, ma.ϕ, ma.ϕ₀, ma.i, ma.rot, ma.θₒ, ma.v, ma.I, ma.ΔA
+    τ, η, x, α, β, reflect = ma.τ, ma.η, ma.x, ma.α, ma.β, ma.reflect
     start = segmentStarts[pix]
     stop = segmentStops[pix]
     nan = convert(eltype(outI), NaN)
@@ -643,11 +662,7 @@ function _rt_segmented_scan!(out::_RaytraceScanOutput, ma::ModelArrays, keys::Ab
     length(out.I) == nPixels || throw(DimensionMismatch("scan output has length $(length(out.I)) but there are $nPixels pixels"))
     nPixels == 0 && return out
     kernel! = _rt_segmented_scan_kernel!(backend)
-    event = kernel!(out.I, out.v, out.r, out.ϕ, out.ϕ₀, out.i, out.rot, out.θₒ,
-        out.τ, out.η, out.x, out.y, out.z, out.reflect, out.active, perm, keys,
-        scan.outputΔA, scan.IRatios, scan.submodel, scan.segmentStarts,
-        scan.segmentStops, ma.r, ma.ϕ, ma.ϕ₀, ma.i, ma.rot, ma.θₒ, ma.v, ma.I,
-        ma.ΔA, ma.τ, ma.η, ma.x, ma.α, ma.β, ma.reflect, τCutOff; ndrange=nPixels)
+    event = kernel!(out, perm, keys, scan, ma, τCutOff; ndrange=nPixels)
     event !== nothing && wait(event)
     return out
 end

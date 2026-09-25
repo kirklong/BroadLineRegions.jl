@@ -39,6 +39,14 @@ using KernelAbstractions
             () -> disk() + clouds(50, 102) + clouds(50, 103, μ=850.0),
         )
 
+        @testset "backend selection (core entry points, CUDA hooks)" begin
+            @test BLR.defaultGPUBackend() isa CUDA.CUDABackend
+            gm = BLR.gpu(builders[1]())                      # default backend + default T=Float32
+            @test gm.backend isa CUDA.CUDABackend && gm.ma.I isa CUDA.CuVector{Float32}
+            @test BLR.gpu(BLR.flatten(builders[1]())).I isa CUDA.CuVector{Float64}
+            @test BLR.gpu(builders[1](); backend=backend, T=Float64).ma.I isa CUDA.CuVector{Float64}
+        end
+
         @testset "flatten/gpu round-trip" begin
             m = builders[1]()
             ma_cpu = BLR.flatten(m)

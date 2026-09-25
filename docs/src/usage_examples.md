@@ -617,7 +617,7 @@ The integrated ratio of any two registered lines is always available as [`lineRa
 
 ## Running on the GPU
 
-As of version 0.3.0, `BroadLineRegions.jl` can now generate/port models to the GPU (only tested on NVIDIA for now) for significant performance gains on some workflows.
+As of version 0.3.0, `BroadLineRegions.jl` can now generate/port models to the GPU for significant performance gains on some workflows. NVIDIA GPUs are supported through `CUDA.jl`, and Apple-silicon Macs through `Metal.jl` (see [Apple silicon (Metal)](#Apple-silicon-(Metal)) below); the GPU kernels are shared, so everything on this page works on both.
 Below we repeat the CM96 example from above showcasing how to access these capabilities and the kind of 
 performance gains one might expect from using `BroadLineRegions.jl` on your GPU. 
 First, we must load `CUDA.jl` alongside `BroadLineRegions` to enable these features:
@@ -746,6 +746,38 @@ direct port of the CPU [`DiskWind_I_`](@ref BLR.DiskWind_I_)) and
 [`_rt_disk_velocity_fn`](@ref BLR._rt_disk_velocity_fn) /
 [`_rt_disk_radial_velocity_fn`](@ref BLR._rt_disk_radial_velocity_fn) for an example velocity calculation.
 
+
+### Apple silicon (Metal)
+
+On an Apple-silicon Mac (M1 or newer), load `Metal.jl` instead of `CUDA.jl` — every GPU function on this
+page (`gpu`, `gpuDiskWindModel`, `gpuCloudModel`, the resident observables, device `raytrace!`, `+`)
+works unchanged:
+
+```julia
+using BroadLineRegions, Metal
+
+mGPU = BLR.gpuDiskWindModel(3000.,100.,1.0,75/180*π; nr=2048, nϕ=1024, scale=:log,
+        f1=1.0, f2=1.0, f3=0.0, f4=0.0)          #built on the Apple GPU, Float32
+p = BLR.getProfile(mGPU, :line, bins=101)
+clouds = BLR.gpuCloudModel(100_000, 42; μ=500.0, β=1.0, F=0.5, θₒ=π/4, i=π/4)
+```
+
+Things to know on Metal:
+
+- **Float32 only.** Apple GPUs have no `Float64`; the GPU entry points already default to `T=Float32`,
+  and asking for `T=Float64` on the Metal backend throws an `ArgumentError`. The host-orchestrated
+  `raytrace!(m; backend=MetalBackend())` defaults to `T=Float64`, so pass `T=Float32` there.
+- **Same random clouds.** `gpuCloudModel` draws from counter-based Philox substreams whose integer
+  output is bit-identical on the CPU, CUDA, and Metal backends; the resulting clouds agree to
+  `Float32` rounding.
+- **Raytrace sort on the host.** Metal.jl cannot sort tuples on the device, so the (pixel, depth) ordering
+  step of `raytrace!` copies the keys to the host, sorts them there (same order as the CPU and CUDA
+  paths), and uploads the permutation. Apple silicon has unified memory, so this copy is cheap. Only
+  `raytrace!` uses this step.
+- **Choosing a device.** With no `backend` keyword the GPU functions use
+  [`defaultGPUBackend`](@ref BLR.defaultGPUBackend)`()`: CUDA if `CUDA.jl` is loaded and functional,
+  otherwise Metal. To force one, pass it explicitly, e.g. `BLR.gpu(m; backend=Metal.MetalBackend())`.
+  Time GPU work with `Metal.@sync` (instead of `CUDA.@sync`).
 
 ### Summary of everything else that works on the GPU
 

@@ -62,11 +62,17 @@ _rt_disk_radial_velocity_fn(::Type{T}, vᵣFrac, inflow::Bool, rₛ) where {T<:R
 # NaN v/I (matching the host, where `DiskWind_I_`/`vCircularDisk` evaluate NaN radii to NaN). Per-ring
 # scalars (i, rot, θₒ, τ=0, reflect=false) are written for every pixel, including out-of-range ones,
 # exactly as `flatten` expands them.
-@kernel function _rt_build_disk_kernel!(outr, outϕ, outϕ₀, outi, outrot, outθₒ, outv, outI, outΔA,
-        outτ, outη, outx, outy, outz, outα, outβ, outreflect, Ifun, vfun,
-        nr, scaleLog, rStart, Δr, Δϕ, inc, rot, θₒ, m11, m12, m21, m22,
-        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac, τval)
+#
+# The output columns travel as ONE `ModelArrays` argument and the scalars as ONE isbits tuple: Metal
+# caps a kernel at 31 buffer arguments (Apple GPUs; flat, this kernel needed 47), and packing changes
+# no arithmetic, so CPU/CUDA results are unchanged.
+@kernel function _rt_build_disk_kernel!(out, Ifun, vfun, P)
     p = @index(Global)
+    outr, outϕ, outϕ₀, outi, outrot, outθₒ = out.r, out.ϕ, out.ϕ₀, out.i, out.rot, out.θₒ
+    outv, outI, outΔA, outτ, outη = out.v, out.I, out.ΔA, out.τ, out.η
+    outx, outy, outz, outα, outβ, outreflect = out.x, out.y, out.z, out.α, out.β, out.reflect
+    (nr, scaleLog, rStart, Δr, Δϕ, inc, rot, θₒ, m11, m12, m21, m22,
+        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac, τval) = P
     T = eltype(outr)
     k = (p - 1) % nr + 1
     j = (p - 1) ÷ nr + 1
@@ -138,16 +144,15 @@ function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int,
     outx, outy, outz, outα, outβ = alloc(), alloc(), alloc(), alloc(), alloc()
     outreflect = KernelAbstractions.allocate(backend, Bool, n)
 
-    kernel! = _rt_build_disk_kernel!(backend)
-    event = kernel!(outr, outϕ, outϕ₀, outi, outrot, outθₒ, outv, outI, outΔA, outτ, outη,
-        outx, outy, outz, outα, outβ, outreflect, Ifun, vfun, nr, scaleLog, rStart, Δr, Δϕ,
-        T(inc), T(rot), T(θₒ), T(M[1, 1]), T(M[1, 2]), T(M[2, 1]), T(M[2, 2]),
-        T(r3D[1, 1]), T(r3D[1, 2]), T(r3D[2, 1]), T(r3D[2, 2]), T(r3D[3, 1]), T(r3D[3, 2]),
-        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac, T(τ); ndrange=n)
-    event !== nothing && wait(event)
-
     ma = ModelArrays{T,typeof(outr),typeof(outreflect)}(outr, outϕ, outϕ₀, outi, outrot, outθₒ,
         outv, outI, outΔA, outτ, outη, outx, outy, outz, outα, outβ, outreflect)
+    P = (nr, scaleLog, rStart, Δr, Δϕ,
+        T(inc), T(rot), T(θₒ), T(M[1, 1]), T(M[1, 2]), T(M[2, 1]), T(M[2, 2]),
+        T(r3D[1, 1]), T(r3D[1, 2]), T(r3D[2, 1]), T(r3D[2, 2]), T(r3D[3, 1]), T(r3D[3, 2]),
+        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac, T(τ))
+    kernel! = _rt_build_disk_kernel!(backend)
+    event = kernel!(ma, Ifun, vfun, P; ndrange=n)
+    event !== nothing && wait(event)
     return ma
 end
 
@@ -169,7 +174,7 @@ in/outflow; `vᵣFrac = 0` is `vCircularDisk`). Advanced users may instead pass 
 custom physics in the same fused kernel; generic custom `Function`s that cannot run in a kernel should
 use host construction + `gpu(m)` instead.
 
-Use `gpu`-backed construction (CUDA loaded) via `gpuDiskWindModel`; the default `CPU()` backend builds
+Use `gpu`-backed construction (CUDA or Metal loaded) via `gpuDiskWindModel`; the default `CPU()` backend builds
 on the host and is mainly for testing the on-device pipeline without a GPU.
 """
 function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ::Int=256,
@@ -180,6 +185,7 @@ function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ
         intensity=nothing, velocity=nothing,
         backend=KernelAbstractions.CPU(), T=Float64)
     T <: Real || throw(ArgumentError("element type T must be <: Real, got $T"))
+    _check_gpu_eltype(backend, T)
     Ifun = if intensity === nothing
         any(isnan, (f1, f2, f3, f4, α)) &&
             throw(ArgumentError("built-in DiskWind intensity requires f1, f2, f3, f4, α (or pass intensity=...)"))
@@ -195,14 +201,18 @@ function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ
 end
 
 """
-    gpuDiskWindModel(rMin, rMax, i; T=Float32, kwargs...) -> ResidentModel
-    gpuDiskWindModel(r̄, rFac, α, i; T=Float32, kwargs...) -> ResidentModel
+    gpuDiskWindModel(rMin, rMax, i; backend=defaultGPUBackend(), T=Float32, kwargs...) -> ResidentModel
+    gpuDiskWindModel(r̄, rFac, α, i; backend=defaultGPUBackend(), T=Float32, kwargs...) -> ResidentModel
 
-Build a DiskWind model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the CUDA
-counterpart of [`residentDiskWindModel`](@ref), defaulting to `Float32` (GeForce FP64 is ~1/64 rate).
-Requires CUDA.jl loaded (defined by the CUDA package extension); errors otherwise.
+Build a DiskWind model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the GPU
+counterpart of [`residentDiskWindModel`](@ref), defaulting to `Float32` (GeForce FP64 is ~1/64 rate;
+Apple GPUs have no FP64 at all). Requires a GPU extension (`using CUDA` or `using Metal`); the device
+is chosen by [`defaultGPUBackend`](@ref) unless `backend` is given.
 """
-function gpuDiskWindModel end
+gpuDiskWindModel(rMin::Real, rMax::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...) =
+    residentDiskWindModel(rMin, rMax, i; backend=backend, T=T, kwargs...)
+gpuDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...) =
+    residentDiskWindModel(r̄, rFac, α, i; backend=backend, T=T, kwargs...)
 
 """
     residentDiskWindModel(r̄, rFac, α, i; rot=0.0, nr=128, nϕ=256, scale=:log, kwargs...) -> ResidentModel
@@ -225,7 +235,7 @@ end
 # radius from a `Gamma` via Distributions.jl's rejection sampler, which cannot be reproduced bit-for-
 # bit inside a kernel. Instead each cloud gets an independent counter-based (Philox4x32) substream and
 # samples the SAME target distributions on-device, so the cloud population is deterministic and
-# seed-reproducible (and identical across CPU/CUDA backends) but statistically — not bitwise — equal to
+# seed-reproducible (and identical across CPU/CUDA/Metal backends) but statistically — not bitwise — equal to
 # the host `:philox` realization. This matches the B3 design note ("you cannot bit-match MT and
 # parallelize simultaneously"; the counter-based path is a different, fully deterministic stream).
 # ======================================================================================
@@ -238,7 +248,7 @@ const _PHILOX_W1 = 0xBB67AE85 % UInt32   # sqrt(3)-1
 
 @inline function _philox_mulhilo(a::UInt32, b::UInt32)
     prod = UInt64(a) * UInt64(b)
-    return (UInt32(prod >> 32), UInt32(prod & 0xffffffff))   # (hi, lo)
+    return ((prod >> 32) % UInt32, prod % UInt32)   # (hi, lo); `%` truncates without an InexactError path
 end
 
 @inline function _philox4x32_bijection(c0::UInt32, c1::UInt32, c2::UInt32, c3::UInt32,
@@ -262,7 +272,7 @@ end
 
 # The n-th uniform in (0,1) of cloud `cloudInd`'s substream: counter = (n÷4, cloudInd, 0, 0), word n%4.
 @inline function _cloud_uniform(::Type{T}, key0::UInt32, key1::UInt32, cloudInd::UInt32, n::Integer) where {T<:Real}
-    block = UInt32((n >> 2) & 0xffffffff)
+    block = (n >> 2) % UInt32                  # == UInt32((n >> 2) & 0xffffffff), no throw path
     word = (n & 3) + 1
     out = _philox4x32_bijection(block, cloudInd, UInt32(0), UInt32(0), key0, key1)
     u = @inbounds out[word]
@@ -392,13 +402,17 @@ end
     return (r, ϕ, ϕ₀, inc, rot, θ, vLOS, I, one(T), zero(T), η, x, y, z, reflect)
 end
 
-@kernel function _rt_build_cloud_kernel!(outr, outϕ, outϕ₀, outi, outrot, outθₒ, outv, outI, outΔA,
-        outτ, outη, outx, outy, outz, outα, outβ, outreflect, key0, key1,
-        μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm, useCloudI, κ, useTurbulent,
-        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, τval)
+# Columns as one `ModelArrays` argument, scalars as one isbits tuple (Metal's 31-buffer-argument cap;
+# see `_rt_build_disk_kernel!`).
+@kernel function _rt_build_cloud_kernel!(out, P)
     p = @index(Global)
+    outr, outϕ, outϕ₀, outi, outrot, outθₒ = out.r, out.ϕ, out.ϕ₀, out.i, out.rot, out.θₒ
+    outv, outI, outΔA, outτ, outη = out.v, out.I, out.ΔA, out.τ, out.η
+    outx, outy, outz, outα, outβ, outreflect = out.x, out.y, out.z, out.α, out.β, out.reflect
+    (key0, key1, μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm, useCloudI, κ, useTurbulent,
+        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, τval) = P
     T = eltype(outr)
-    cloudInd = UInt32(p)
+    cloudInd = p % UInt32
     r, ϕ, ϕ₀, i, rot, θ, v, I, ΔA, _, η, x, y, z, reflect = _rt_build_cloud_scalar(
         T, key0, key1, cloudInd, μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm,
         useCloudI, κ, useTurbulent, σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ)
@@ -428,16 +442,9 @@ end
 Allocate the device columns on `backend` and run `_rt_build_cloud_kernel!` to draw `nClouds`
 clouds (one thread each) into a [`ModelArrays`](@ref).
 """
-function _build_cloud_modelarrays(nClouds::Int, seed::Integer; μ::Real, β::Real, F::Real, rₛ::Real,
-        θₒ::Real, γ::Real, ξ::Real, i::Real, rescale::Real, ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
-        useCloudI::Bool=false, κ::Real=0.0, useTurbulent::Bool=false, σρᵣ::Real=0.0, σρc::Real=0.0,
-        σΘᵣ::Real=0.0, σΘc::Real=0.0, θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0,
-        τ::Real=0.0, backend=KernelAbstractions.CPU(), T=Float64)
+function _build_cloud_modelarrays(nClouds::Int, seed::Integer; backend=KernelAbstractions.CPU(), T=Float64,
+        kwargs...)
     nClouds > 0 || throw(ArgumentError("nClouds must be positive"))
-    s = seed % UInt64
-    key0 = UInt32(s & 0xffffffff)
-    key1 = UInt32((s >> 32) & 0xffffffff)
-
     n = nClouds
     alloc() = KernelAbstractions.allocate(backend, T, n)
     outr, outϕ, outϕ₀, outi, outrot, outθₒ = alloc(), alloc(), alloc(), alloc(), alloc(), alloc()
@@ -445,16 +452,38 @@ function _build_cloud_modelarrays(nClouds::Int, seed::Integer; μ::Real, β::Rea
     outx, outy, outz, outα, outβ = alloc(), alloc(), alloc(), alloc(), alloc()
     outreflect = KernelAbstractions.allocate(backend, Bool, n)
 
-    kernel! = _rt_build_cloud_kernel!(backend)
-    event = kernel!(outr, outϕ, outϕ₀, outi, outrot, outθₒ, outv, outI, outΔA, outτ, outη,
-        outx, outy, outz, outα, outβ, outreflect, key0, key1, T(μ), T(β), T(F), T(rₛ),
+    ma = ModelArrays{T,typeof(outr),typeof(outreflect)}(outr, outϕ, outϕ₀, outi, outrot, outθₒ,
+        outv, outI, outΔA, outτ, outη, outx, outy, outz, outα, outβ, outreflect)
+    return _fill_cloud_modelarrays!(ma, seed; backend=backend, kwargs...)
+end
+
+"""
+    _fill_cloud_modelarrays!(ma::ModelArrays, seed; μ, β, F, rₛ, θₒ, γ, ξ, i, rescale,
+        ηₒ, η₁, αRM, rNorm, [physics switches...], backend) -> ma
+
+Run the cloud construction kernel **in place** over the existing columns of `ma` (one thread per
+cloud, `length(ma.r)` clouds), overwriting every column. This is what `_build_cloud_modelarrays` does
+after allocating; fitting loops can call it directly to recycle a pre-allocated `ResidentModel`'s
+columns (`_fill_cloud_modelarrays!(rm.ma, seed; ..., backend=rm.backend)`) — bit-identical to a fresh
+build with the same arguments.
+"""
+function _fill_cloud_modelarrays!(ma::ModelArrays, seed::Integer; μ::Real, β::Real, F::Real, rₛ::Real,
+        θₒ::Real, γ::Real, ξ::Real, i::Real, rescale::Real, ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
+        useCloudI::Bool=false, κ::Real=0.0, useTurbulent::Bool=false, σρᵣ::Real=0.0, σρc::Real=0.0,
+        σΘᵣ::Real=0.0, σΘc::Real=0.0, θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0,
+        τ::Real=0.0, backend=KernelAbstractions.CPU())
+    T = eltype(ma.r)
+    s = seed % UInt64
+    key0 = UInt32(s & 0xffffffff)
+    key1 = UInt32((s >> 32) & 0xffffffff)
+    P = (key0, key1, T(μ), T(β), T(F), T(rₛ),
         T(θₒ), T(γ), T(ξ), T(i), T(rescale), T(ηₒ), T(η₁), T(αRM), T(rNorm),
         useCloudI, T(κ), useTurbulent, T(σρᵣ), T(σρc), T(σΘᵣ), T(σΘc), T(θₑ),
-        T(fEllipse), T(fFlow), T(σₜ), T(τ); ndrange=n)
+        T(fEllipse), T(fFlow), T(σₜ), T(τ))
+    kernel! = _rt_build_cloud_kernel!(backend)
+    event = kernel!(ma, P; ndrange=length(ma.r))
     event !== nothing && wait(event)
-
-    return ModelArrays{T,typeof(outr),typeof(outreflect)}(outr, outϕ, outϕ₀, outi, outrot, outθₒ,
-        outv, outI, outΔA, outτ, outη, outx, outy, outz, outα, outβ, outreflect)
+    return ma
 end
 
 """
@@ -465,7 +494,7 @@ end
 Build a Pancoast-style cloud model **directly on `backend`** as a device-resident
 [`ResidentModel`](@ref) — the on-device counterpart of `cloudModel(nClouds; rng=:philox, seed=…)`.
 Each cloud is drawn from an independent counter-based (Philox4x32) substream keyed by `(seed, cloud
-index)`, so the realization is deterministic, seed-reproducible, and identical across CPU/CUDA backends.
+index)`, so the realization is deterministic, seed-reproducible, and identical across CPU/CUDA/Metal backends.
 
 !!! note "Not bit-identical to the host"
     The host `Gamma` radius draw uses Distributions.jl's rejection sampler, which cannot be reproduced
@@ -492,6 +521,7 @@ function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Rea
         θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0, τ::Real=0.0,
         backend=KernelAbstractions.CPU(), T=Float64)
     T <: Real || throw(ArgumentError("element type T must be <: Real, got $T"))
+    _check_gpu_eltype(backend, T)
     intensity in (:isotropic, :cloud) ||
         throw(ArgumentError("intensity must be :isotropic or :cloud, got :$intensity"))
     velocity in (:circular, :turbulent) ||
@@ -505,9 +535,13 @@ function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Rea
 end
 
 """
-    gpuCloudModel(nClouds, seed; T=Float32, kwargs...) -> ResidentModel
+    gpuCloudModel(nClouds, seed; backend=defaultGPUBackend(), T=Float32, kwargs...) -> ResidentModel
 
-Build a cloud model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the CUDA
-counterpart of [`residentCloudModel`](@ref), defaulting to `Float32`. Requires CUDA.jl loaded.
+Build a cloud model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the GPU
+counterpart of [`residentCloudModel`](@ref), defaulting to `Float32`. Requires a GPU extension
+(`using CUDA` or `using Metal`); the device is chosen by [`defaultGPUBackend`](@ref) unless `backend`
+is given. The Philox substreams are integer-exact, so the same `seed` draws the same uniforms on every
+backend.
 """
-function gpuCloudModel end
+gpuCloudModel(nClouds::Int, seed::Integer; backend=defaultGPUBackend(), T=Float32, kwargs...) =
+    residentCloudModel(nClouds, seed; backend=backend, T=T, kwargs...)
