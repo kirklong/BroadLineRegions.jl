@@ -12,7 +12,7 @@ Pkg.add("BroadLineRegions")
 Or install from the GitHub repo directly:
 ```julia
 using Pkg
-Pkg.add("https://github.com/kirklong/BroadLineRegions.jl")
+Pkg.add(url="https://github.com/kirklong/BroadLineRegions.jl")
 ```
 ### Python
 To access `BroadLineRegions.jl` from within your Python installation, first you must install [`JuliaCall`](https://juliapy.github.io/PythonCall.jl/stable/juliacall/).
@@ -49,6 +49,7 @@ Models can be combined simply by writing `mCombined = m1 + m2`.
 
 Generate profiles (i.e. line, phase, delay, or whatever else your heart desires) for models with syntax like:
 ```julia
+m = mDisk #or mClouds, mCustom, or however you have set up your model
 p = BLR.getProfile(m,:line) #generate line profile with default parameters
 BLR.setProfile!(m,p) #optinally store the profile in model data structure 
 ```
