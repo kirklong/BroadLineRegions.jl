@@ -34,8 +34,7 @@ Adapt.@adapt_structure ModelArrays
 _flatten_length(m::model) = sum(r -> length(r.I), m.rings)
 
 # Populate every ring's cached 3D (x,y,z) so that `expandPerPoint(m, :x/:y/:z)` can read them.
-# getXYZ is a no-op when the cache is already filled (W1 stores it at construction) and otherwise
-# computes it once via rotate3D, matching the plan's "x,y,z from W1 storage or rotate3D per point".
+# getXYZ is a no-op when the cache is already filled and otherwise computes it once via rotate3D.
 function _ensure_xyz!(m::model)
     for r in m.rings
         getXYZ(r)
@@ -104,7 +103,7 @@ struct ResidentModel{MA<:ModelArrays,B,RT}
     rt::RT
 end
 
-# Back-compat: a handle without raytrace metadata (every existing call site builds one this way).
+# Back-compat: a handle without raytrace metadata 
 ResidentModel(ma::ModelArrays, backend, nSubModels::Int) = ResidentModel(ma, backend, nSubModels, nothing)
 
 """

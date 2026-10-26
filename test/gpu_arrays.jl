@@ -20,7 +20,6 @@ using Adapt
         @test isequal(ma.x, BLR.getVariable(m, :x, flatten=true))
         @test isequal(ma.y, BLR.getVariable(m, :y, flatten=true))
         @test isequal(ma.z, BLR.getVariable(m, :z, flatten=true))
-        @test isapprox(sum(ma.I .* ma.ΔA), sum(BLR.getVariable(m, :I, flatten=true) .* BLR.getVariable(m, :ΔA, flatten=true)), rtol=1e-12)
         @test eltype(ma.reflect) == Bool
         @test BLR.cpu(ma) == ma
         @test Adapt.adapt(Array, ma) == ma

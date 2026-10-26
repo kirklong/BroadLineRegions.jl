@@ -103,8 +103,7 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
     end
     vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #local (radial, tangential) components: radial along x, tangential along y at ϕ₀ = 0
     #rotate into the ring plane. The tangential (vy) term needs the CCW sign (+vy cos ϕ₀ in the 2nd
-    #component, vs the old -vy cos ϕ₀) so the projected rotation sense survives the per-cloud `rot` and
-    #matches the disk; the radial (vx) terms are unchanged so the inflow/outflow convention is preserved
+    #component); the radial (vx) terms are unchanged so the inflow/outflow convention is preserved
     #(near-side inflow ⟹ redshift, as in vCircularRadialDisk). Reduces to the corrected vCircularCloud
     #tangent in the circular limit (Θ = π/2 ⟹ (-sin ϕ₀, +cos ϕ₀)*vc).
     vXYZ = rotate3D_vector_scalar(-(vx*cos(ϕ₀)+vy*sin(ϕ₀)), vy*cos(ϕ₀)-vx*sin(ϕ₀), 0.0, i, rot, θₒ, reflect)

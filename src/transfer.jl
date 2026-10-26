@@ -31,7 +31,7 @@ function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
     delays = getVariable(m,t) #pass t itself (not a closure) so the result is memoized in m.cache
     Ψ = zeros(length(vEdges)-1,length(tEdges)-1)
     ΨAccumulate!(Ψ, v, delays, I, ΔA, vec(vEdges), vec(tEdges))
-    @. Ψ = ifelse(Ψ > 0, Ψ, 1e-30) #empty (or NaN-poisoned) bins floored, exactly as the old per-bin `s > 0 ? s : 1e-30`
+    @. Ψ = ifelse(Ψ > 0, Ψ, 1e-30) #empty (or NaN-poisoned) bins floored
     return Ψ
 end
 
@@ -97,7 +97,7 @@ function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
     delays = getVariable(m,t)
     Ψt = zeros(length(tEdges)-1)
     sUnder, sOver = ΨtAccumulate!(Ψt, delays, I, ΔA, vec(tEdges))
-    @. Ψt = ifelse(Ψt > 0, Ψt, 1e-30) #empty (or NaN-poisoned) bins floored BEFORE overflow is added, as before
+    @. Ψt = ifelse(Ψt > 0, Ψt, 1e-30) #empty (or NaN-poisoned) bins floored BEFORE overflow is added
     if overflow
         Ψt[1] += sUnder > 0 ? sUnder : 1e-30 #note: adds 1e-30 even when nothing under/overflowed -- pre-existing behavior, kept
         Ψt[end] += sOver > 0 ? sOver : 1e-30

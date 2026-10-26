@@ -403,9 +403,7 @@ function getVariableFunction(m::model,variable::Function;flatten=false) #uncache
         try
             if variable == t
                 #combined models can mix flat and lifted/reflected submodels: use the general geometric
-                #delay (r - x via cached xyz) for every point -- exact for flat rings too (≡ tDisk to
-                #rounding), and correct for clouds where the old once-from-rings[1] resolution applied
-                #the flat-disk formula to lifted points (or errored if a cloud submodel came first)
+                #delay (r - x via cached xyz) for every point -- exact for flat rings too (≡ tDisk to rounding error)
                 variable = tCloud
             end
             startInds = m.subModelStartInds
@@ -419,7 +417,7 @@ function getVariableFunction(m::model,variable::Function;flatten=false) #uncache
             end
             res = Array{Float64}(undef,l) #preallocate array
             for (i,chunk) in enumerate(chunks)
-                startInd = i == 1 ? 1 : sum(sum(length,chunks[ii]) for ii in 1:(i-1))+1 #cumulative offsets (same as the Symbol method) -- the old per-chunk-size arithmetic was wrong for >2 submodels
+                startInd = i == 1 ? 1 : sum(sum(length,chunks[ii]) for ii in 1:(i-1))+1 #cumulative offsets (same as the Symbol method) 
                 endInd = i == length(chunks) ? l : sum(sum(length,chunks[ii]) for ii in 1:(i))
                 if typeof(chunk) == Vector{Vector{Float64}} #if chunk is 2D
                     res[startInd:endInd] = vec(stack(chunk,dims=1))
@@ -922,7 +920,7 @@ Plot line profiles, normalized to the maximum value of each profile.
   yourself and plot the returned struct.
 - `rcm::ResidentCompositeModel`: same as the `CompositeModel` case (one normalized series per line),
   except each line's profile is computed on its device-resident columns via
-  `getProfile(rcm, name; line=...)` (W4-G3), with the resident restrictions (uniform bins, no custom
+  `getProfile(rcm, name; line=...)`, with the resident restrictions (uniform bins, no custom
   `Function` profiles).
 - `p::profile`: plots a single bare `profile` struct directly (`binCenters` vs `binSums`, unnormalized).
   Needed so Workstream 5's `:ratio` profile (also a plain `profile` struct) is directly plottable.
@@ -966,15 +964,15 @@ Plot line profiles, normalized to the maximum value of each profile.
         end
     elseif m isa CompositeModel || m isa ResidentCompositeModel
         # one series per line, of the requested profile `name` (default :line) vs velocity -- computed
-        # on demand via the composite forwarding `getProfile` (CompositeModel: composite.jl, W4-T4;
-        # ResidentCompositeModel: gpu_observables.jl, W4-G3 -- per-line device kernels), normalized per
+        # on demand via the composite forwarding `getProfile` (CompositeModel: composite.jl;
+        # ResidentCompositeModel: gpu_observables.jl, per-line device kernels), normalized per
         # line by its own max |binSums| (the "multiple profiles" convention below).
         name = variable === nothing ? :line :
             (variable isa AbstractVector ? error("profile(cm, name): a composite model plots one profile " *
                 "`name` across all its lines -- got a list $variable, expected a single Symbol/String") :
              Symbol(variable))
         if name === :ratio
-            #W5 follow-up (adversarial review 2026-07-06): :ratio is the one profile name the per-line
+            #:ratio is the one profile name the per-line
             #loop below cannot compute (it needs a PAIR of lines, not `line`), so forward the recipe's
             #positional lines pair and render the single ratio series exactly as the bare-`profile`
             #branch above does (unnormalized -- the ratio's absolute scale is the point).

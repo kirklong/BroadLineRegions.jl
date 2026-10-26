@@ -135,7 +135,7 @@ end
              from::String=cm.lines[1], overrides...) -> cm
 
 Add a new line by **parameter reuse**: [`rebuild`](@ref) the recorded construction
-parameters (`model.params`, see the `model` docstring and Workstream 4-T1) of the
+parameters (`model.params`, see the `model` docstring) of the
 `from` line, merged with `overrides`, and register the result under `line`. Because
 `rebuild` handles nested `:+`/`:raytrace!` records, this works for combined and
 raytraced `from` lines too -- `overrides` broadcast to **every** leaf submodel that
@@ -198,11 +198,7 @@ function addLine!(cm::CompositeModel; line::String, lineCenter::Float64, fluxRat
     return addLine!(cm, m; line=line, lineCenter=lineCenter, fluxRatio=fluxRatio)
 end
 
-#=============================== W4-T4: per-line forwarding API ===============================#
-# Thin wrappers: no logic changes inside the wrapped functions -- each forwards to the per-line
-# `model` method after resolving `line`. The wrapped functions (getProfile, getVariable, setProfile!,
-# reset!, removeNaN!, raytrace!) all live earlier in the load order (util.jl/profiles.jl) or are
-# generic functions extended later (raytrace.jl); these bodies resolve them at call time.
+_isRatioName(name) = name === :ratio || (name isa AbstractString && name == "ratio")
 
 """
     getProfile(cm::CompositeModel, name; line=nothing, lines=nothing, kwargs...) -> profile
@@ -216,7 +212,7 @@ Julia cannot dispatch on keywords, so this is a *single* method covering the who
   `lines::Tuple{String,String}` keyword instead of `line`.
 - every other `name` requires the `line` keyword and forwards to the per-line `model` method.
 
-# `:ratio` -- velocity-resolved line ratio (Workstream 5)
+# `:ratio` -- velocity-resolved line ratio 
 
     getProfile(cm, :ratio; lines=(a, b), bins=100, floor=0.0,
                minX=nothing, maxX=nothing, centered=false, overflow=nothing) -> profile
@@ -261,11 +257,6 @@ binned flux (an SNR-like guard for sparse cloud models, off by default), are set
   *unconvolved* binned profiles; to match LSF-matched data (the paper convolves the narrower line to
   the broader one's LSF before dividing), bin each line separately, convolve, and divide yourself.
 """
-#the :ratio gate must accept the String spelling too -- the public `name` signature is
-#Union{String,Symbol,Function} and every other profile name works in both forms (Codex adversarial
-#review 2026-07-06). Shared by the host and resident composite getProfile methods.
-_isRatioName(name) = name === :ratio || (name isa AbstractString && name == "ratio")
-
 function getProfile(cm::CompositeModel, name::Union{String,Symbol,Function};
         line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
     if _isRatioName(name)
@@ -283,10 +274,6 @@ function getProfile(cm::CompositeModel, name::Union{String,Symbol,Function};
     return getProfile(cm[line], name; kwargs...)
 end
 
-#W5-T1 implementation of the :ratio branch above (all user-facing documentation lives on getProfile).
-#Mirrors getSpectrum's structure: per-side range fill from _finiteVRange, the same overflow default
-#rule, integer `bins` + shared minX/maxX (bit-identical deterministic edges, direct-index fast path)
-#or a user edge vector passed straight through.
 function _ratioProfile(cm::CompositeModel, lines::Tuple{String,String};
         bins::Union{Int,Vector{Float64}}=100, floor::Real=0.0,
         minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
@@ -335,9 +322,6 @@ function _ratioProfile(cm::CompositeModel, lines::Tuple{String,String};
     return profile(name=Symbol(a, "/", b), binCenters=centers, binEdges=edges, binSums=_ratioDivide(num, den, floor))
 end
 
-#shared num/den division for the :ratio profile -- used by both the host path above and the resident
-#path (gpu_observables.jl, W5-G1; num/den are small host vectors on both), so the NaN/floor semantics
-#cannot drift between them. Empty (0.0) or below-floor denominator bins become NaN, never Inf.
 function _ratioDivide(num::Vector{Float64}, den::Vector{Float64}, floor::Real)
     #NaN-proof floor threshold: `floor` times a finite-only maximum of den. den comes straight from
     #the binned sums (zero-initialized, accumulate only finite values) so it is in fact always finite,
@@ -369,7 +353,7 @@ is exactly `cm.fluxRatios[a] / cm.fluxRatios[b]` -- the constant that the veloci
 identical-geometry case). Errors (listing the known lines) if either name is not registered.
 
 A [`ResidentCompositeModel`](@ref) is supported through the same shared implementation (the
-`::ResidentCompositeModel` method lives with its resident siblings in `gpu_observables.jl`, W5-G1) --
+`::ResidentCompositeModel` method lives with its resident siblings in `gpu_observables.jl`) --
 `fluxRatios` is host metadata on both, so the two methods are identical.
 """
 function lineRatio(cm::CompositeModel, a::String, b::String)
@@ -457,8 +441,7 @@ end
     _fluxWeights(cm::CompositeModel) -> Dict{String,Float64}
 
 Internal helper: per-line multiplicative weight `fluxRatios[line] / totalFlux(line)` that renormalizes
-each line's binned profile to unit integral before scaling by its `fluxRatio` -- the integrated-flux
-semantics of decision 3. `totalFlux(line) = Σ I[k]*ΔA[k]` over points where
+each line's binned profile to unit integral before scaling by its `fluxRatio`. `totalFlux(line) = Σ I[k]*ΔA[k]` over points where
 `isfinite(v[k]) && isfinite(I[k]*ΔA[k])` -- **both** conditions, matching exactly what `binAccumulate!`
 counts (finite-`I`/NaN-position points occur in practice, so finite-`I` alone is not enough).
 
@@ -496,12 +479,10 @@ function _fluxWeights(cm::CompositeModel)
     return weights
 end
 
-#=========================== W4-T5: wavelength utilities + overlap check ===========================#
-
 """
     wavelength(v, lineCenter) -> λ
 
-First-order velocity→wavelength map `λ = lineCenter * (1 + v)` (decision 4), with `v` the stored
+First-order velocity→wavelength map `λ = lineCenter * (1 + v)`, with `v` the stored
 line-of-sight velocity in units of c. Works for scalar or vector `v` (broadcasts). Stored `v` is
 **redshift-positive** (positive v = receding), so `(1 + v)` is the correct sign -- do not re-derive it.
 """
@@ -511,9 +492,9 @@ wavelength(v, lineCenter) = lineCenter .* (1.0 .+ v)
     _finiteVRange(m::model) -> (vmin, vmax)
 
 Internal helper: **the** definition of a line's velocity range -- the min/max of `v` over points where
-`isfinite(v) && isfinite(I*ΔA)` (the W4-T4 finiteness rule; finite-`I` alone would let a NaN `v` poison
+`isfinite(v) && isfinite(I*ΔA)` (finite-`I` alone would let a NaN `v` poison
 the range). Single non-allocating pass over the memoized flattened `v`/`I`/`ΔA` gathers. Shared by
-[`lineOverlap`](@ref), [`getSpectrum`](@ref) (and Workstream 5) so the three cannot disagree.
+[`lineOverlap`](@ref), [`getSpectrum`](@ref) so the three cannot disagree.
 
 Returns `(NaN, NaN)` when the model has **no** finite points; callers treat that as "this line
 contributes no range" (skip it).
@@ -542,7 +523,7 @@ intersect yields an entry `(lineA, lineB, λlo, λhi)` (the overlap interval `[�
 vector means no lines overlap. Lines with no finite points (`_finiteVRange` = `NaN`) are skipped.
 
 A [`ResidentCompositeModel`](@ref) is supported through the same shared implementation (the
-`::ResidentCompositeModel` method lives with its resident siblings in `gpu_observables.jl`, W4-G3);
+`::ResidentCompositeModel` method lives with its resident siblings in `gpu_observables.jl`);
 the only difference is that each line's velocity range then comes from the device reductions of
 `_finiteVRange(::ResidentModel)` instead of the host gathers.
 """
@@ -575,8 +556,6 @@ function _lineOverlap(cm)
     return result
 end
 
-#================================= W4-T6: combined spectrum =================================#
-
 """
     getSpectrum(cm::CompositeModel; bins=100, z=0.0, kwargs...)
         -> (edges, centers, flux::Dict{String,Vector{Float64}}, total::Vector{Float64})
@@ -585,7 +564,7 @@ Combined wavelength-space spectrum of all lines. Each line's flattened points ar
 `wavelength(v, lineCenter)*(1+z)` weighted by `I*ΔA*_fluxWeights(cm)[line]`, over a **shared**
 wavelength grid spanning every line's finite range (from [`_finiteVRange`](@ref)) times `(1+z)`.
 `total` is the elementwise sum of the per-line vectors. With the unit-integral weighting, `sum(flux[line])`
-equals `fluxRatios[line]` (decision 3).
+equals `fluxRatios[line]`.
 
 # Arguments
 - `bins::Union{Int,Vector{Float64}}=100`: bin count, or an explicit edge vector (passthrough as in
@@ -660,18 +639,6 @@ function getSpectrum(cm::CompositeModel; bins::Union{Int,Vector{Float64}}=100, z
     return (edges, centers, flux, total)
 end
 
-#================================= W4-T7: visualization =================================#
-# Include-order note: src/BroadLineRegions.jl includes util.jl (position 2) long before composite.jl
-# (position after operators.jl) -- any top-level method *signature* annotated `::CompositeModel` would
-# UndefVarError there, since the type doesn't exist yet at parse time. `@userplot Profile`'s CompositeModel
-# support therefore lives as a runtime `isa CompositeModel` branch INSIDE that recipe's body (util.jl,
-# fine because the name resolves when the recipe is actually applied, long after the module has finished
-# loading) -- see the `profile`/`Profile` docstring there. Everything below needs a `::CompositeModel`
-# signature (or calls composite-only helpers like `getSpectrum`/`lineOverlap`), so it lives here instead.
-# `Plots`/`RecipesBase` (and their `@recipe`/`@userplot` macros) are already in scope module-wide from
-# util.jl's `using Plots, RecipesBase` (position 2) by the time this file is included -- no include-order
-# change needed for that part.
-
 """
     spectrum(cm::CompositeModel; z=0.0, bins=100, kwargs...)
     spectrum(rcm::ResidentCompositeModel; z=0.0, bins=100, kwargs...)
@@ -680,7 +647,7 @@ Combined wavelength-space spectrum plot: one series per line plus a black `"tota
 [`getSpectrum`](@ref)), with pairwise line overlaps ([`lineOverlap`](@ref)) shaded as gray bands behind
 the curves.
 
-A [`ResidentCompositeModel`](@ref) works through the same recipe body with no extra branch (W4-G3):
+A [`ResidentCompositeModel`](@ref) works through the same recipe body with no extra branch:
 `getSpectrum` and `lineOverlap` resolve at call time and dispatch to the resident methods
 (`gpu_observables.jl`), which run the per-line reductions/binning on the device. The resident
 `getSpectrum` restrictions apply (a user-supplied `bins` edge vector must be uniform).
@@ -708,7 +675,7 @@ the bands line up with the (possibly redshifted) spectrum.
         ymin = min(0.0, minimum(total))
         ymax = 1.05*maximum(total)
         for ov in overlaps
-            lo = ov.λlo*(1.0+z); hi = ov.λhi*(1.0+z) #rest-frame -> observed frame (decision 4/W4-T5)
+            lo = ov.λlo*(1.0+z); hi = ov.λhi*(1.0+z) #rest-frame -> observed-frame
             @series begin
                 subplot := 1
                 seriestype := :shape
@@ -820,15 +787,6 @@ function _plot3d_composite(cm, args...; kwargs...)
     return p
 end
 
-#===================== W4-G1: device-resident composite (gpu/resident forwarding) =====================#
-# Include-order note: `ResidentCompositeModel` (and the per-model `resident`/`gpu` entry points) live in
-# src/gpu_arrays.jl, which is included BEFORE this file -- but the `::CompositeModel` method signatures
-# below cannot live there, because gpu_arrays.jl is parsed before the CompositeModel type exists (same
-# rule as W4-T7's recipe placement). Both types are defined by the time this file is included, so the
-# delegating methods go here. `gpu(::model)` lives in src/gpu_arrays.jl and resolves its device via
-# `defaultGPUBackend()` (hooks supplied by the CUDA/Metal package extensions) -- without a GPU
-# extension loaded that call errors, per line.
-
 """
     resident(cm::CompositeModel; T=Float64, backend=KernelAbstractions.CPU(), raytrace=false)
         -> ResidentCompositeModel
@@ -857,15 +815,6 @@ function gpu(cm::CompositeModel; backend=defaultGPUBackend(), kwargs...)
     models = Dict{String,ResidentModel}(line => gpu(cm.models[line]; backend=backend, kwargs...) for line in cm.lines)
     return ResidentCompositeModel(copy(cm.lines), models, copy(cm.lineCenters), copy(cm.fluxRatios))
 end
-
-#===================== W4-G3: resident composite recipe forwarding (image/plot3d) =====================#
-# These mirror the `::CompositeModel` visualization forwarding above (W4-T7) one-for-one, so they live
-# next to those siblings; the per-line calls land on the existing ResidentModel recipe paths (host
-# copies of the device columns, see gpu_arrays.jl). The `getProfile`/`lineOverlap` resident-composite
-# forwarding lives with ITS resident siblings in gpu_observables.jl (W4-G2/G3), same split as the CPU
-# phase: recipes/forwarding here, observables there. The `spectrum` and `profile` recipes need no new
-# methods at all -- their bodies resolve `getSpectrum`/`lineOverlap`/`getProfile` at call time, which
-# dispatch to the resident methods (see the runtime-branch notes on each recipe).
 
 """
     image(rcm::ResidentCompositeModel, [variable]; line::String, kwargs...)

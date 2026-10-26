@@ -1,6 +1,6 @@
 using StableRNGs: StableRNG
 
-@testset "raytrace Phase A combiner" begin
+@testset "raytrace combiner" begin
     disk(; r1=300.0, r2=900.0, nr=8, nϕ=16, inc=0.4, τ=0.4) =
         BLR.DiskWindModel(r1, r2, inc, nr=nr, nϕ=nϕ, scale=:linear,
             I=BLR.IsotropicIntensity, v=BLR.vCircularDisk, τ=τ, reflect=false)
@@ -17,44 +17,24 @@ using StableRNGs: StableRNG
         (rt=rt, I=I, ΔA=ΔA, flux=sum(I .* ΔA), line=LP.binSums)
     end
 
-    # ------------------------------------------------------------------
-    # (1) EQUIVALENCE to the pre-rewrite raytrace!.
-    # The continuous-model values below were captured by running the original
-    # raytrace! on origin/main (pre-rewrite, commit a96fba6). Cloud-model
-    # baselines use StableRNG so the sampled fixture is identical across Julia
-    # versions; those values pin the corrected rewrite's observable behaviour.
-    # (rtol 1e-8 absorbs floating-point re-association from the new order of
-    # summation; old vs new agree to ~1e-13 in practice.)
-    # ------------------------------------------------------------------
-    # Historical provenance: with the former MersenneTwister fixture, the
-    # pre-rewrite raytrace! on origin/main gave
-    #   flux = 2.0391087024702898e6
-    #   line = [50951.8414, 228718.8705, 356006.2909, 246949.2266, 263973.4663,
-    #           1.0, 303694.1658, 357323.0208, 196441.9867, 35047.8335, 1.0]
-    # The rewrite reproduced those exactly before the obscuredFrac fix. The
-    # StableRNG baseline below exercises the corrected partial-obscuration path
-    # with a cloud realization that is stable across supported Julia versions.
+    # Continuous-model baselines derive from raytrace! at commit a96fba6, with
+    # partial obscuration accounted for. StableRNG keeps cloud fixtures identical
+    # across Julia versions. Profile tolerances allow floating-point reassociation.
     sDC = raytrace_summary(disk() + clouds(80, 101), τCutOff=1.0)
     @test !any(isnan, sDC.I)
     @test isapprox(sDC.flux, 2.0579449066647638e6, rtol=1e-9)
-    # sDC.line regenerated after the cloud tangential-velocity sign correction in
-    # velocity.jl (vCircularCloud/vCloudTurbulentEllipticalFlow now use the proper
-    # CCW orbital tangent). Cloud positions/intensities are unchanged, so flux above
-    # is identical; only the velocity-binned line profile shifts.
+    # The cloud-profile baseline uses the CCW orbital tangent in
+    # vCircularCloud/vCloudTurbulentEllipticalFlow.
     @test all(isapprox.(sDC.line,
         [12788.5143410726, 114441.91252453177, 332069.3055598979,
          189578.46476604807, 246954.69609633373, 266290.68656407285,
          151530.12725557524, 202676.7106953462, 306816.39818805375,
          180537.36862948653, 54260.72204434513], rtol=1e-8))
 
-    # Two overlapping continuous disks, uniform weights. origin/main handled a
-    # single overlap pair through its main loop (only length(overlaps) > 1 hit
-    # the broken recursive branch); the new unified combiner reproduces it.
+    # Two overlapping continuous disks with uniform weights.
     ddOverlap = raytrace_summary(disk(r1=250.0, r2=700.0, nr=6, nϕ=12) +
                                  disk(r1=500.0, r2=1000.0, nr=6, nϕ=12);
                                  IRatios=[1.0, 1.0], τCutOff=1.0)
-    # origin/main pre-fix: flux=3.1843276387323737e6; the rewrite matched it exactly
-    # before the obscuredFrac fix. Values below = origin/main + obscuredFrac fix.
     @test !any(isnan, ddOverlap.I)
     @test isapprox(ddOverlap.flux, 3.1808156444130e6, rtol=1e-9)
     @test all(isapprox.(ddOverlap.line,
@@ -63,54 +43,38 @@ using StableRNGs: StableRNG
          189400.88227433746, 304022.78831852623, 632870.6737718652,
          170891.15213961044, 15948.1628068452], rtol=1e-7))
 
-    # ------------------------------------------------------------------
-    # (2) NEW CAPABILITIES — origin/main THROWS on these (so no golden
-    # exists; values here are a forward regression baseline of the rewrite,
-    # not an equivalence claim).
-    # ------------------------------------------------------------------
-    # Order independence. origin/main threw `setindex!(::Float64, ...)` when a
-    # discrete (cloud) submodel came first; the rewrite is order-independent.
+    # Mixed disk/cloud results are independent of submodel order.
     sCD = raytrace_summary(clouds(80, 101) + disk(), τCutOff=1.0)
     @test all(isapprox.(sCD.line, sDC.line, rtol=1e-12))
     @test isapprox(sCD.flux, sDC.flux, rtol=1e-12)
 
-    # One disk + TWO independent cloud submodels. origin/main threw the same
-    # setindex! error (its main loop assumes scalar fields stay scalar). The
-    # single scan core handles >2 contributors per sightline.
+    # One disk and two independent cloud submodels exercise multiple contributors
+    # per sightline. Flux values here and below are combiner regression baselines.
     s3 = raytrace_summary(disk() + clouds(60, 102) + clouds(40, 103, μ=850.0), τCutOff=1.0)
     @test !any(isnan, s3.I)
     @test isfinite(s3.flux)
-    @test isapprox(s3.flux, 2.0579620075784149e6, rtol=1e-8)  # rewrite baseline (origin/main throws on disk+2cloud)
+    @test isapprox(s3.flux, 2.0579620075784149e6, rtol=1e-8)
 
-    # THREE overlapping continuous disks (a chain). This is the case that hit the
-    # old `length(overlaps) > 1` recursive branch, where origin/main threw
-    # `non-boolean (Int64) used in boolean context` (the `endInd = i = length(...)`
-    # `=` vs `==` bugs, raytrace.jl:674/687). The unified output-grid build
-    # (innermost-first, overlaps resolved iteratively) replaces that recursion.
+    # Three overlapping continuous disks form a chain; overlaps are resolved
+    # iteratively while building the output grid innermost-first.
     s3disk = raytrace_summary(disk(r1=250.0, r2=700.0, nr=6, nϕ=12) +
                               disk(r1=500.0, r2=1000.0, nr=6, nϕ=12) +
                               disk(r1=800.0, r2=1400.0, nr=6, nϕ=12);
                               IRatios=[1.0, 1.0, 1.0], τCutOff=1.0)
     @test !any(isnan, s3disk.I)
     @test length(s3disk.I) == length(s3disk.rt.camera.α)
-    @test isapprox(s3disk.flux, 6.7772238771869e6, rtol=1e-8)  # rewrite baseline (origin/main throws)
+    @test isapprox(s3disk.flux, 6.7772238771869e6, rtol=1e-8)
 
-    # ------------------------------------------------------------------
-    # (3) IRatios is a GLOBAL per-submodel weight (deliberate change from the
-    # old "relative-to-base" scaling). It must be applied identically to a
-    # component regardless of submodel order, so disk+cloud and cloud+disk
-    # with matched weights are the same physics.
-    # ------------------------------------------------------------------
+    # IRatios is a global per-submodel weight, independent of submodel order.
+    # Disk+cloud and cloud+disk with matched weights describe the same physics.
     sDC2 = raytrace_summary(disk() + clouds(80, 101), IRatios=[1.0, 0.25], τCutOff=1.0)
     sCD2 = raytrace_summary(clouds(80, 101) + disk(), IRatios=[0.25, 1.0], τCutOff=1.0)
     @test all(isapprox.(sDC2.line, sCD2.line, rtol=1e-12))
     @test isapprox(sDC2.flux, sCD2.flux, rtol=1e-12)
 
-    # ------------------------------------------------------------------
-    # (4) Flux conservation under area resampling: a cloud merged into a disk
+    # Flux conservation under area resampling: a cloud merged into a disk
     # pixel contributes the same flux I*ΔA it would alone. Adding one cloud of
     # weighted intensity 0.25 raises the total I*ΔA by exactly 0.25.
-    # ------------------------------------------------------------------
     dFluxModel = disk()
     diskFlux = sum(BLR.getVariable(dFluxModel, :I, flatten=true) .*
                    BLR.getVariable(dFluxModel, :ΔA, flatten=true))
@@ -120,11 +84,9 @@ using StableRNGs: StableRNG
                         BLR.getVariable(diskCloud, :ΔA, flatten=true))
     @test isapprox(diskCloudFlux - diskFlux, 0.25, rtol=1e-8, atol=1e-8)
 
-    # ------------------------------------------------------------------
-    # (5) Free-cloud raytracing is attenuate-don't-merge: a rear cloud is
-    # dimmed by exp(-τ) of the cloud in front but KEEPS its own velocity
+    # Free-cloud raytracing attenuates a rear cloud without merging it: it is
+    # dimmed by exp(-τ) of the cloud in front but keeps its own velocity
     # (no merging into an intensity-weighted-mean point).
-    # ------------------------------------------------------------------
     front = BLR.ring(r=10.0, i=0.0, rot=0.0, θₒ=0.0, v=1.0, I=1.0,
         ϕ=0.0, ϕ₀=0.0, ΔA=Float64(pi), reflect=false, τ=0.6, η=1.0,
         Δr=1.0, Δϕ=1.0, scale=nothing, x=5.0, y=0.0, z=0.0)
@@ -138,26 +100,18 @@ using StableRNGs: StableRNG
     @test isapprox(IFree[findfirst(==(-1.0), vFree)], 2.0 * exp(-0.6), rtol=1e-12)
     @test isapprox(IFree[findfirst(==(1.0), vFree)], 1.0, rtol=1e-12)
 
-    # ------------------------------------------------------------------
-    # (6) Partial obscuration (obscuredFrac > 1), analytic check of the corrected
-    # formula. A small front tile (area 1, τ=0.5) sits in front of a larger rear
-    # tile (area 4) in one sightline. The rear tile is 4× bigger, so 1/4 of it is
+    # Partial obscuration (obscuredFrac > 1): a small front tile (area 1, τ=0.5)
+    # sits in front of a larger rear tile (area 4) in one sightline. The rear tile
+    # is 4× bigger, so 1/4 of it is
     # covered (attenuated by exp(-0.5)) and 3/4 peeks around at full strength:
     #   I = I_front + (exp(-0.5)·1 + 3) = 1 + exp(-0.5) + 3 = 4 + exp(-0.5).
-    # (origin/main computed `tmp_I += weights*unobscured_I` — intensity² — and only
-    # evaluated obscuredFrac once; both fixed here.)
     pf(x, ΔA, τ) = BLR._RaytracePoint(1, 1, 1, 0.0, 0.0, 0.0, 0.0, x, 1.0, 0.0,
         0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ΔA, τ, 1.0, false, false, Inf)
     pts = [pf(10.0, 1.0, 0.5), pf(0.0, 4.0, 0.0)]   # front (small), rear (large)
     res = BLR._rt_scan_bucket(pts, [1, 2], [1.0], 1.0, 1.0)   # outputΔA=1, τCutOff=1
     @test isapprox(res.I, 4.0 + exp(-0.5), rtol=1e-12)
 
-    # ------------------------------------------------------------------
-    # (7) zeroDiskObscuredClouds! / removeDiskObscuredClouds! with >2 submodels.
-    # origin/main threw here (the `length(startInds) > 2` recursion sliced rings
-    # without the camera/subModelStartInds and called zero...! positionally). The
-    # logic classifies rings by type, so it now handles disk + N cloud groups.
-    # ------------------------------------------------------------------
+    # Disk-obscured-cloud filters classify rings by type across multiple cloud groups.
     obsc3() = disk(nr=6, nϕ=12) + clouds(30, 11) + clouds(30, 12, μ=750.0)
     z3 = BLR.zeroDiskObscuredClouds!(obsc3())
     @test !any(isnan, BLR.getVariable(z3, :I, flatten=true))

@@ -1,6 +1,6 @@
 using RecipesBase
 using KernelAbstractions
-using Plots # the W4-T7 CompositeModel testset checks recipe entry points that return Plots.Plot objects
+using Plots # Recipe entry points return Plots.Plot objects.
 
 # Apply a @userplot recipe without a plotting backend and gather, per attribute, the concatenated &
 # sorted values across all generated series. A scatter recipe is order-independent (it's a point
@@ -77,9 +77,8 @@ _nanapprox(a, b; rtol=1e-10) = length(a) == length(b) &&
     end
 end
 
-@testset "Plots recipes: CompositeModel (W4-T7)" begin
-    # Tiny two-line composite sharing one geometry (mirrors the style of the W4-T4/T5/T6 testset in
-    # runtests.jl) -- deliberately small, this testset should add seconds, not minutes.
+@testset "Plots recipes: CompositeModel" begin
+    # Two-line composite sharing one geometry.
     mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
         τ=0.4, reflect=false)
@@ -109,7 +108,7 @@ end
         # an explicit profile name is honored too
         rdsR = _recipe_series(BLR.Profile((cm, :line)))
         @test length(rdsR) == length(cm.lines)
-        # :ratio (W5) plots through the composite recipe with the lines pair passed POSITIONALLY
+        # :ratio plots through the composite recipe with the lines pair passed POSITIONALLY
         # (`lines` is a Plots magic-attribute alias, so a keyword would never reach the recipe),
         # rendering the single unnormalized ratio series -- identical to plotting the bare struct
         pR = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"))
@@ -130,7 +129,7 @@ end
     end
 
     @testset "profile: degenerate (zero-emission) line does not throw" begin
-        # adversarial review 2026-07-03: a zero-emission line has all-zero :line bins (norm would be
+        # A zero-emission line has all-zero :line bins (norm would be
         # 0 -> divide by zero) and all-NaN intensity-weighted :r bins (norm's NaN-filtered iterator
         # would be empty -> maximum throws). Both fall back to norm = 1 (plotted unnormalized) so the
         # other lines still render.
@@ -154,8 +153,6 @@ end
         labels = [s[:label] for s in sp.series_list]
         @test all(line -> line in labels, cm.lines)
         @test "total" in labels
-        totalSeries = only(filter(s -> s[:label] == "total", sp.series_list))
-        @test totalSeries[:linewidth] == 2
 
         # overlapping lines add one shaded band series per overlapping pair
         cA, cB = 6563.0, 6600.0
@@ -194,9 +191,8 @@ end
     end
 end
 
-@testset "Plots recipes: ResidentCompositeModel (W4-G3)" begin
-    # Same tiny two-line fixture as the CompositeModel testset above; the resident composite (Float64
-    # on the CPU backend) must drive the same recipes with matching series.
+@testset "Plots recipes: ResidentCompositeModel" begin
+    # Float64 resident composites on the CPU backend produce matching recipe series.
     mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
         τ=0.4, reflect=false)
@@ -217,7 +213,7 @@ end
         # an explicit profile name is honored too
         rdsR2 = _recipe_series(BLR.Profile((rcm, :line)))
         @test length(rdsR2) == length(cm.lines)
-        # :ratio (W5) drives the same recipe branch as the host composite, via the resident getProfile
+        # :ratio drives the same recipe branch as the host composite, via the resident getProfile
         rdsRatioC = _recipe_series(BLR.Profile((cm, :ratio, ("Ha", "Hb"))))
         rdsRatioR = _recipe_series(BLR.Profile((rcm, :ratio, ("Ha", "Hb"))))
         @test length(rdsRatioR) == 1

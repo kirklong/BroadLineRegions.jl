@@ -22,7 +22,7 @@ BLR._rt_backend_adapt(x, ma::BLR.ModelArrays{T,<:CUDA.CuVector{T}}) where {T<:Re
 # A single sort over the `(key, -depth, index)` tuple makes the order *total* -- the trailing index
 # breaks every tie -- so the result bit-matches the CPU MergeSort reference and does NOT depend on
 # whether CUDA's `sortperm` is stable. Non-finite depth sorts last within its key (matches the CPU
-# `-Inf` sentinel). This also collapses the previous two passes into one sort.
+# `-Inf` sentinel).
 BLR._rt_sortperm_by_key_depth(keys::CUDA.CuVector{Int}, x::CUDA.CuVector) = begin
     depth = ifelse.(isfinite.(x), x, convert(eltype(x), -Inf))
     idx = CUDA.CuArray(collect(1:length(keys)))

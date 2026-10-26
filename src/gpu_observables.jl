@@ -208,7 +208,7 @@ function secondMoment(rm::ResidentModel; returnAvg::Bool=false, offAxisInds::Uni
     end
 end
 
-#================= W4-G2: resident composite flux weights + spectrum =================#
+#================= resident composite flux weights + spectrum =================#
 # Device counterparts of the CompositeModel `_fluxWeights`/`_finiteVRange`/`getSpectrum` helpers in
 # src/composite.jl. Same orchestration shape as the rest of this file: per-line device reductions /
 # binned sums, small results combined on the host. NaN sentinels are handled by the SAME finiteness
@@ -219,7 +219,7 @@ end
     _finiteVRange(rm::ResidentModel) -> (vmin, vmax)
 
 Resident counterpart of `_finiteVRange(::model)`: min/max of the device `v` column over points where
-`isfinite(v) && isfinite(I*ΔA)` (the W4-T4 finiteness rule — finite `I*ΔA` alone would let a NaN `v`
+`isfinite(v) && isfinite(I*ΔA)` (finite `I*ΔA` alone would let a NaN `v`
 poison the range, and vice versa), computed as two device reductions with `±Inf` sentinels in the
 style of `_rt_device_nanmin`/`_rt_device_nanmax`. Returns host `Float64`s; `(NaN, NaN)` when the
 model has **no** finite points, exactly like the host helper.
@@ -337,7 +337,7 @@ function getSpectrum(rcm::ResidentCompositeModel; bins::Union{Int,Vector{Float64
     return (edges, centers, flux, total)
 end
 
-#================= W4-G3: resident composite per-line forwarding =================#
+#================= resident composite per-line forwarding =================#
 
 """
     getProfile(rcm::ResidentCompositeModel, name; line=nothing, lines=nothing, kwargs...) -> profile
@@ -440,7 +440,7 @@ lineRatio(rcm::ResidentCompositeModel, a::String, b::String) = _lineRatio(rcm, a
 
 Resident counterpart of [`lineOverlap`](@ref) with identical pairwise-overlap semantics, via the
 shared `_lineOverlap` implementation (`src/composite.jl`); the only difference is that each line's
-velocity range comes from the device reductions of `_finiteVRange(::ResidentModel)` (W4-G2) instead
+velocity range comes from the device reductions of `_finiteVRange(::ResidentModel)` instead
 of the host gathers. This is also what lets the `spectrum` plot recipe accept a
 [`ResidentCompositeModel`](@ref) with no recipe changes.
 """
