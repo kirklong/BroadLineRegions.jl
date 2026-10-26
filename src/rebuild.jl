@@ -42,6 +42,10 @@ deterministic and cheap to re-run.
 
 `rebuild(m::model; ...)` is a convenience method forwarding to `rebuild(m.params; ...)`; it errors when
 `m.params === nothing` (the model was not built by a public constructor).
+
+Overrides accept the aliases of the recorded constructor and callbacks, including
+`mu=μ`, `alpha=α`, and `r_bar=r̄`. Unicode and ASCII names may be mixed; supplying both
+spellings of one parameter is an error. See [`acceptedKeywords`](@ref) for custom callback validation.
 """
 function rebuild(params::NamedTuple; overrides...)
     params = _canonical_record(params)

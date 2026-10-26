@@ -5,9 +5,9 @@
 Generate a damped random walk continuum lightcurve following [MacLeod+2010](https://iopscience.iop.org/article/10.1088/0004-637X/721/2/1014/pdf)
 # Arguments:
 - `t::Vector{Float64}``: time array that returned lightcurve will be sampled at
-- `μ::Float64`: mean value of random walk
-- `τ::Float64`: characteristic time scale of random walk
-- `σ::Float64`: standard deviation of random walk
+- `μ::Float64`: mean value of random walk, ASCII alias=`mu`.
+- `τ::Float64`: characteristic time scale of random walk, ASCII alias=`tau`.
+- `σ::Float64`: standard deviation of random walk, ASCII alias=`sigma`.
 # Returns:
 - `C::Vector{Float64}`: damped random walk array corresponding to times t
 """

@@ -21,7 +21,7 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
 - `rot`: Rotation of system plane about z-axis in radians
   - `Union{Vector{Float64}, Float64}`
 
-- `θₒ`: Opening angle of ring in radians
+- `θₒ`: Opening angle of ring in radians.
   - `Union{Vector{Float64}, Float64}`
   - Should be between 0 and ``\\pi/2``
 
@@ -33,30 +33,30 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
   - `Union{Vector{Float64}, Float64, Matrix{Float64}, Function}`
   - Can be a function that calculates intensity from other parameters
 
-- `ϕ`: Azimuthal angle in radians
+- `ϕ`: Azimuthal angle in radians.
   - `Union{Vector{Float64}, Float64}`
 
-- `ϕ₀`: Initial azimuthal angle before rotation in radians
+- `ϕ₀`: Initial azimuthal angle before rotation in radians.
   - `Union{Vector{Float64}, Float64}`
   - Defaults to 0.0 if not provided or if `rot` is 0.0
 
-- `ΔA`: Projected area of each ring element in image
+- `ΔA`: Projected area of each ring element in image.
   - `Union{Vector{Float64}, Float64}`
   - Used in calculating profiles
 
 - `reflect`: Whether cloud is reflected across disk mid-plane
   - `Union{Bool, Array{Bool,}}`
 
-- `τ`: Optical depth
+- `τ`: Optical depth.
   - `Union{Vector{Float64}, Float64, Function}`
 
-- `η`: Response parameter for reverberation
+- `η`: Response parameter for reverberation.
   - `Union{Vector{Float64}, Float64, Function}`
 
-- `Δr`: Distance between camera pixels in r
+- `Δr`: Distance between camera pixels in r.
   - `Float64`
 
-- `Δϕ`: Distance between camera pixels in ϕ
+- `Δϕ`: Distance between camera pixels in ϕ.
   - `Float64`
 
 - `scale`: Encoding for camera ring scaling
@@ -77,12 +77,27 @@ ring(; r, i, v, I, ϕ, rot=0.0, θₒ=0.0, ϕ₀=0.0, ΔA=1.0, reflect=false,
 ```
 
 Required parameters:
-- `r`, `i`, `v`, `I`, `ϕ`
+- `r`, `i`, `v`, `I`: See the field descriptions above.
+- `ϕ`: Azimuthal angle, ASCII alias=`phi`.
 
 Optional parameters with defaults:
-- `rot=0.0`, `θₒ=0.0`, `ϕ₀=0.0`, `ΔA=1.0`, `reflect=false`, `τ=0.0`, `η=1.0`, `Δr=1.0`, `Δϕ=1.0`, `scale=nothing`
+- `rot=0.0`, `reflect=false`, `scale=nothing`: See the field descriptions above.
+- `θₒ=0.0`: Opening angle, ASCII alias=`theta_o`.
+- `ϕ₀=0.0`: Initial azimuthal angle, ASCII alias=`phi_0`.
+- `ΔA=1.0`: Projected pixel area, ASCII alias=`delta_a`.
+- `τ=0.0`: Optical depth, ASCII alias=`tau`.
+- `η=1.0`: Response parameter, ASCII alias=`eta`.
+- `Δr=1.0`: Radial pixel spacing, ASCII alias=`delta_r`.
+- `Δϕ=1.0`: Azimuthal pixel spacing, ASCII alias=`delta_phi`.
+- `θₒSystem`: Optional system opening angle supplied to callbacks, ASCII alias=`theta_o_system`.
+- `rₛ`: Optional scale radius supplied to callbacks, ASCII alias=`r_s`.
+
+Aliases apply to constructor keywords; field access uses the Unicode names.
 
 Additional keyword arguments are passed to the `r`, `v`, `I`, and `τ` functions if they are provided as functions.
+
+Additional callback options follow the selected helpers; see [`acceptedKeywords`](@ref) for validation.
+`theta_o` uses the letter o. `θ` and `θ₀` are not opening-angle aliases.
 """
 mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10% performance gain) but have to make only Array fields allowed so that the fields themselves can be mutated (Float64 cannot be changed after initialization, needed for raytracing)
     r::Union{V,F,Function}
@@ -454,6 +469,9 @@ model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, 
 model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
 ```
 - disk-wind model constructor, takes in average radius, radius scaling factor, power law for source function, inclination angle, number of radial and azimuthal bins, and scale for radial binning; returns a model object with rings generated from these parameters
+
+Keyword aliases follow the selected intensity, velocity, and `response` helpers (see their help).
+Positional arguments stay positional. See [`acceptedKeywords`](@ref) for custom callback validation.
 """
 mutable struct model
     #make immutable to see if improves performance cost?
@@ -587,10 +605,19 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 - `rMax::Float64`: Maximum radius of model (in terms of ``r_s``)
 - `i::Float64`: Inclination angle in radians (all rings have the same inclination)
 - `nr::Int=128`: Number of radial bins
-- `nϕ::Int=256`: Number of azimuthal bins
+- `nϕ::Int=256`: Number of azimuthal bins, ASCII alias=`n_phi`.
 - `I::Function=DiskWindIntensity`: Intensity function
 - `v::Function=vCircularDisk`: Velocity function
 - `scale::Symbol=:log`: Radial binning scale (`:log` or `:linear`)
+- `α`: Source-function power-law index, ASCII alias=`alpha`.
+- `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
+- `τ`: Optical depth, ASCII alias=`tau`.
+- `η`: Response override, ASCII alias=`eta`.
+- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 
 # Returns
@@ -598,6 +625,8 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 
 # Note
 Similar to other DiskWind model constructor but must explicitly pass `rMin` and `rMax`.
+
+Additional callback options follow the selected helpers; see [`acceptedKeywords`](@ref) for validation.
 """
 @validated disk function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
     m = model(Val(:unchecked), rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
@@ -618,8 +647,16 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 - `i::Float64`: Inclination angle in radians
 - `rot::Float64=0.0`: Rotation of system plane about z-axis in radians
 - `nr::Int=128`: Number of radial bins
-- `nϕ::Int=256`: Number of azimuthal bins
+- `nϕ::Int=256`: Number of azimuthal bins, ASCII alias=`n_phi`.
 - `scale::Symbol=:log`: Radial binning scale (`:log` or `:linear`)
+- `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
+- `τ`: Optical depth, ASCII alias=`tau`.
+- `η`: Response override, ASCII alias=`eta`.
+- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 - `kwargs...`: Extra keyword arguments for model constructor (see examples)
 
 # Returns
@@ -627,6 +664,8 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 
 # Note
 Similar to another DiskWind model constructor but here we pass `r̄`, `rFac`, and `α`.
+
+Additional callback options follow the selected helpers; see [`acceptedKeywords`](@ref) for validation.
 """
 @validated disk function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, I::Function=DiskWindIntensity, v::Function=vCircularDisk, kwargs...)
     @assert (α != 1/2) && (α != 3/2) "α cannot be 1/2 or 3/2 as this divides by zero"
@@ -651,12 +690,19 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `θₒ::Vector{Float64}`: Opening angle of cloud (rad) 
 - `θₒSystem::Float64`: Maximum opening angle of the system (rad) 
 - `ξ::Float64`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side) 
-- `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``)
-- `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``)
-- `β::Float64=1.0`: Shape parameter for radial distribution
+- `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``), ASCII alias=`mu`.
+- `β::Float64=1.0`: Shape parameter for radial distribution, ASCII alias=`beta`.
 - `F::Float64=0.5`: Beginning radius in units of μ where clouds can be placed. 
 - `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function
 - `v::Union{Function,Float64}=vCircularCloud`: Velocity function
+- `τ`: Optical depth, ASCII alias=`tau`.
+- `η`: Response override, ASCII alias=`eta`.
+- `κ`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
+- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 
 # Returns
@@ -664,6 +710,9 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 
 # Note
 Similar to other `cloudModel` method but here you must explicitly pass `ϕ₀`, `i`, `rot`, and `θₒ`.
+
+Additional callback options follow the selected helpers; see [`acceptedKeywords`](@ref) for validation.
+`theta_o` and θₒ use the letter o (not 0, for opening angle).
 """
 @validated cloud function cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5,
     I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,kwargs...)
@@ -716,19 +765,26 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 
 # Parameters
 - `nClouds::Int64`: Number of clouds
-- `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``)
-- `β::Float64=1.0`: Shape parameter for radial distribution
+- `μ::Float64=500.`: Mean radius of model (in terms of ``r_s``), ASCII alias=`mu`.
+- `β::Float64=1.0`: Shape parameter for radial distribution, ASCII alias=`beta`.
 - `F::Float64=0.5`: Beginning radius in units of μ where clouds can be placed
-- `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``)
-- `θₒ::Float64=π/2`: Maximum opening angle of cloud distribution (rad)
-- `γ::Float64=1.0`: Disk concentration parameter
-- `ξ::Float64=1.0`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side) 
+- `rₛ::Float64=1.0`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `θₒ::Float64=π/2`: Maximum opening angle of cloud distribution (rad), ASCII alias=`theta_o`.
+- `γ::Float64=1.0`: Disk concentration parameter, ASCII alias=`gamma`.
+- `ξ::Float64=1.0`: Fraction of clouds in back side that have not been moved to the front (when ξ = 1.0 clouds equally distributed front - back and when ξ = 0.0 all clouds are on the front side), ASCII alias=`xi`.
 - `i::Float64=0.0`: Inclination angle of system (rad)
 - `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function
 - `v::Union{Function,Float64}=vCircularCloud`: Velocity function
 - `rng::Union{AbstractRNG,Symbol}=Random.GLOBAL_RNG`: Random number generator. The default `AbstractRNG` path preserves the legacy sequential draw order; `rng=:philox` uses independent counter-based per-cloud streams.
 - `seed::Union{Nothing,Integer}=nothing`: Required when `rng=:philox`. For legacy seeded models, pass `rng=MersenneTwister(seed)`.
 - `parallel::Bool=true`: Whether to use threaded cloud generation for the `rng=:philox` path.
+- `τ`: Optical depth, ASCII alias=`tau`.
+- `η`: Response override, ASCII alias=`eta`.
+- `κ`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
+- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 
 # Returns
@@ -737,6 +793,9 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 # Note
 Similar to the other `cloudModel` methods, but here the per-cloud `ϕ₀`, `rot`, and `θₒ` values are drawn
 internally (one independent stream per cloud) while `i` is held constant for the system.
+
+Additional callback options follow the selected helpers; see [`acceptedKeywords`](@ref) for validation.
+`theta_o` and θₒ use the letter o (not 0, for opening angle).
 """
 @validated cloud function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0,
     I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud,

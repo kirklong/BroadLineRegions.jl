@@ -1,6 +1,9 @@
 # Usage and Examples
 
-This guide explores a few more complicated tasks one might wish to use this code for. 
+This guide explores a few more complicated tasks one might wish to use this code for.
+Unicode and ASCII keyword names can be mixed, e.g. `μ=500.0, beta=1.0, theta_o=π/6`;
+see each function's help (`?BLR.cloudModel`) for its aliases. Struct fields keep their Unicode
+names, e.g. `m.camera.α`.
 
 ```@contents
 Pages = ["usage_examples.md"]
@@ -356,6 +359,14 @@ For example, say you wanted to use the [`cloudModel`](@ref BLR.cloudModel) as a 
 myCustomIntensityFunction(;_...) = rand() #note the _... to handle unsupported kwargs that may be passed to your intensity function
 myCloudModel = BLR.cloudModel(100,I=myCustomIntensityFunction) #100 clouds with random intensities using defaults for all other parameters
 ```
+
+For custom callbacks, optionally register extra keywords to enable strict validation (unregistered extras are forwarded with a warning):
+```julia
+myIntensity(; r, gain=1.0, kwargs...) = gain / r
+BLR.acceptedKeywords(::typeof(myIntensity)) = (:gain,)
+BLR.cloudModel(100; I=myIntensity, gain=2.0)
+```
+
 It is possible to pass custom intensity, velocity, response, and optical depth functions to either [`cloudModel`](@ref BLR.cloudModel) or [`DiskWindModel`](@ref BLR.DiskWindModel).
 
 If you already have some precalculated result for any of the above quantities which you would like to use in your model, you can also pass that array to the model constructor so long as it matches the size requirements (i.e. if you have 100 clouds must pass an array of 100 intensities). 

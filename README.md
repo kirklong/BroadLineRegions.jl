@@ -36,7 +36,6 @@ jlPkg.add("BroadLineRegions") #or use the github link
 
 ## Quickstart 
 
-ASCII keyword aliases (for example `mu`, `theta_o`, and `tau`) and optional strict custom-callback registration are described in [Keyword aliases and validation](docs/src/keywords.md).
 While this code is designed to be very flexible and modular such that you can implement your own bespoke models of the BLR easier, two popular models of the BLR are included as default models which one can play with. 
 
 To generate a "cloud" model similar to that of Pancoast+ 2011 and 2014, use syntax like:
@@ -50,6 +49,21 @@ To generate a "disk-wind" model similar to that of Chiang and Murray 1996 and 19
 ```julia
 mDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,nϕ=48,scale=:log,
         f1=1.0,f2=1.0,f3=1.0,f4=1.0,reflect=false,τ=5.)
+```
+
+In case you do not like unicode symbols, spelled out keyword aliases (for example `mu`, `theta_o`, and `tau`) are also available for all parameters (and can be mixed and matched with the unicode symbols), i.e. for the cloud model example above we could also write:
+```julia
+mClouds = BLR.cloudModel(100_000,mu=500.,beta=1.,F=0.5,theta_o=30/180*pi,gamma=1.,xi=1.,i=0.,
+        I=BLR.IsotropicIntensity,v=BLR.vCircularCloud,rescale=1e-5,tau=0.0)
+```
+
+Aliases apply to keyword arguments, not struct fields (use `m.camera.α`, not `m.camera.alpha`).
+
+For custom callbacks, optionally register extra keywords to enable strict validation (unregistered extras are forwarded with a warning):
+```julia
+myIntensity(; r, gain=1.0, kwargs...) = gain / r
+BLR.acceptedKeywords(::typeof(myIntensity)) = (:gain,)
+BLR.cloudModel(100; I=myIntensity, gain=2.0)
 ```
 
 You can of course define fully custom models by passing your own "rings" (on a camera) and optionally any default profiles, a camera struct, and submodel start indices:

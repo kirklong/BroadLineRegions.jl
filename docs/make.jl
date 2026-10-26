@@ -10,7 +10,6 @@ makedocs(
     pages = [
         "Home" => "index.md",
         "Usage and Examples" => "usage_examples.md",
-        "Keyword aliases" => "keywords.md",
         "API" => "api.md",],
     format = Documenter.HTML(
         sidebar_sitename = false,

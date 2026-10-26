@@ -753,7 +753,7 @@ removed. Note that this function will mutate the input model objects.
   - If `Float64`, applies to all submodels equally
   - If array, applies to each submodel individually (must match number of submodels)
   - Used when combining models with different intensity functions if they aren't properly normalized
-- `τCutOff::Float64=1.0`: Maximum optical depth to raytrace to (stops when `τ > τCutOff`)
+- `τCutOff::Float64=1.0`: Maximum optical depth to raytrace to (stops when `τ > τCutOff`), ASCII alias=`tau_cutoff`.
 - `raytraceFreeClouds::Bool=false`: Whether to raytrace free clouds (cloud-cloud raytracing)
   - If `false`, clouds are only raytraced if they overlap with a continuous model
   - If `true`, clouds will be checked for overlap with other clouds and raytraced accordingly

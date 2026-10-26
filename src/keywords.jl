@@ -16,6 +16,16 @@ const _ASCII_KEYWORDS = Dict{Symbol,Symbol}(
 Optional declaration of additional canonical callback keywords. `nothing` (the default)
 means unregistered; `()` registers a callback with no additional options. For example,
 `BLR.acceptedKeywords(::typeof(myIntensity)) = (:gain,)` enables strict checking.
+Unicode and ASCII keyword names may be mixed, but passing both spellings of one parameter
+raises `ArgumentError`. Use canonical Unicode symbols in declarations; shared geometry context
+is supplied separately. Aliases are listed with the parameters in the relevant constructor/helper docstrings.
+Aliases apply only to keyword arguments: struct fields and recorded parameters retain Unicode
+names, e.g. `m.camera.α` and `m.params.μ`; `m.camera.alpha` is not an alias.
+
+Unknown keywords are errors when all selected callbacks are registered. If any callback is
+unregistered, unchecked extras are forwarded to it with one grouped warning; recognized options
+for inactive built-in physics are accepted with an unused-option warning. No warning occurs
+merely because a callback is unregistered. Callback exceptions retain their original details.
 Declarations are authoritative; BLR cannot determine whether callback code uses an option.
 """
 acceptedKeywords(f) = nothing

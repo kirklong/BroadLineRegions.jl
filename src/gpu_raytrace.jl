@@ -291,6 +291,9 @@ end
 """
     raytrace!(rm::ResidentModel; IRatios=1.0, τCutOff=1.0, raytraceFreeClouds=false) -> ResidentModel
 
+# Parameters
+- `τCutOff::Float64=1.0`: Optical-depth cutoff for raytracing, ASCII alias=`tau_cutoff`.
+
 Device-resident dispatch of [`raytrace!`](@ref BLR.raytrace!): run the full bin→sort→segmented-scan→
 compact combine on `rm`'s backend with no host round-trips, returning a freshly raytraced
 [`ResidentModel`](@ref) (drop-in for the observable methods). `rm` must carry raytrace metadata — build

@@ -182,6 +182,10 @@ order, to the newly added line's model.
 - `fluxRatio::Float64=1.0`: this line's flux relative to `cm.lines[1]`. Must be positive.
 - `from::String=cm.lines[1]`: which registered line's params to reuse.
 - `overrides...`: forwarded to `rebuild` (constructor-argument overrides).
+
+Overrides accept the aliases of the recorded constructor and callbacks, including
+`mu=μ`, `alpha=α`, and `r_bar=r̄`. Unicode and ASCII names may be mixed; supplying both
+spellings of one parameter is an error. See [`acceptedKeywords`](@ref) for custom callback validation.
 """
 function addLine!(cm::CompositeModel; line::String, lineCenter::Float64, fluxRatio::Float64=1.0,
         from::String=cm.lines[1], overrides...)
@@ -417,6 +421,9 @@ end
 
 """
     raytrace!(cm::CompositeModel; line=nothing, kwargs...) -> cm
+
+# Parameters
+- `τCutOff`: Optical-depth cutoff for raytracing, ASCII alias=`tau_cutoff`.
 
 Per-line forwarding of [`raytrace!`](@ref). `line=nothing` (the default) raytraces every line; otherwise
 only the named line.
