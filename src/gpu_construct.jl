@@ -161,6 +161,17 @@ end
         f1, f2, f3, f4, α, ηₒ=0.5, η₁=0.5, αRM=0.0, rNorm=1.0, rₛ=1.0,
         intensity=nothing, velocity=nothing, backend=KernelAbstractions.CPU(), T=Float64) -> ResidentModel
 
+# Parameters
+- `nϕ::Int=256`: Number of azimuthal bins, ASCII alias=`n_phi`.
+- `α::Real=NaN`: Source-function power-law index, ASCII alias=`alpha`.
+- `θₒ::Real=0.0`: Opening angle, in radians, ASCII alias=`theta_o`.
+- `rₛ::Real=1.0`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `vᵣFrac::Real=0.0`: Radial velocity fraction, ASCII alias=`v_r_frac`.
+- `τ::Real=0.0`: Optical depth, ASCII alias=`tau`.
+- `ηₒ::Real=0.5`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁::Real=0.5`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM::Real=0.0`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 Build a DiskWind model **directly on `backend`** as a device-resident [`ResidentModel`](@ref), without
 constructing host `ring`s — the on-device counterpart of `DiskWindModel(...) |> resident`. One fused
 kernel generates the camera grid and computes geometry, velocity, intensity, and reverberation
@@ -177,7 +188,7 @@ use host construction + `gpu(m)` instead.
 Use `gpu`-backed construction (CUDA or Metal loaded) via `gpuDiskWindModel`; the default `CPU()` backend builds
 on the host and is mainly for testing the on-device pipeline without a GPU.
 """
-function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ::Int=256,
+@validated resident function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ::Int=256,
         scale::Symbol=:log, rot::Real=0.0, θₒ::Real=0.0,
         f1::Real=NaN, f2::Real=NaN, f3::Real=NaN, f4::Real=NaN, α::Real=NaN,
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0, rₛ::Real=1.0,
@@ -204,28 +215,51 @@ end
     gpuDiskWindModel(rMin, rMax, i; backend=defaultGPUBackend(), T=Float32, kwargs...) -> ResidentModel
     gpuDiskWindModel(r̄, rFac, α, i; backend=defaultGPUBackend(), T=Float32, kwargs...) -> ResidentModel
 
+# Parameters
+- `nϕ`: Number of azimuthal bins, ASCII alias=`n_phi`.
+- `α`: Source-function power-law index, ASCII alias=`alpha`.
+- `θₒ`: Opening angle, in radians, ASCII alias=`theta_o`.
+- `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
+- `τ`: Optical depth, ASCII alias=`tau`.
+- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 Build a DiskWind model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the GPU
 counterpart of [`residentDiskWindModel`](@ref), defaulting to `Float32` (GeForce FP64 is ~1/64 rate;
 Apple GPUs have no FP64 at all). Requires a GPU extension (`using CUDA` or `using Metal`); the device
 is chosen by [`defaultGPUBackend`](@ref) unless `backend` is given.
 """
-gpuDiskWindModel(rMin::Real, rMax::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...) =
-    residentDiskWindModel(rMin, rMax, i; backend=backend, T=T, kwargs...)
-gpuDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...) =
-    residentDiskWindModel(r̄, rFac, α, i; backend=backend, T=T, kwargs...)
+@validated resident function gpuDiskWindModel(rMin::Real, rMax::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...)
+    _kw_residentDiskWindModel(rMin, rMax, i; backend=backend, T=T, kwargs...)
+end
+@validated resident function gpuDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...)
+    _kw_residentDiskWindModel(r̄, rFac, α, i; backend=backend, T=T, kwargs...)
+end
 
 """
     residentDiskWindModel(r̄, rFac, α, i; rot=0.0, nr=128, nϕ=256, scale=:log, kwargs...) -> ResidentModel
 
+# Parameters
+- `nϕ::Int=256`: Number of azimuthal bins, ASCII alias=`n_phi`.
+- `θₒ`: Opening angle, in radians, ASCII alias=`theta_o`.
+- `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
+- `τ`: Optical depth, ASCII alias=`tau`.
+- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 `r̄`/`rFac`/`α` parameterization (matching `DiskWindModel(r̄, rFac, α, i; ...)`): derives `rMin`/`rMax`
 via [`get_rMinMaxDiskWind`](@ref) and sets the intensity power-law to `α`.
 """
-function residentDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; rot::Real=0.0,
+@validated resident function residentDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; rot::Real=0.0,
         nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
     (α != 1 / 2 && α != 3 / 2) || throw(ArgumentError("α cannot be 1/2 or 3/2 (divides by zero)"))
     r̄ > 0 || throw(ArgumentError("r̄ must be greater than 0"))
     rMin, rMax = get_rMinMaxDiskWind(Float64(r̄), Float64(rFac), Float64(α))
-    return residentDiskWindModel(rMin, rMax, i; nr=nr, nϕ=nϕ, scale=scale, rot=rot, α=α, kwargs...)
+    return _kw_residentDiskWindModel(rMin, rMax, i; nr=nr, nϕ=nϕ, scale=scale, rot=rot, α=α, kwargs...)
 end
 
 # ======================================================================================
@@ -491,6 +525,25 @@ end
         rescale=1.0, ηₒ=0.5, η₁=0.5, αRM=0.0, rNorm=1.0,
         backend=KernelAbstractions.CPU(), T=Float64) -> ResidentModel
 
+# Parameters
+- `μ::Real=500.0`: Mean radius of model (in terms of ``r_s``), ASCII alias=`mu`.
+- `β::Real=1.0`: Radial-distribution shape parameter, ASCII alias=`beta`.
+- `rₛ::Real=1.0`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `θₒ::Real=π / 2`: Opening angle, in radians, ASCII alias=`theta_o`.
+- `γ::Real=1.0`: Disk concentration parameter, ASCII alias=`gamma`.
+- `ξ::Real=1.0`: Fraction of back-side clouds retained, ASCII alias=`xi`.
+- `τ::Real=0.0`: Optical depth, ASCII alias=`tau`.
+- `κ::Real=0.0`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
+- `ηₒ::Real=0.5`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁::Real=0.5`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM::Real=0.0`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `σρᵣ::Real=0.0`: Radial-orbit speed dispersion, ASCII alias=`sigma_rho_r`.
+- `σρc::Real=0.0`: Circular-orbit speed dispersion, ASCII alias=`sigma_rho_c`.
+- `σΘᵣ::Real=0.0`: Radial-orbit angular dispersion, ASCII alias=`sigma_theta_r`.
+- `σΘc::Real=0.0`: Circular-orbit angular dispersion, ASCII alias=`sigma_theta_c`.
+- `θₑ::Real=0.0`: Velocity-space tilt angle, in radians, ASCII alias=`theta_e`.
+- `σₜ::Real=0.0`: Turbulent velocity dispersion, ASCII alias=`sigma_t`.
+
 Build a Pancoast-style cloud model **directly on `backend`** as a device-resident
 [`ResidentModel`](@ref) — the on-device counterpart of `cloudModel(nClouds; rng=:philox, seed=…)`.
 Each cloud is drawn from an independent counter-based (Philox4x32) substream keyed by `(seed, cloud
@@ -512,8 +565,10 @@ Two built-in physics options are supported on-device (selected per call):
   fFlow, σₜ`). The turbulent path draws extra normals/uniform per cloud from the same substream.
 
 For physics beyond these built-ins, build on the host and call `gpu(m)`.
+
+`theta_o` uses the letter o. `θ` and `θ₀` are not opening-angle aliases.
 """
-function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Real=1.0, F::Real=0.5,
+@validated resident function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Real=1.0, F::Real=0.5,
         rₛ::Real=1.0, θₒ::Real=π / 2, γ::Real=1.0, ξ::Real=1.0, i::Real=0.0, rescale::Real=1.0,
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0,
         intensity::Symbol=:isotropic, κ::Real=0.0,
@@ -537,11 +592,33 @@ end
 """
     gpuCloudModel(nClouds, seed; backend=defaultGPUBackend(), T=Float32, kwargs...) -> ResidentModel
 
+# Parameters
+- `μ`: Mean radius of model (in terms of ``r_s``), ASCII alias=`mu`.
+- `β`: Radial-distribution shape parameter, ASCII alias=`beta`.
+- `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
+- `θₒ`: Opening angle, in radians, ASCII alias=`theta_o`.
+- `γ`: Disk concentration parameter, ASCII alias=`gamma`.
+- `ξ`: Fraction of back-side clouds retained, ASCII alias=`xi`.
+- `τ`: Optical depth, ASCII alias=`tau`.
+- `κ`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
+- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `σρᵣ`: Radial-orbit speed dispersion, ASCII alias=`sigma_rho_r`.
+- `σρc`: Circular-orbit speed dispersion, ASCII alias=`sigma_rho_c`.
+- `σΘᵣ`: Radial-orbit angular dispersion, ASCII alias=`sigma_theta_r`.
+- `σΘc`: Circular-orbit angular dispersion, ASCII alias=`sigma_theta_c`.
+- `θₑ`: Velocity-space tilt angle, in radians, ASCII alias=`theta_e`.
+- `σₜ`: Turbulent velocity dispersion, ASCII alias=`sigma_t`.
+
 Build a cloud model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the GPU
 counterpart of [`residentCloudModel`](@ref), defaulting to `Float32`. Requires a GPU extension
 (`using CUDA` or `using Metal`); the device is chosen by [`defaultGPUBackend`](@ref) unless `backend`
 is given. The Philox substreams are integer-exact, so the same `seed` draws the same uniforms on every
 backend.
+
+`theta_o` uses the letter o. `θ` and `θ₀` are not opening-angle aliases.
 """
-gpuCloudModel(nClouds::Int, seed::Integer; backend=defaultGPUBackend(), T=Float32, kwargs...) =
-    residentCloudModel(nClouds, seed; backend=backend, T=T, kwargs...)
+@validated resident function gpuCloudModel(nClouds::Int, seed::Integer; backend=defaultGPUBackend(), T=Float32, kwargs...)
+    _kw_residentCloudModel(nClouds, seed; backend=backend, T=T, kwargs...)
+end

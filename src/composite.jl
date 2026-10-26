@@ -182,6 +182,10 @@ order, to the newly added line's model.
 - `fluxRatio::Float64=1.0`: this line's flux relative to `cm.lines[1]`. Must be positive.
 - `from::String=cm.lines[1]`: which registered line's params to reuse.
 - `overrides...`: forwarded to `rebuild` (constructor-argument overrides).
+
+Overrides accept the aliases of the recorded constructor and callbacks, including
+`mu=μ`, `alpha=α`, and `r_bar=r̄`. Unicode and ASCII names may be mixed; supplying both
+spellings of one parameter is an error. See [`acceptedKeywords`](@ref) for custom callback validation.
 """
 function addLine!(cm::CompositeModel; line::String, lineCenter::Float64, fluxRatio::Float64=1.0,
         from::String=cm.lines[1], overrides...)
@@ -278,6 +282,7 @@ function _ratioProfile(cm::CompositeModel, lines::Tuple{String,String};
         bins::Union{Int,Vector{Float64}}=100, floor::Real=0.0,
         minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
         centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    _check_keywords(_normalize_keywords(kwargs), ())
     a, b = lines
     mA = cm[a]; mB = cm[b] #errors listing the known lines on a miss
     floor >= 0.0 || error("getProfile(cm, :ratio; ...): `floor` must be >= 0 (got $floor)")
@@ -395,6 +400,7 @@ Per-line forwarding of [`reset!`](@ref). `line=nothing` (the default) resets eve
 the named line. Extra keywords (`profiles`, `img`) forward to the per-line `model` method.
 """
 function reset!(cm::CompositeModel; line::Union{Nothing,String}=nothing, kwargs...)
+    _check_keywords(_normalize_keywords(kwargs), (:profiles, :img))
     for l in (line === nothing ? cm.lines : [line])
         reset!(cm[l]; kwargs...)
     end
@@ -416,6 +422,9 @@ end
 """
     raytrace!(cm::CompositeModel; line=nothing, kwargs...) -> cm
 
+# Parameters
+- `τCutOff`: Optical-depth cutoff for raytracing, ASCII alias=`tau_cutoff`.
+
 Per-line forwarding of [`raytrace!`](@ref). `line=nothing` (the default) raytraces every line; otherwise
 only the named line.
 
@@ -429,6 +438,8 @@ modeled: different lines are at different wavelengths and each line's `τ` is th
 depth (see the Workstream-4 plan, "Out of scope").
 """
 function raytrace!(cm::CompositeModel; line::Union{Nothing,String}=nothing, kwargs...)
+    kwargs = _normalize_keywords(kwargs)
+    _check_keywords(kwargs, (:IRatios, :τCutOff, :raytraceFreeClouds, :backend, :T))
     for l in (line === nothing ? cm.lines : [line])
         m = cm[l]
         (m.subModelStartInds == [1] || m.camera.raytraced) && continue #raytrace!'s warn-and-return cases
@@ -591,6 +602,7 @@ equals `fluxRatios[line]`.
 function getSpectrum(cm::CompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0,
         minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
         centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    _check_keywords(_normalize_keywords(kwargs), ())
     #shared wavelength range across all lines (observed frame): any side not pinned by the caller via
     #minX/maxX is auto-computed from the per-line finite velocity ranges (both pinned -> skip the pass)
     λmin = minX === nothing ? Inf : Float64(minX)
@@ -798,6 +810,7 @@ for testing the resident composite pipeline without a GPU. Use `gpu(cm)` (with C
 loaded) to build a device-resident composite.
 """
 function resident(cm::CompositeModel; kwargs...)
+    _check_keywords(_normalize_keywords(kwargs), (:T, :backend, :raytrace))
     models = Dict{String,ResidentModel}(line => resident(cm.models[line]; kwargs...) for line in cm.lines)
     return ResidentCompositeModel(copy(cm.lines), models, copy(cm.lineCenters), copy(cm.fluxRatios))
 end
@@ -811,8 +824,8 @@ keyword arguments, e.g. `T=Float32`) and wrap the per-line [`ResidentModel`](@re
 `backend` to choose the device explicitly (default [`defaultGPUBackend`](@ref), resolved once for all
 lines).
 """
-function gpu(cm::CompositeModel; backend=defaultGPUBackend(), kwargs...)
-    models = Dict{String,ResidentModel}(line => gpu(cm.models[line]; backend=backend, kwargs...) for line in cm.lines)
+@validated plain function gpu(cm::CompositeModel; backend=defaultGPUBackend(), T=Float32)
+    models = Dict{String,ResidentModel}(line => gpu(cm.models[line]; backend=backend, T=T) for line in cm.lines)
     return ResidentCompositeModel(copy(cm.lines), models, copy(cm.lineCenters), copy(cm.fluxRatios))
 end
 

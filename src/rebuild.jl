@@ -42,15 +42,23 @@ deterministic and cheap to re-run.
 
 `rebuild(m::model; ...)` is a convenience method forwarding to `rebuild(m.params; ...)`; it errors when
 `m.params === nothing` (the model was not built by a public constructor).
+
+Overrides accept the aliases of the recorded constructor and callbacks, including
+`mu=μ`, `alpha=α`, and `r_bar=r̄`. Unicode and ASCII names may be mixed; supplying both
+spellings of one parameter is an error. See [`acceptedKeywords`](@ref) for custom callback validation.
 """
 function rebuild(params::NamedTuple; overrides...)
-    ov = (; overrides...) #override kwargs as a NamedTuple
+    params = _canonical_record(params)
+    ov = _normalize_keywords(overrides) #override kwargs as a NamedTuple
     leafKeys = _rebuild_leaf_keys(params)
     for k in keys(ov)
         k in leafKeys || error("rebuild: override key `$k` matches no leaf constructor parameter " *
             "(known leaf keys: $(sort!(collect(leafKeys)))). Node-level raytrace! arguments " *
             "(IRatios, τCutOff, raytraceFreeClouds) are not override targets.")
     end
+    diagnostics = String[]
+    _validate_rebuild(params, ov, diagnostics)
+    isempty(diagnostics) || @warn join(unique(diagnostics), "\n")
     return _rebuild(params, ov)
 end
 
@@ -98,13 +106,13 @@ function _rebuild_leaf(params::NamedTuple, ov::NamedTuple)
     merged = merge(params, (; (k => ov[k] for k in keys(ov) if haskey(params, k))...))
     c = merged.constructor
     if c === :DiskWindModel
-        return DiskWindModel(merged.rMin, merged.rMax, merged.i;
+        return _kw_DiskWindModel(merged.rMin, merged.rMax, merged.i;
             _leaf_kwargs(merged, (:constructor, :rMin, :rMax, :i))...)
     elseif c === :DiskWindModelMean
-        return DiskWindModel(merged.r̄, merged.rFac, merged.α, merged.i;
+        return _kw_DiskWindModel(merged.r̄, merged.rFac, merged.α, merged.i;
             _leaf_kwargs(merged, (:constructor, :r̄, :rFac, :α, :i))...)
     elseif c === :cloudModelVectors
-        return cloudModel(merged.ϕ₀, merged.i, merged.rot, merged.θₒ, merged.θₒSystem, merged.ξ;
+        return _kw_cloudModel(merged.ϕ₀, merged.i, merged.rot, merged.θₒ, merged.θₒSystem, merged.ξ;
             _leaf_kwargs(merged, (:constructor, :ϕ₀, :i, :rot, :θₒ, :θₒSystem, :ξ))...)
     elseif c === :cloudModel
         return _rebuild_cloudModel(merged)
@@ -116,10 +124,47 @@ end
 function _rebuild_cloudModel(merged::NamedTuple)
     kw = _leaf_kwargs(merged, (:constructor, :nClouds, :rng, :seed))
     if merged.rng === :philox
-        return cloudModel(merged.nClouds; rng=:philox, seed=merged.seed, kw...)
+        return _kw_cloudModel(merged.nClouds; rng=:philox, seed=merged.seed, kw...)
     else
         #legacy record: GLOBAL_RNG state was consumed, so exact draws cannot be reproduced --
         #re-draw statistically-equivalent gas from the default GLOBAL_RNG.
-        return cloudModel(merged.nClouds; kw...)
+        return _kw_cloudModel(merged.nClouds; kw...)
     end
+end
+
+# Check the whole provenance tree before reconstructing any branch (which may draw RNGs).
+_canonical_record(::Nothing) = nothing
+function _canonical_record(params::NamedTuple)
+    p = _normalize_keywords(params)
+    p.constructor === :+ && return merge(p, (; left=_canonical_record(p.left), right=_canonical_record(p.right)))
+    p.constructor === :raytrace! && return merge(p, (; parent=_canonical_record(p.parent)))
+    p
+end
+function _validate_rebuild(params, ov, diagnostics)
+    params === nothing && error("rebuild: branch has no recorded params")
+    c = params.constructor
+    if c === :+
+        _check_keywords(params, (:constructor, :left, :right))
+        _validate_rebuild(params.left, ov, diagnostics); _validate_rebuild(params.right, ov, diagnostics)
+    elseif c === :raytrace!
+        _check_keywords(_leaf_kwargs(params, (:constructor, :parent)), (:IRatios, :τCutOff, :raytraceFreeClouds))
+        _validate_rebuild(params.parent, ov, diagnostics)
+    else
+        merged = merge(params, (; (k=>ov[k] for k in keys(ov) if haskey(params,k))...))
+        f, positional, defaults = if c === :DiskWindModel
+            (:DiskWindModel, (:rMin, :rMax, :i), (; I=DiskWindIntensity, v=vCircularDisk))
+        elseif c === :DiskWindModelMean
+            (:DiskWindModel, (:r̄, :rFac, :α, :i), (; I=DiskWindIntensity, v=vCircularDisk))
+        elseif c === :cloudModel
+            (:cloudModel, (:nClouds,), (; I=IsotropicIntensity, v=vCircularCloud))
+        elseif c === :cloudModelVectors
+            (:cloudModel, (:ϕ₀, :i, :rot, :θₒ, :θₒSystem, :ξ), (; I=IsotropicIntensity, v=vCircularCloud))
+        else
+            error("rebuild: unknown constructor `$c`")
+        end
+        own, reserved, mode = _constructor_spec(Val(f), Val(length(positional)))
+        kw = _leaf_kwargs(merged, (:constructor, positional...))
+        _construction_keywords(kw, (own..., :τ, :η, :rot, :reflect, :rng), defaults; reserved=reserved, warn=false, diagnostics=diagnostics)
+    end
+    nothing
 end

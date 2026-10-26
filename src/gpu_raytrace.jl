@@ -291,6 +291,9 @@ end
 """
     raytrace!(rm::ResidentModel; IRatios=1.0, τCutOff=1.0, raytraceFreeClouds=false) -> ResidentModel
 
+# Parameters
+- `τCutOff::Float64=1.0`: Optical-depth cutoff for raytracing, ASCII alias=`tau_cutoff`.
+
 Device-resident dispatch of [`raytrace!`](@ref BLR.raytrace!): run the full bin→sort→segmented-scan→
 compact combine on `rm`'s backend with no host round-trips, returning a freshly raytraced
 [`ResidentModel`](@ref) (drop-in for the observable methods). `rm` must carry raytrace metadata — build
@@ -301,9 +304,10 @@ count changes: one combined point per active output pixel + surviving free cloud
 `rm = raytrace!(rm)`. Semantics match the host `raytrace!`: `IRatios` is a global per-submodel weight,
 `τCutOff` the optical-depth cutoff, `raytraceFreeClouds` enables cloud–cloud attenuation.
 """
-raytrace!(rm::ResidentModel; IRatios::Union{Float64,Array{Float64,}}=1.0, τCutOff::Float64=1.0,
-        raytraceFreeClouds::Bool=false) =
+@validated plain function raytrace!(rm::ResidentModel; IRatios::Union{Float64,Array{Float64,}}=1.0, τCutOff::Float64=1.0,
+        raytraceFreeClouds::Bool=false)
     _rt_resident_raytrace(rm; IRatios=IRatios, τCutOff=τCutOff, raytraceFreeClouds=raytraceFreeClouds)
+end
 
 # ======================================================================================
 # raytrace metadata built ON-DEVICE by the construction path, so a model assembled with

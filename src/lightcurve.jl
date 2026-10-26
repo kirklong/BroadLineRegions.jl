@@ -5,13 +5,13 @@
 Generate a damped random walk continuum lightcurve following [MacLeod+2010](https://iopscience.iop.org/article/10.1088/0004-637X/721/2/1014/pdf)
 # Arguments:
 - `t::Vector{Float64}``: time array that returned lightcurve will be sampled at
-- `μ::Float64`: mean value of random walk
-- `τ::Float64`: characteristic time scale of random walk
-- `σ::Float64`: standard deviation of random walk
+- `μ::Float64`: mean value of random walk, ASCII alias=`mu`.
+- `τ::Float64`: characteristic time scale of random walk, ASCII alias=`tau`.
+- `σ::Float64`: standard deviation of random walk, ASCII alias=`sigma`.
 # Returns:
 - `C::Vector{Float64}`: damped random walk array corresponding to times t
 """
-function DRW(;t::Array{Float64}=collect(range(0,stop=100,length=1001)), μ::Float64=0.0, τ::Float64=1.0, σ::Float64=0.1)
+@validated plain function DRW(;t::Array{Float64}=collect(range(0,stop=100,length=1001)), μ::Float64=0.0, τ::Float64=1.0, σ::Float64=0.1)
     nt = length(t)
     SF∞ = √2*σ #eq 4 of https://iopscience.iop.org/article/10.1088/0004-637X/721/2/1014/pdf
     C = zeros(nt)

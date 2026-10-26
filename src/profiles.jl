@@ -44,7 +44,7 @@ Bin the x and y variables into a histogram, where each bin is the sum of the y v
   - `binCenters`: Bin centers for the x variable
   - `result`: Binned sums of the y variable
 """
-function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false, centered::Bool=true, minX::Union{Float64,Nothing}=nothing, maxX::Union{Float64,Nothing}=nothing)
+@validated bins function binnedSum(x::Array{Float64,}, y::Array{Float64, }; bins::Union{Int,Vector{Float64}}=100, overflow::Bool = false, centered::Bool=true, minX::Union{Float64,Nothing}=nothing, maxX::Union{Float64,Nothing}=nothing)
     binEdges = nothing
     uniform = typeof(bins) == Int #edges we construct from a range are uniform -> direct index math; user-supplied edge vectors may not be
     if typeof(bins) == Int
@@ -148,7 +148,7 @@ Bin membership in pass 2 follows the same rules as `binnedSum`, so the two can n
   - `binCenters`: Bin centers for the x variable
   - `σ²`: per-bin weighted variance of θ (NaN for empty bins)
 """
-function binnedVariance(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,};
+@validated bins function binnedVariance(x::Array{Float64,}, θ::Array{Float64,}, w::Array{Float64,};
     bins::Union{Int,Vector{Float64}}=100, overflow::Bool=false, kwargs...)
     binEdges, binCenters, Σw = binnedSum(x, w, bins=bins, overflow=overflow; kwargs...)
     _, _, Σwθ = binnedSum(x, w.*θ, bins=binEdges, overflow=overflow; kwargs...)
@@ -201,7 +201,7 @@ Bin the model into a histogram, where each bin is the integrated value of the yV
   - `binCenters`: Bin centers for the xVariable
   - `yBinned`: Binned values of the yVariables
 """
-function binModel(bins::Union{Int,Vector{Float64}}=100; m::model, yVariable::Union{String,Symbol,Function}, xVariable::Union{String,Symbol,Function}=:v, kwargs...)
+@validated bins function binModel(bins::Union{Int,Vector{Float64}}=100; m::model, yVariable::Union{String,Symbol,Function}, xVariable::Union{String,Symbol,Function}=:v, kwargs...)
     x = getVariable(m,xVariable)
     y = getVariable(m,yVariable) 
     dx = getVariable(m,:ΔA)
@@ -216,7 +216,7 @@ function binModel(bins::Union{Int,Vector{Float64}}=100; m::model, yVariable::Uni
     return binnedSum(x,y.*dx,bins=bins;kwargs...)
 end
 
-function binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariable::Union{String,Symbol,Function}, xVariable::Union{String,Symbol,Function}=:v, kwargs...)
+@validated bins function binModel(bins::Vector{Float64}, dx::Array{Float64,}; m::model, yVariable::Union{String,Symbol,Function}, xVariable::Union{String,Symbol,Function}=:v, kwargs...)
     x = getVariable(m,xVariable)
     y = getVariable(m,yVariable) 
     if size(y) != size(dx)
@@ -298,7 +298,7 @@ weighted by the intensity and area of each ring element.
 A device-resident method (`phase(::ResidentModel, …)`) runs this on the GPU without re-flattening the
 model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
-function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing, 
+@validated bins function phase(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
     U::Vector{Float64}, V::Vector{Float64}, PA::Float64, BLRAng::Float64, kwargs...)    
     if size(U) != size(V)
         throw(ArgumentError("U and V must be the same size, got $(size(U)) and $(size(V))"))
@@ -370,7 +370,7 @@ Note that these are moments of the line image only: unlike `phase`, no continuum
 A device-resident method (`secondMoment(::ResidentModel, …)`) runs this on the GPU without re-flattening
 the model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
-function secondMoment(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
+@validated bins function secondMoment(m::model; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
     U::Vector{Float64}, V::Vector{Float64}, PA::Float64, BLRAng::Float64, kwargs...)
     if size(U) != size(V)
         throw(ArgumentError("U and V must be the same size, got $(size(U)) and $(size(V))"))
@@ -407,7 +407,7 @@ bins `yNum.*dA` and `yDen.*dA` over `x` and returns `(edges, centers, num./den)`
 Replicates `binModel`'s `ΔA` shape fix-up (per-ring scalar `ΔA` broadcast across a matrix `y`).
 Operates on precomputed arrays so the gathers can come from the model's memoized cache.
 """
-function binWeightedMean(m::model, x, yNum, yDen, bins, dx; kwargs...)
+@validated bins function binWeightedMean(m::model, x, yNum, yDen, bins, dx; kwargs...)
     dA = isnothing(dx) ? getVariable(m,:ΔA) : dx
     if size(yNum) != size(dA)
         if size(dA)[1] == size(yNum)[1] && typeof(m.rings[1].ΔA) == Float64
@@ -459,7 +459,7 @@ Return a profile for the model based on the specified name.
 A device-resident method (`getProfile(::ResidentModel, …)`) runs this on the GPU without re-flattening
 the model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
 """
-function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{Int,Vector{Float64}}=100, dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
+@validated bins function getProfile(m::model, name::Union{String,Symbol,Function}; bins::Union{Int,Vector{Float64}}=100, dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
     n = Symbol(name); p = nothing;
     if n == :line
         p = isnothing(dx) ? binModel(bins,m=m,yVariable=:I,xVariable=:v;kwargs...) : binModel(bins,dx,m=m,yVariable=:I,xVariable=:v;kwargs...)

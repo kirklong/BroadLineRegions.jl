@@ -2,9 +2,14 @@
 """
     response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
 
+# Parameters
+- `ηₒ::Float64=0.5`: Response intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁::Float64=0.5`: Response coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM::Float64=0.0`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+
 Calculate response function for use in reverberation mapping calculations.
 """
-function response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
+@validated callback function response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
     η = ηₒ + η₁*(r/rNorm)^αRM
     return η
 end

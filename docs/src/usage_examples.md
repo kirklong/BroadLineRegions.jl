@@ -1,6 +1,6 @@
 # Usage and Examples
 
-This guide explores a few more complicated tasks one might wish to use this code for. 
+This guide explores a few more complicated tasks one might wish to use this code for.
 
 ```@contents
 Pages = ["usage_examples.md"]
@@ -356,6 +356,15 @@ For example, say you wanted to use the [`cloudModel`](@ref BLR.cloudModel) as a 
 myCustomIntensityFunction(;_...) = rand() #note the _... to handle unsupported kwargs that may be passed to your intensity function
 myCloudModel = BLR.cloudModel(100,I=myCustomIntensityFunction) #100 clouds with random intensities using defaults for all other parameters
 ```
+
+Note that `BroadLineRegions.jl` attempts to make sure you have correctly passed keyword arguments for functions, and will issue a warning if it detects 
+a keyword argument that it does not know how to check. 
+For custom callbacks with new parameters, you can thus optionally register these extra keywords to enable stricter validation and suppress this warning:
+```julia
+myIntensityFx(; r, level=1.0, kwargs...) = level ./ r #a simple custom intensity scaling like 1/r
+BLR.acceptedKeywords(::typeof(myIntensityFx)) = (:level,) #BroadLineRegions.jl doesn't know about the level keyword until you register it like this, and will produce a warning without this registration
+```
+
 It is possible to pass custom intensity, velocity, response, and optical depth functions to either [`cloudModel`](@ref BLR.cloudModel) or [`DiskWindModel`](@ref BLR.DiskWindModel).
 
 If you already have some precalculated result for any of the above quantities which you would like to use in your model, you can also pass that array to the model constructor so long as it matches the size requirements (i.e. if you have 100 clouds must pass an array of 100 intensities). 
@@ -773,6 +782,14 @@ element — use the host `model` for those. See [`gpu`](@ref BLR.gpu), [`gpuDisk
 BLR.gpuDiskWindModel), [`gpuCloudModel`](@ref BLR.gpuCloudModel), and [`residentDiskWindModel`](@ref
 BLR.residentDiskWindModel)/[`residentCloudModel`](@ref BLR.residentCloudModel) (CPU-backend builds, handy
 for testing the pipeline without a GPU) in the [API](@ref) for the full set of options.
+
+## Unicode keyword aliases
+Note that in the guide above we have used Unicode names for all keyword arguments, but in most cases 
+ASCII keyword names are available as well if you prefer this and they can be mixed and matched 
+(i.e. instead of `μ=500.0` `mu=500.` is also fine). See each function's documentation either online 
+or at the REPL (i.e. `?BLR.cloudModel`) for all allowed aliases. Note that internally `BroadLineRegions.jl` 
+uses all Unicode symbols, so when accessing Struct fields at this time this is only possible with the Unicode symbols 
+(i.e. `m.camera.alpha` will return an error; the only way to access this field is via its Unicode symbol `m.camera.α`).
 
 ## Additional (selected) helpful tools from the [API](@ref) not described above
 

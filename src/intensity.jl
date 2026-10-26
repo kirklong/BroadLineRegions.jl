@@ -110,19 +110,19 @@ Calculates the intensity from a disk-wind model of the BLR following the prescri
 # Arguments:
 - r::Union{Vector{Float64},Float64} - radius from central mass (in terms of rₛ)
 - i::Float64 - inclination angle (rad)
-- ϕ::Union{Vector{Float64},Float64} - list of azimuthal angles (rad)
+- ϕ::Union{Vector{Float64},Float64} - list of azimuthal angles (rad), ASCII alias=`phi`.
 - f1::Float64 - strength of radial velocity gradient ``\\mathrm{d}v_{r}/\\mathrm{d}r``
 - f2::Float64 - strength of Keplerian shear velocity gradient ``\\mathrm{d}v_{\\phi}/\\mathrm{d}r``
 - f3::Float64 - strength of radial lifting velocity gradient ``\\mathrm{d}v_{\\theta}/\\mathrm{d}r``
 - f4::Float64 - strength of vertical lifting velocity gradient ``\\mathrm{d}v_{\\theta}/\\mathrm{d}\\theta`` (equivalent to isotropic emission)
-- α::Float64 - power-law index of the source function ``S(r) \\propto r^{-\\alpha}``
+- α::Float64 - power-law index of the source function ``S(r) \\propto r^{-\\alpha}``, ASCII alias=`alpha`.
 - rMin::Float64 - minimum radius to consider (default: 0.0)
 - rMax::Float64 - maximum radius to consider (default: Inf)
 
 # Returns:
 - intensity (arbitrary units) as a Vector{Float64}
 """
-function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64}, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
+@validated callback function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64}, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
     if typeof(r) == Float64 || typeof(ϕ) == Float64
         I = (r >= rMin && r <= rMax) ? DiskWind_I_(r, ϕ, i, f1, f2, f3, f4, α) : 0.0
     elseif typeof(r) == Vector{Float64} && typeof(ϕ) == Vector{Float64}
@@ -137,9 +137,12 @@ end
     IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, 
             rescale::Float64=1.0, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
 
+# Parameters
+- `ϕ::Union{Vector{Float64},Float64}`: Azimuthal angle(s), in radians, ASCII alias=`phi`.
+
 Returns a constant intensity value at all radii and azimuthal angles, rescaled by `rescale` factor.
 """
-function IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, rescale::Float64=1.0, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
+@validated callback function IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, rescale::Float64=1.0, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
     if typeof(ϕ) == Float64 && typeof(r) == Float64
         I = (round(r,sigdigits=9) >= round(rMin,sigdigits=9) && round(r,sigdigits=9) <= round(rMax,sigdigits=9)) ? rescale : 0.0
     else
@@ -164,17 +167,17 @@ Calculate the intensity of the cloud at radius `r` from the central mass and inc
 
 # Arguments
 - `r::Float64`: radius from central mass (in terms of r₍ₛ₎)
-- `ϕ::Float64`: azimuthal angle (rad)
-- `θₒ::Float64`: opening angle of cloud
-- `ϕ₀::Float64`: initial azimuthal angle
+- `ϕ::Float64`: azimuthal angle (rad), ASCII alias=`phi`.
+- `θₒ::Float64`: opening angle of cloud, ASCII alias=`theta_o`.
+- `ϕ₀::Float64`: initial azimuthal angle, ASCII alias=`phi_0`.
 - `rot::Float64`: rotation angle
 - `i::Float64`: inclination angle
-- `κ::Float64`: anisotropy parameter
+- `κ::Float64`: anisotropy parameter, ASCII alias=`kappa`.
 
 # Returns
 - Intensity (arbitrary units) as a `Float64`
 """
-function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
+@validated callback function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
     xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒ) #system coordinates xyz
     ϕw = atan(xyzSys[2],xyzSys[1]) #angle between cloud and BH line of sight
     I = W(ϕw,κ) #clouds don't have scaling -- the scaling is set by geometry itself, just whether they are on or off 
@@ -185,10 +188,18 @@ end
     IϕCloudMask(;r::Float64, ϕ::Float64, θₒ::Float64, ϕ₀::Float64, rot::Float64, i::Float64, κ::Float64=0.0, 
             ϕMin::Float64, ϕMax::Float64, overdense::Bool=false, _...)
 
+# Parameters
+- `ϕ::Float64`: Azimuthal angle(s), in radians, ASCII alias=`phi`.
+- `θₒ::Float64`: Opening angle, in radians, ASCII alias=`theta_o`.
+- `ϕ₀::Float64`: Initial azimuthal angle, in radians, ASCII alias=`phi_0`.
+- `κ::Float64=0.0`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
+- `ϕMin::Float64`: Lower azimuthal mask bound, in radians, ASCII alias=`phi_min`.
+- `ϕMax::Float64`: Upper azimuthal mask bound, in radians, ASCII alias=`phi_max`.
+
 Calculates the intensity using `cloudIntensity` but with an extra layer of masking based on azimuthal angle `ϕ` and the specified range `[ϕMin, ϕMax]`. If `ϕ` is outside this range, the intensity is set to 0.0.
 If overdense is `true`, the intensity is multiplied by 2.0 to account for the "lost" cloud and thus preserve total intensity in the model.
 """
-function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
+@validated callback function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
     if ϕ > π || ϕ < -π
         ϕ = atan(sin(ϕ),cos(ϕ))
     end
@@ -200,7 +211,7 @@ function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot:
     end
     I = 0.0
     if ϕ >= ϕMin && ϕ <= ϕMax
-        I = cloudIntensity(r=r,ϕ=ϕ,θₒ=θₒ,ϕ₀=ϕ₀,rot=rot,i=i,κ=κ)
+        I = _kw_cloudIntensity(r=r,ϕ=ϕ,θₒ=θₒ,ϕ₀=ϕ₀,rot=rot,i=i,κ=κ)
         if overdense
             I *= 2.0 #x2 to replace cloud "lost" 
         end
@@ -212,9 +223,15 @@ end
     IϕDiskWindMask(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, i::Float64, 
             f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, ϕMin::Float64, ϕMax::Float64, _...)
 
+# Parameters
+- `ϕ::Union{Vector{Float64},Float64}`: Azimuthal angle(s), in radians, ASCII alias=`phi`.
+- `α::Float64`: Source-function power-law index, ASCII alias=`alpha`.
+- `ϕMin::Float64`: Lower azimuthal mask bound, in radians, ASCII alias=`phi_min`.
+- `ϕMax::Float64`: Upper azimuthal mask bound, in radians, ASCII alias=`phi_max`.
+
 Calculates the intensity using `DiskWindIntensity` but with an extra layer of masking based on azimuthal angle `ϕ` and the specified range `[ϕMin, ϕMax]`. If `ϕ` is outside this range, the intensity is set to 0.0.
 """
-function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Float64},Float64},i::Float64,f1::Float64,f2::Float64,f3::Float64,f4::Float64,α::Float64,ϕMin::Float64,ϕMax::Float64, _...)
+@validated callback function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Float64},Float64},i::Float64,f1::Float64,f2::Float64,f3::Float64,f4::Float64,α::Float64,ϕMin::Float64,ϕMax::Float64, rMin::Float64=0.0, rMax::Float64=Inf, _...)
     I = nothing
     if typeof(ϕ) == Float64
         if ϕ > π || ϕ < -π
@@ -226,9 +243,9 @@ function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Flo
         if ϕMax > π || ϕMax < -π
             ϕMax = atan(sin(ϕMax),cos(ϕMax))
         end
-        I = (ϕ >= ϕMin && ϕ <= ϕMax) ? DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α) : 0.0 #left side of disk goes 0 -> -π, right side goes 0 -> π, where 0 (top) is tilted towards the observer (exclude back of disk)
+        I = (ϕ >= ϕMin && ϕ <= ϕMax) ? _kw_DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α,rMin=rMin,rMax=rMax) : 0.0 #left side of disk goes 0 -> -π, right side goes 0 -> π, where 0 (top) is tilted towards the observer (exclude back of disk)
     else
-        I = Float64[IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax)::Float64 for (ri,ϕi) in zip(r,ϕ)] #typed comprehension instead of vcat splat
+        I = Float64[_kw_IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax,rMin=rMin,rMax=rMax)::Float64 for (ri,ϕi) in zip(r,ϕ)] #typed comprehension instead of vcat splat
     end
     return I
 end

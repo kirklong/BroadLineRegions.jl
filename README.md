@@ -35,6 +35,7 @@ jlPkg.add("BroadLineRegions") #or use the github link
 ```
 
 ## Quickstart 
+
 While this code is designed to be very flexible and modular such that you can implement your own bespoke models of the BLR easier, two popular models of the BLR are included as default models which one can play with. 
 
 To generate a "cloud" model similar to that of Pancoast+ 2011 and 2014, use syntax like:
@@ -50,10 +51,32 @@ mDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,nϕ=48,scale=:log,
         f1=1.0,f2=1.0,f3=1.0,f4=1.0,reflect=false,τ=5.)
 ```
 
+In case you do not like unicode symbols, spelled out keyword aliases (for example `mu`, `theta_o`, and `tau`) are also available for all parameters (and can be mixed and matched with the unicode symbols), i.e. for the cloud model example above we could also write:
+```julia
+mClouds = BLR.cloudModel(100_000,mu=500.,beta=1.,F=0.5,theta_o=30/180*pi,gamma=1.,xi=1.,i=0.,
+        I=BLR.IsotropicIntensity,v=BLR.vCircularCloud,rescale=1e-5,tau=0.0)
+```
+See each function's documentation (either online or in the REPL with i.e. `?BLR.cloudModel`) for a list of all parameters, their defaults, and available spelled out ASCII keyword aliases. 
+Note that the internal code still uses largely unicode names, so to access struct fields only the unicode versions are supported (i.e. only `m.camera.α` works, and `m.camera.alpha` will produce an error). 
+
 You can of course define fully custom models by passing your own "rings" (on a camera) and optionally any default profiles, a camera struct, and submodel start indices:
 
 ```julia
 mCustom = BLR.model(myCustomRings,nothing,myCustomCamera,[1]) #a custom model with no profiles, a user-defined camera for raytracing/visualization, and with no submodels
+```
+
+And you can also define your own custom functions as overrides to the defaults used in any of the existing `BroadLineRegions.jl` models:
+```julia
+myIntensityFx(; r, level=1.0, kwargs...) = level ./ r #a simple custom intensity scaling like 1/r
+mCustomDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,n_phi=48,scale=:log,
+        I=myIntensityFx,level=2.) #instead of using default DiskWindIntensity use custom myIntensityFx with level=2.
+```
+Note that `BroadLineRegions.jl` attempts to make sure you have correctly passed keyword arguments for functions, and will issue a warning if it detects 
+a keyword argument that it does not know how to check. This warning would be issued in the above case, as `level` is not a parameter of any existing function. 
+For custom callbacks, you can thus optionally register extra keywords to enable stricter validation and suppress this warning:
+```julia
+myIntensityFx(; r, level=1.0, kwargs...) = level ./ r #a simple custom intensity scaling like 1/r
+BLR.acceptedKeywords(::typeof(myIntensityFx)) = (:level,)
 ```
 
 Models can be combined simply by writing `mCombined = m1 + m2`. 
