@@ -361,8 +361,8 @@ Note that `BroadLineRegions.jl` attempts to make sure you have correctly passed 
 a keyword argument that it does not know how to check. 
 For custom callbacks with new parameters, you can thus optionally register these extra keywords to enable stricter validation and suppress this warning:
 ```julia
-myIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity scaling like 1/r 
-BLR.acceptedKeywords(::typeof(myIntensity)) = (:level,) #BroadLineRegions.jl doesn't know about the level keyword until you register it like this, and will produce a warning without this registration
+myIntensityFx(; r, level=1.0, kwargs...) = level ./ r #a simple custom intensity scaling like 1/r
+BLR.acceptedKeywords(::typeof(myIntensityFx)) = (:level,) #BroadLineRegions.jl doesn't know about the level keyword until you register it like this, and will produce a warning without this registration
 ```
 
 It is possible to pass custom intensity, velocity, response, and optical depth functions to either [`cloudModel`](@ref BLR.cloudModel) or [`DiskWindModel`](@ref BLR.DiskWindModel).

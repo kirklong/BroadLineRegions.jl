@@ -67,16 +67,16 @@ mCustom = BLR.model(myCustomRings,nothing,myCustomCamera,[1]) #a custom model wi
 
 And you can also define your own custom functions as overrides to the defaults used in any of the existing `BroadLineRegions.jl` models:
 ```julia
-myIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity scaling like 1/r 
-mCustomDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,n4=24,n_phi=48,scale=:log,
+myIntensityFx(; r, level=1.0, kwargs...) = level ./ r #a simple custom intensity scaling like 1/r
+mCustomDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,n_phi=48,scale=:log,
         I=myIntensityFx,level=2.) #instead of using default DiskWindIntensity use custom myIntensityFx with level=2.
 ```
 Note that `BroadLineRegions.jl` attempts to make sure you have correctly passed keyword arguments for functions, and will issue a warning if it detects 
 a keyword argument that it does not know how to check. This warning would be issued in the above case, as `level` is not a parameter of any existing function. 
 For custom callbacks, you can thus optionally register extra keywords to enable stricter validation and suppress this warning:
 ```julia
-myIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity scaling like 1/r 
-BLR.acceptedKeywords(::typeof(myIntensity)) = (:level,)
+myIntensityFx(; r, level=1.0, kwargs...) = level ./ r #a simple custom intensity scaling like 1/r
+BLR.acceptedKeywords(::typeof(myIntensityFx)) = (:level,)
 ```
 
 Models can be combined simply by writing `mCombined = m1 + m2`. 
