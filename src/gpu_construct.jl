@@ -1,6 +1,6 @@
 using KernelAbstractions
 
-# On-device model construction (B2 pipeline). Builds the flat `ModelArrays` columns for a DiskWind
+# On-device model construction. Builds the flat `ModelArrays` columns for a DiskWind
 # model directly on a `KernelAbstractions` backend via ONE fused kernel — deprojection + velocity +
 # intensity + reverberation response, one launch / one pass per pixel — and generates the camera
 # (α,β,ΔA) grid in-kernel from scalars, so nothing touches a host `ring`. The result is wrapped as a
@@ -9,8 +9,8 @@ using KernelAbstractions
 # physics (or a user-supplied GPU-safe scalar `(r, ϕ, inc) -> value`, see below).
 #
 # Point ordering matches `flatten(DiskWindModel(...))` exactly: flattened index `p = k + (j-1)*nr`
-# with radial ring `k` the fast axis and azimuth `j` the slow axis (see `expandPerPoint`). Boundary
-# masking follows the plan's B2 rule — bounds are host-rounded to 9 significant digits and compared
+# with radial ring `k` the fast axis and azimuth `j` the slow axis (see `expandPerPoint`). 
+# Bounds are host-rounded to 9 significant digits and compared
 # with a plain `<`/`>` against the (unrounded) per-point radius, so a single boundary ring can differ
 # from the host's per-point `round` by inclusion (documented, measure-zero for generic bounds).
 
@@ -229,15 +229,15 @@ function residentDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; rot::Re
 end
 
 # ======================================================================================
-# On-device cloud construction (B3 on the GPU). A `cloudModel` built directly on the device.
+# On-device cloud construction. A `cloudModel` built directly on the device.
 #
 # Unlike the disk path this does NOT bit-match the host: the host `:philox` cloud path draws the
 # radius from a `Gamma` via Distributions.jl's rejection sampler, which cannot be reproduced bit-for-
 # bit inside a kernel. Instead each cloud gets an independent counter-based (Philox4x32) substream and
 # samples the SAME target distributions on-device, so the cloud population is deterministic and
 # seed-reproducible (and identical across CPU/CUDA/Metal backends) but statistically — not bitwise — equal to
-# the host `:philox` realization. This matches the B3 design note ("you cannot bit-match MT and
-# parallelize simultaneously"; the counter-based path is a different, fully deterministic stream).
+# the host `:philox` realization. This is because it is not possible to bit-match MT (the cpu only default) and
+# parallelize simultaneously. The counter-based path is a different, fully deterministic stream, which can also be used on CPU for reproducibility.
 # ======================================================================================
 
 # --- Philox4x32-10 counter-based RNG (GPU-safe: only UInt32*UInt32 -> UInt64 widening) ---

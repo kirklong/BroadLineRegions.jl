@@ -141,7 +141,7 @@ end
 
 # Reverberation delay τ = η·(r − x) (the general `tCloud` form; equals `tDisk` to rounding for a flat
 # ring). One thread per point; reproduces `getVariable(m, t)` for the resident pipeline without a
-# host round-trip. See the W1 unified-delay note (combined models already use this form).
+# host round-trip.
 @kernel function _rt_transfer_delays_kernel!(delays, η, r, x)
     idx = @index(Global)
     delays[idx] = η[idx] * (r[idx] - x[idx])

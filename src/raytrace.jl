@@ -204,9 +204,7 @@ function zeroDiskObscuredClouds!(m::model;diskCloudIntensityRatio::Float64=1.,ro
         return m
     end
     # The logic below classifies rings by type (disk = vector ϕ/r, cloud = scalar),
-    # not by submodel, so it handles any number of submodels (disk + N cloud groups)
-    # in one pass. (The old `length(startInds) > 2` recursion sliced rings without
-    # slicing the camera/subModelStartInds and called itself positionally — broken.)
+    # not by submodel, so it handles any number of submodels (disk + N cloud groups).
     diskFlagRing = [!(typeof(r.ϕ) == Float64 && typeof(r.r) == Float64) for r in m.rings]
     iDisk = m.rings[diskFlagRing][1].i
     for ring in m.rings[diskFlagRing]
@@ -260,8 +258,7 @@ function removeDiskObscuredClouds!(m::model,rotate3D::Function=rotate3D_scalar)
         return m
     end
     # Classifies rings by type (disk vs cloud), not submodel, so any number of
-    # submodels works in one pass. (The old `length(startInds) > 2` recursion sliced
-    # rings without the camera/subModelStartInds and was logically redundant.)
+    # submodels works in one pass. 
     removeFlag = falses(length(m.rings))
     diskRingInds = [i for i in 1:length(m.rings) if !(typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64)]
     cloudRingInds = [i for i in 1:length(m.rings) if typeof(m.rings[i].ϕ) == Float64 && typeof(m.rings[i].r) == Float64]

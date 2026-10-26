@@ -49,7 +49,7 @@ _rt_grid_block(gridArrays, pixelΔA, pixelα, pixelβ, npix) = _RtGridBlock(
     gridArrays, pixelΔA, pixelα, pixelβ, npix,
     isempty(gridArrays.rMin) ? Inf : Float64(minimum(gridArrays.rMin)))
 
-# Build the (host-side) raytrace metadata for a combined model, reusing the audited host output-grid
+# Build the (host-side) raytrace metadata for a combined model, reusing the host output-grid
 # and submodel machinery. The host `_rt_build_output` already unions all continuous submodels into one
 # grid, so this is a single block. Flat arrays only -- `gpu(m)` adapts the result to the device.
 function _rt_build_meta(m::model; T=Float64)
@@ -306,7 +306,7 @@ raytrace!(rm::ResidentModel; IRatios::Union{Float64,Array{Float64,}}=1.0, τCutO
     _rt_resident_raytrace(rm; IRatios=IRatios, τCutOff=τCutOff, raytraceFreeClouds=raytraceFreeClouds)
 
 # ======================================================================================
-# Phase 2: raytrace metadata built ON-DEVICE by the construction path, so a model assembled with
+# raytrace metadata built ON-DEVICE by the construction path, so a model assembled with
 # residentDiskWindModel/residentCloudModel and combined with `+` can be raytraced without any host
 # build. The output-pixel grid for a single DiskWind submodel is its own camera grid (pixel slot =
 # disk point's flat index, ΔA/α/β = its columns), so the only new on-device array is `pixelKeys`.
