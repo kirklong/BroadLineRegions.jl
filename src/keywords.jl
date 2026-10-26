@@ -7,6 +7,7 @@ const _ASCII_KEYWORDS = Dict{Symbol,Symbol}(
     :r_bar=>:r̄, :n_phi=>:nϕ, :alpha_rm=>:αRM,
     :phi_min=>:ϕMin, :phi_max=>:ϕMax, :tau_cutoff=>:τCutOff,
     :v_r_frac=>:vᵣFrac, :sigma_rho_r=>:σρᵣ, :sigma_rho_c=>:σρc,
+    :sigma_rho_relative=>:σρRelative,
     :sigma_theta_r=>:σΘᵣ, :sigma_theta_c=>:σΘc, :sigma_t=>:σₜ,
     :delta_a=>:ΔA, :delta_r=>:Δr, :delta_phi=>:Δϕ)
 
@@ -185,7 +186,7 @@ _resident_keywords(::Val{:residentDiskWindModel}) = (:nr, :nϕ, :scale, :rot, :�
     :τ, :intensity, :velocity, :backend, :T)
 _resident_keywords(::Val{:residentCloudModel}) = (:μ, :β, :F, :rₛ, :θₒ, :γ, :ξ, :i,
     :rescale, :ηₒ, :η₁, :αRM, :rNorm, :intensity, :κ, :velocity, :σρᵣ, :σρc,
-    :σΘᵣ, :σΘc, :θₑ, :fEllipse, :fFlow, :σₜ, :τ, :backend, :T)
+    :σΘᵣ, :σΘc, :θₑ, :fEllipse, :fFlow, :σₜ, :σρRelative, :τ, :backend, :T)
 
 function _profile_keywords(name)
     n = name isa Function ? :function : Symbol(name)
@@ -203,7 +204,7 @@ function _check_resident_keywords(kw, own, target; reserved=())
             push!(inactive, :rescale)
         end
         get(kw, :velocity, :circular) === :circular &&
-            append!(inactive, (:σρᵣ, :σρc, :σΘᵣ, :σΘc, :θₑ, :fEllipse, :fFlow, :σₜ))
+            append!(inactive, (:σρᵣ, :σρc, :σΘᵣ, :σΘc, :θₑ, :fEllipse, :fFlow, :σₜ, :σρRelative))
     else
         get(kw, :intensity, nothing) === nothing || append!(inactive, (:f1, :f2, :f3, :f4, :α))
         get(kw, :velocity, nothing) === nothing || append!(inactive, (:rₛ, :vᵣFrac, :inflow))

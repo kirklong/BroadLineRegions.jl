@@ -377,7 +377,7 @@ end
 @inline function _rt_build_cloud_scalar(::Type{T}, key0::UInt32, key1::UInt32, cloudInd::UInt32,
         μ::T, β::T, F::T, rₛ::T, θₒ::T, γ::T, ξ::T, inc::T, rescale::T,
         ηₒ::T, η₁::T, αRM::T, rNorm::T, useCloudI::Bool, κ::T, useTurbulent::Bool,
-        σρᵣ::T, σρc::T, σΘᵣ::T, σΘc::T, θₑ::T, fEllipse::T, fFlow::T, σₜ::T) where {T<:Real}
+        σρᵣ::T, σρc::T, σΘᵣ::T, σΘc::T, θₑ::T, fEllipse::T, fFlow::T, σₜ::T, σρRelative::Bool=false) where {T<:Real}
     sini, cosi = sincos(inc)
     ϕ₀ = _cloud_uniform(T, key0, key1, cloudInd, 0) * T(2π)
     uθ = _cloud_uniform(T, key0, key1, cloudInd, 1)
@@ -414,7 +414,8 @@ end
         uE = _cloud_uniform(T, key0, key1, cloudInd, n); n += 1
         zρ, n = _cloud_normal(T, key0, key1, cloudInd, n)
         zΘ, n = _cloud_normal(T, key0, key1, cloudInd, n)
-        ρ = uE < fEllipse ? vc + zρ * σρc : vc + zρ * σρᵣ
+        σρ = uE < fEllipse ? σρc : σρᵣ
+        ρ = vc + zρ * (σρRelative ? σρ * vc : σρ)   # σρRelative: σρ is a fraction of vc (like σₜ)
         Θ = uE < fEllipse ? T(π) / 2 + zΘ * σΘc :
             (fFlow < T(0.5) ? zΘ * σΘᵣ + (T(π) - θₑ) : zΘ * σΘᵣ + θₑ)
         vx = sqrt(T(2)) * ρ * cos(Θ)
@@ -444,12 +445,12 @@ end
     outv, outI, outΔA, outτ, outη = out.v, out.I, out.ΔA, out.τ, out.η
     outx, outy, outz, outα, outβ, outreflect = out.x, out.y, out.z, out.α, out.β, out.reflect
     (key0, key1, μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm, useCloudI, κ, useTurbulent,
-        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, τval) = P
+        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, τval, σρRelative) = P
     T = eltype(outr)
     cloudInd = p % UInt32
     r, ϕ, ϕ₀, i, rot, θ, v, I, ΔA, _, η, x, y, z, reflect = _rt_build_cloud_scalar(
         T, key0, key1, cloudInd, μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm,
-        useCloudI, κ, useTurbulent, σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ)
+        useCloudI, κ, useTurbulent, σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, σρRelative)
     outr[p] = r
     outϕ[p] = ϕ
     outϕ₀[p] = ϕ₀
@@ -505,7 +506,7 @@ function _fill_cloud_modelarrays!(ma::ModelArrays, seed::Integer; μ::Real, β::
         θₒ::Real, γ::Real, ξ::Real, i::Real, rescale::Real, ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
         useCloudI::Bool=false, κ::Real=0.0, useTurbulent::Bool=false, σρᵣ::Real=0.0, σρc::Real=0.0,
         σΘᵣ::Real=0.0, σΘc::Real=0.0, θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0,
-        τ::Real=0.0, backend=KernelAbstractions.CPU())
+        τ::Real=0.0, σρRelative::Bool=false, backend=KernelAbstractions.CPU())
     T = eltype(ma.r)
     s = seed % UInt64
     key0 = UInt32(s & 0xffffffff)
@@ -513,7 +514,7 @@ function _fill_cloud_modelarrays!(ma::ModelArrays, seed::Integer; μ::Real, β::
     P = (key0, key1, T(μ), T(β), T(F), T(rₛ),
         T(θₒ), T(γ), T(ξ), T(i), T(rescale), T(ηₒ), T(η₁), T(αRM), T(rNorm),
         useCloudI, T(κ), useTurbulent, T(σρᵣ), T(σρc), T(σΘᵣ), T(σΘc), T(θₑ),
-        T(fEllipse), T(fFlow), T(σₜ), T(τ))
+        T(fEllipse), T(fFlow), T(σₜ), T(τ), σρRelative)
     kernel! = _rt_build_cloud_kernel!(backend)
     event = kernel!(ma, P; ndrange=length(ma.r))
     event !== nothing && wait(event)
@@ -543,6 +544,7 @@ end
 - `σΘc::Real=0.0`: Circular-orbit angular dispersion, ASCII alias=`sigma_theta_c`.
 - `θₑ::Real=0.0`: Velocity-space tilt angle, in radians, ASCII alias=`theta_e`.
 - `σₜ::Real=0.0`: Turbulent velocity dispersion, ASCII alias=`sigma_t`.
+- `σρRelative::Bool=false`: If true, `σρᵣ`/`σρc` are fractions of the local circular speed (like `σₜ`), ASCII alias=`sigma_rho_relative`.
 
 Build a Pancoast-style cloud model **directly on `backend`** as a device-resident
 [`ResidentModel`](@ref) — the on-device counterpart of `cloudModel(nClouds; rng=:philox, seed=…)`.
@@ -563,6 +565,7 @@ Two built-in physics options are supported on-device (selected per call):
 - **velocity** — `vCircularCloud` (`velocity=:circular`) or the Pancoast
   `vCloudTurbulentEllipticalFlow` (`velocity=:turbulent`, parameters `σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse,
   fFlow, σₜ`). The turbulent path draws extra normals/uniform per cloud from the same substream.
+  `σρRelative=true` makes `σρᵣ, σρc` fractions of the local circular speed (like `σₜ`), not speeds in c.
 
 For physics beyond these built-ins, build on the host and call `gpu(m)`.
 
@@ -573,7 +576,7 @@ For physics beyond these built-ins, build on the host and call `gpu(m)`.
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0,
         intensity::Symbol=:isotropic, κ::Real=0.0,
         velocity::Symbol=:circular, σρᵣ::Real=0.0, σρc::Real=0.0, σΘᵣ::Real=0.0, σΘc::Real=0.0,
-        θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0, τ::Real=0.0,
+        θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0, σρRelative::Bool=false, τ::Real=0.0,
         backend=KernelAbstractions.CPU(), T=Float64)
     T <: Real || throw(ArgumentError("element type T must be <: Real, got $T"))
     _check_gpu_eltype(backend, T)
@@ -585,7 +588,7 @@ For physics beyond these built-ins, build on the host and call `gpu(m)`.
         rescale=rescale, ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm,
         useCloudI=(intensity === :cloud), κ=κ, useTurbulent=(velocity === :turbulent),
         σρᵣ=σρᵣ, σρc=σρc, σΘᵣ=σΘᵣ, σΘc=σΘc, θₑ=θₑ, fEllipse=fEllipse, fFlow=fFlow, σₜ=σₜ, τ=τ,
-        backend=backend, T=T)
+        σρRelative=σρRelative, backend=backend, T=T)
     return ResidentModel(ma, backend, 1, _rt_cloud_meta(ma, backend, T))
 end
 
@@ -610,6 +613,7 @@ end
 - `σΘc`: Circular-orbit angular dispersion, ASCII alias=`sigma_theta_c`.
 - `θₑ`: Velocity-space tilt angle, in radians, ASCII alias=`theta_e`.
 - `σₜ`: Turbulent velocity dispersion, ASCII alias=`sigma_t`.
+- `σρRelative`: If true, `σρᵣ`/`σρc` are fractions of the local circular speed (like `σₜ`), ASCII alias=`sigma_rho_relative`.
 
 Build a cloud model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the GPU
 counterpart of [`residentCloudModel`](@ref), defaulting to `Float32`. Requires a GPU extension
