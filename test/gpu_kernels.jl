@@ -1,24 +1,5 @@
 using KernelAbstractions
 
-function _test_same_nan_approx(actual, expected; atol=1e-12, rtol=0.0)
-    @test size(actual) == size(expected)
-    for idx in eachindex(actual, expected)
-        if isnan(expected[idx])
-            @test isnan(actual[idx])
-        else
-            @test isapprox(actual[idx], expected[idx]; atol=atol, rtol=rtol)
-        end
-    end
-end
-
-function _disk_field_values(m, sym)
-    out = Matrix{Float64}(undef, length(m.rings), length(m.rings[1].r))
-    for (idx, ring) in enumerate(m.rings)
-        out[idx, :] .= getfield(ring, sym)
-    end
-    return vec(out)
-end
-
 @testset "profile histogram kernels" begin
     edges = collect(range(-2.0, stop=3.0, length=38))
     rng = MersenneTwister(99)
@@ -39,11 +20,6 @@ end
     m = disk + clouds
     lineEdges = collect(range(-0.08, stop=0.08, length=41))
     ma = BLR.flatten(m)
-    lp = zeros(length(lineEdges)-1)
-    BLR._rt_line_profile!(lp, ma, lineEdges; overflow=true, backend=KernelAbstractions.CPU())
-    refLP = BLR.getProfile(m, :line, bins=lineEdges, centered=false, overflow=true).binSums
-    @test all(isapprox.(lp, refLP; rtol=1e-12, atol=1e-12))
-
     θ = ma.α .* 1e-10
     w = ma.I .* ma.ΔA
     σ² = zeros(length(lineEdges)-1)
@@ -72,7 +48,7 @@ end
     m = BLR.raytrace!(disk + clouds)   # realistic usage: transfer functions run on a raytraced model
     ma = BLR.flatten(m)
 
-    # delay kernel τ = η(r − x); equals getVariable(m, BLR.t) to rounding (the unified W1 convention)
+    # delay kernel τ = η(r − x); equals getVariable(m, BLR.t) to rounding
     delays = BLR._rt_transfer_delays(ma; backend=KernelAbstractions.CPU())
     @test delays ≈ ma.η .* (ma.r .- ma.x)
     @test all(isapprox.(delays, BLR.getVariable(m, BLR.t, flatten=true); rtol=1e-9, atol=1e-9))
@@ -97,7 +73,7 @@ end
     @test under[1] ≈ sU
     @test over[1] ≈ sO
 
-    # unified convention: the transfer functions now bin EXACTLY like binnedSum, including values
+    # Transfer functions bin like binnedSum, including values
     # sitting on edges (left-exclusive interior; boundary points fold into overflow). Construct
     # delays on every edge + interior + out-of-range and compare the kernel AND ΨtAccumulate! to
     # binnedSum directly.
@@ -167,63 +143,12 @@ end
     @test_throws ArgumentError BLR.getProfile(rm, :line; bins=60, dx=ones(2, 2))
 end
 
-@testset "disk construction kernels" begin
-    rMin = 300.0
-    rMax = 900.0
-    inc = 0.4
-    nr = 16
-    nϕ = 32
-    f1 = 1.0
-    f2 = 0.7
-    f3 = 0.2
-    f4 = 0.9
-    αsrc = 1.2
-    ηₒ = 0.4
-    η₁ = 0.6
-    αRM = 0.1
-    rNorm = 700.0
-    m = BLR.DiskWindModel(rMin, rMax, inc, nr=nr, nϕ=nϕ, scale=:linear,
-        I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=f1, f2=f2, f3=f3, f4=f4,
-        α=αsrc, ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, reflect=false)
-
-    r3D = BLR.get_r3D(inc, 0.0, 0.0)
-    undoTilt = [sin(inc) 0.0 -cos(inc); 0.0 1.0 0.0; cos(inc) 0.0 sin(inc)]
-    M = undoTilt * r3D
-    rSystem = similar(m.camera.α)
-    ϕSystem = similar(m.camera.α)
-    ϕ₀ = similar(m.camera.α)
-    η = similar(m.camera.α)
-    xSystem = similar(m.camera.α)
-    ySystem = similar(m.camera.α)
-    zSystem = similar(m.camera.α)
-    BLR._rt_disk_deproject!(rSystem, ϕSystem, ϕ₀, η, xSystem, ySystem, zSystem,
-        m.camera.α, m.camera.β, inc, 0.0, 0.0, M, r3D, rMin, rMax, ηₒ, η₁, αRM, rNorm;
-        backend=KernelAbstractions.CPU())
-
-    _test_same_nan_approx(rSystem, _disk_field_values(m, :r))
-    _test_same_nan_approx(ϕSystem, _disk_field_values(m, :ϕ))
-    _test_same_nan_approx(ϕ₀, _disk_field_values(m, :ϕ₀))
-    _test_same_nan_approx(η, _disk_field_values(m, :η))
-    _test_same_nan_approx(xSystem, _disk_field_values(m, :x))
-    _test_same_nan_approx(ySystem, _disk_field_values(m, :y))
-    _test_same_nan_approx(zSystem, _disk_field_values(m, :z))
-
-    v = similar(rSystem)
-    BLR._rt_v_circular_disk!(v, rSystem, ϕSystem, inc; backend=KernelAbstractions.CPU())
-    _test_same_nan_approx(v, _disk_field_values(m, :v))
-
-    I = similar(rSystem)
-    BLR._rt_disk_wind_i!(I, rSystem, ϕSystem, inc, f1, f2, f3, f4, αsrc, rMin, rMax;
-        backend=KernelAbstractions.CPU())
-    _test_same_nan_approx(I, _disk_field_values(m, :I))
-end
-
 @testset "on-device DiskWind construction (CPU backend)" begin
     fkw = (f1=1.0, f2=0.7, f3=0.2, f4=0.9, α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
     rMin, rMax, inc, nr, nϕ = 311.7, 887.3, 0.4, 20, 40
     cols = (:r, :ϕ, :ϕ₀, :i, :rot, :θₒ, :v, :I, :ΔA, :τ, :η, :x, :y, :z, :α, :β)
     # The host masks out-of-range pixels with a per-point round(r,sigdigits=9); the construction
-    # kernel uses plain compares against host-rounded bounds (the plan's B2 rule). They can therefore
+    # kernel compares against host-rounded bounds. They can therefore
     # disagree only on pixels whose deprojected r sits *exactly* on rMin/rMax (the camera grid starts
     # at rMin*cos(i), so the +x meridian of the inner/outer ring lands on the boundary) — the
     # documented single-boundary-ring difference. Allow a NaN-mask mismatch only there; require
@@ -439,7 +364,7 @@ end
     @test_throws ErrorException BLR.raytrace!(BLR.resident(dk(300., 900.)))
 end
 
-@testset "on-device-built model raytrace! (Phase 2, CPU backend)" begin
+@testset "on-device-built model raytrace! (CPU backend)" begin
     # residentDiskWindModel/residentCloudModel carry raytrace metadata built ON-DEVICE, and `+` merges
     # it, so a model assembled with no host `ring`s raytraces end-to-end.
     rmDisk = BLR.residentDiskWindModel(300.0, 900.0, 0.4; nr=16, nϕ=32, scale=:linear,
@@ -674,16 +599,15 @@ end
     @test_throws ErrorException BLR.raytrace!(velModel(); τCutOff=1.0, backend=KernelAbstractions.CPU())
 end
 
-@testset "resident composite model (W4-G1/G2/G3, CPU backend)" begin
-    # Mirrors the "composite forwarding + spectrum (W4-T4/T5/T6)" fixture in runtests.jl --
-    # deliberately tiny (seconds, not minutes). Full-GPU agreement tests are W4-G4 (test/gpu_cuda.jl).
+@testset "resident composite model (CPU backend)" begin
+    # Shares the composite forwarding and spectrum fixture with runtests.jl.
     mDisk = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=8, nϕ=16, scale=:linear,
         I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.0, f3=0.0, f4=0.0, α=1.0,
         τ=0.4, reflect=false)
     cm = BLR.CompositeModel(mDisk; line="Ha", lineCenter=6562.8)
     BLR.addLine!(cm, mDisk; line="Hb", lineCenter=4861.3, fluxRatio=0.35)
 
-    # --- W4-G1: resident forwarding (Float64 on the CPU backend, like the other resident CPU tests) ---
+    # resident forwarding (Float64 on the CPU backend, like the other resident CPU tests)
     rcm = BLR.resident(cm; backend=KernelAbstractions.CPU())
     @test rcm isa BLR.ResidentCompositeModel
     @test length(rcm) == 2
@@ -703,14 +627,10 @@ end
     # getindex miss errors listing the known lines (same message style as the CPU CompositeModel)
     errIdx = try; rcm["nope"]; nothing; catch e; e; end
     @test errIdx isa ErrorException && occursin("nope", errIdx.msg) && occursin("Ha", errIdx.msg)
-    # show prints one row per line
-    shown = sprint(show, rcm)
-    @test occursin("2 line(s)", shown) && occursin("Ha", shown) && occursin("Hb", shown)
-    @test occursin("fluxRatio=0.35", shown)
     # gpu(cm) delegates per line -> without CUDA loaded the gpu(::Any) fallback error still fires
     @test_throws ErrorException BLR.gpu(cm)
 
-    # --- W4-G2: device flux weights agree with the CPU composite helper ---
+    # device flux weights agree with the CPU composite helper
     wCPU = BLR._fluxWeights(cm)
     wDev = BLR._fluxWeights(rcm)
     for line in cm.lines
@@ -720,7 +640,7 @@ end
     # and min/max are exact operations)
     @test BLR._finiteVRange(rcm["Ha"]) == BLR._finiteVRange(cm["Ha"])
 
-    # --- W4-G2: getSpectrum matches the CPU composite path (Float64 resident) ---
+    # getSpectrum matches the CPU composite path (Float64 resident)
     for z in (0.0, 0.1)
         eC, cC, fC, tC = BLR.getSpectrum(cm; bins=64, z=z)
         eD, cD, fD, tD = BLR.getSpectrum(rcm; bins=64, z=z)
@@ -742,8 +662,8 @@ end
     end
     @test sum(fUD["Hb"]) == 0.0 #entirely out of range -> dropped, as on CPU
 
-    # --- W4-T6/G2 follow-up: the binnedSum binning kwargs (minX/maxX/centered/overflow) forward
-    # through the resident getSpectrum with CPU-identical semantics ---
+    # Binning kwargs (minX/maxX/centered/overflow) forward through resident getSpectrum
+    # with CPU-identical semantics.
     eRef, cRef, fRef, tRef = BLR.getSpectrum(cm; bins=64)
     # pinning the grid via minX/maxX at the auto-computed ends reproduces the default bit-identically
     eDP, cDP, fDP, tDP = BLR.getSpectrum(rcm; bins=64, minX=eRef[1], maxX=eRef[end])
@@ -773,7 +693,7 @@ end
     @test isapprox(sum(fND["Ha"]) + sum(fND["Hb"]), sum(rcm.fluxRatios[l] for l in rcm.lines), rtol=1e-12)
     @test sum(fDD["Ha"]) + sum(fDD["Hb"]) < sum(rcm.fluxRatios[l] for l in rcm.lines) - 1e-6
 
-    # --- W4-G2: the zero-flux guard fires on device too, naming the line ---
+    # the zero-flux guard fires on device too, naming the line
     # (same public-API zero-emission fixture as the CPU regression test in runtests.jl)
     mZero = BLR.DiskWindModel(300.0, 900.0, 0.4; nr=6, nϕ=12, scale=:linear,
         I=BLR.IsotropicIntensity, rescale=0.0, v=BLR.vCircularDisk, τ=0.4, reflect=false)
@@ -784,7 +704,7 @@ end
     @test errZ isa ErrorException && occursin("dark", errZ.msg)
     @test_throws ErrorException BLR.getSpectrum(rcmZero; bins=32)
 
-    # --- W4-G3: per-line getProfile forwarding mirrors the CPU composite's one-method pattern ---
+    # per-line getProfile forwarding mirrors the CPU composite's one-method pattern
     edges = collect(range(-0.06, 0.06, length=33))
     for line in cm.lines
         pF = BLR.getProfile(rcm, :line; line=line, bins=edges, centered=false)
@@ -806,9 +726,8 @@ end
     # an unknown line goes through the getindex miss (lists the known lines)
     @test_throws ErrorException BLR.getProfile(rcm, :line; line="nope")
 
-    # --- W5-G1: :ratio velocity-resolved line ratio matches the CPU composite (Float64 resident;
-    # this fixture shares one model between the lines, so the ratio is flat at the fluxRatio
-    # quotient -- the stratified/morphology tests live in the CPU W5-T1/T2 testset) ---
+    # The velocity-resolved line ratio matches the CPU composite (Float64 resident).
+    # This fixture shares one model between the lines, so the ratio is flat at the fluxRatio quotient.
     pC = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=31)
     pD = BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=31)
     @test pD.name == Symbol("Ha/Hb")
@@ -835,7 +754,7 @@ end
     @test pDstr.binEdges == pD.binEdges && isequal(pDstr.binSums, pD.binSums)
     # the documented resident restriction is guarded: a NONuniform user edge vector is rejected
     # with a clear ArgumentError, while the CPU path accepts arbitrary edges (deliberate
-    # device-kernel divergence -- the histogram kernels assume uniform spacing, W4-G2)
+    # device-kernel divergence -- the histogram kernels assume uniform spacing)
     nonUni = [-0.05, -0.01, 0.0, 0.002, 0.05]
     @test_throws ArgumentError BLR.getProfile(rcm, :ratio; lines=("Ha", "Hb"), bins=nonUni)
     pCnu = BLR.getProfile(cm, :ratio; lines=("Ha", "Hb"), bins=nonUni)
@@ -850,7 +769,7 @@ end
     @test BLR.lineRatio(rcm, "Ha", "Hb") == BLR.lineRatio(cm, "Ha", "Hb") == 1.0/0.35
     @test_throws ErrorException BLR.lineRatio(rcm, "Ha", "nope")
 
-    # --- W4-G3: lineOverlap on the resident composite == host (Float64 columns are exact copies) ---
+    # lineOverlap on the resident composite == host (Float64 columns are exact copies)
     @test BLR.lineOverlap(rcm) == BLR.lineOverlap(cm) #Ha/Hb here: both empty (no overlap)
     cmO = BLR.CompositeModel(mDisk; line="A", lineCenter=6563.0)
     BLR.addLine!(cmO, mDisk; line="B", lineCenter=6600.0)

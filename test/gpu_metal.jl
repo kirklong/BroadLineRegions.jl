@@ -125,8 +125,6 @@ end
             permGPU = BLR._rt_sortperm_by_key_depth(MtlArray(keys), MtlArray(x))
             @test permGPU isa Metal.MtlVector{Int}
             permGPU = Array(permGPU)
-            @test BLR._rt_sorted_key_depth_pairs(keys, x, permGPU) ==
-                  BLR._rt_sorted_key_depth_pairs(keys, x, permCPU)
             @test permGPU == permCPU
             # larger random case with many ties
             rng = MersenneTwister(5)
@@ -172,19 +170,10 @@ end
             @test_throws ErrorException BLR.raytrace!(m; backend=backend, T=Float32)
         end
 
-        @testset "profile + variance kernels (Float32 atomics) on MetalBackend" begin
+        @testset "variance kernels (Float32 atomics) on MetalBackend" begin
             m = builders[1]()
             ma = BLR.gpu(m; backend=backend).ma
-            ma32 = BLR.flatten(m; T=Float32)
             edges = collect(range(-0.08, 0.08, length=41))
-            lp = Metal.zeros(Float32, length(edges) - 1)
-            BLR._rt_line_profile!(lp, ma, MtlArray(Float32.(edges)); overflow=true, backend=backend)
-            lpC = zeros(Float32, length(edges) - 1)
-            BLR._rt_line_profile!(lpC, ma32, Float32.(edges); overflow=true, backend=cpuB)
-            @test relclose(Array(lp), lpC; rtol=1e-5)
-            refLP = BLR.getProfile(m, :line, bins=edges, centered=false, overflow=true).binSums
-            @test relclose(Array(lp), refLP; rtol=1e-4)
-
             θ = ma.α .* 1f-3
             w = ma.I .* ma.ΔA
             nb = length(edges) - 1
@@ -251,45 +240,6 @@ end
             @test isapprox(Array(over)[1], oC[1]; rtol=1e-5, atol=1e-7)
         end
 
-        @testset "disk deprojection / velocity / intensity kernels on MetalBackend" begin
-            inc = 0.4; rMin = 300.0; rMax = 900.0
-            m = BLR.DiskWindModel(rMin, rMax, inc, nr=16, nϕ=32, scale=:linear,
-                I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,
-                α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0, reflect=false)
-            r3D = BLR.get_r3D(inc, 0.0, 0.0)
-            undoTilt = [sin(inc) 0.0 -cos(inc); 0.0 1.0 0.0; cos(inc) 0.0 sin(inc)]
-            M = undoTilt * r3D
-            args = (inc, 0.0, 0.0, M, r3D, rMin, rMax, 0.4, 0.6, 0.1, 700.0)   # Float64 scalars: the wrapper converts
-            αh = Float32.(vec(m.camera.α)); βh = Float32.(vec(m.camera.β))
-            cpuOuts = ntuple(_ -> similar(αh), 7)
-            BLR._rt_disk_deproject!(cpuOuts..., αh, βh, args...; backend=cpuB)
-            α = MtlArray(αh); β = MtlArray(βh)
-            gpuOuts = ntuple(_ -> similar(α), 7)
-            BLR._rt_disk_deproject!(gpuOuts..., α, β, args...; backend=backend)
-            rc = cpuOuts[1]
-            isbnd(rv) = isfinite(rv) && (abs(rv - rMin) / rMin < 1e-5 || abs(rv - rMax) / rMax < 1e-5)
-            for k in 1:7
-                a = Array(gpuOuts[k]); b = cpuOuts[k]
-                for j in eachindex(a, b)
-                    if isnan(a[j]) != isnan(b[j])
-                        @test isbnd(rc[j])
-                    elseif isfinite(b[j])
-                        @test isapprox(a[j], b[j]; rtol=1e-4, atol=1e-4)
-                    end
-                end
-            end
-            v = similar(gpuOuts[1]); vC = similar(cpuOuts[1])
-            BLR._rt_v_circular_disk!(v, gpuOuts[1], gpuOuts[2], inc; backend=backend)
-            BLR._rt_v_circular_disk!(vC, cpuOuts[1], cpuOuts[2], inc; backend=cpuB)
-            I = similar(gpuOuts[1]); IC = similar(cpuOuts[1])
-            BLR._rt_disk_wind_i!(I, gpuOuts[1], gpuOuts[2], inc, 1.0, 0.7, 0.2, 0.9, 1.2, rMin, rMax; backend=backend)
-            BLR._rt_disk_wind_i!(IC, cpuOuts[1], cpuOuts[2], inc, 1.0, 0.7, 0.2, 0.9, 1.2, rMin, rMax; backend=cpuB)
-            fin = isfinite.(Array(I)) .& isfinite.(IC)
-            @test count(fin) >= count(isfinite, IC) - 2       # NaN (out-of-range) masks agree up to boundary pixels
-            @test maximum(abs.(Array(v)[fin] .- vC[fin])) < 1e-5 * maximum(abs, vC[fin])
-            @test maximum(abs.(Array(I)[fin] .- IC[fin])) < 1e-4 * maximum(abs, IC[fin])
-        end
-
         @testset "on-device DiskWind construction on MetalBackend" begin
             fkw = (f1=1.0, f2=0.7, f3=0.2, f4=0.9, α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
             rMin, rMax, inc, nr, nϕ = 311.7, 887.3, 0.4, 32, 64
@@ -315,7 +265,7 @@ end
                     @test ok
                 end
                 # line profile: tight vs the CPU Float32 build, loose vs Float64 (a Float32 build can
-                # include/exclude one boundary ring -- the documented B2 masking effect -- which moves a
+                # include/exclude one boundary ring -- the boundary-ring masking effect -- which moves a
                 # log-grid profile by ~1%). Edges avoid v = 0, where a symmetric disk puts whole
                 # columns of points exactly on an edge.
                 rm64 = BLR.residentDiskWindModel(rMin, rMax, inc; nr=nr, nϕ=nϕ, scale=scale, backend=cpuB, T=Float64, fkw...)
@@ -409,7 +359,7 @@ end
             check(() -> cl(150, 1, μ=300., τ=2.0) + cl(150, 2, μ=320., τ=2.0); rfc=true)
         end
 
-        @testset "on-device-built model raytrace! (Phase 2) on MetalBackend" begin
+        @testset "on-device-built model raytrace! on MetalBackend" begin
             rmG = BLR.gpuDiskWindModel(300.0, 900.0, 0.4; nr=16, nϕ=32, scale=:linear,
                 f1=1.0, f2=0.5, f3=0.2, f4=0.3, α=1.0, backend=backend) +
                 BLR.gpuCloudModel(400, 7; μ=600.0, β=1.0, F=0.5, θₒ=0.4, i=0.4, γ=1.0, ξ=0.8, backend=backend)

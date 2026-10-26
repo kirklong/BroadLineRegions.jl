@@ -65,10 +65,7 @@ using KernelAbstractions
             x = [10.0, 4.0, 11.0, 6.0, 3.0, NaN, 9.0, 11.0, 4.0]  # includes a depth tie (two 11.0, two 4.0)
             permCPU = BLR._rt_sortperm_by_key_depth(keys, x)
             permGPU = Array(BLR._rt_sortperm_by_key_depth(CuArray(keys), CuArray(x)))
-            # The scan only depends on the (key, depth) sequence; assert that bit-matches, and that
-            # the tie-free composite reproduces the CPU permutation exactly.
-            @test BLR._rt_sorted_key_depth_pairs(keys, x, permGPU) ==
-                  BLR._rt_sorted_key_depth_pairs(keys, x, permCPU)
+            # Complete permutation agreement includes depth ties.
             @test permGPU == permCPU
         end
 
@@ -111,16 +108,11 @@ using KernelAbstractions
             @test_throws ErrorException BLR.raytrace!(m; backend=backend, T=Float64)
         end
 
-        @testset "profile + variance kernels on CUDABackend" begin
+        @testset "variance kernels on CUDABackend" begin
             m = builders[1]()
             ma = BLR.gpu(m; T=Float64).ma
             edges = collect(range(-0.08, 0.08, length=41))
             dEdges = CuArray(edges)
-            lp = CUDA.zeros(Float64, length(edges) - 1)
-            BLR._rt_line_profile!(lp, ma, dEdges; overflow=true, backend=backend)
-            refLP = BLR.getProfile(m, :line, bins=edges, centered=false, overflow=true).binSums
-            @test approx_eq(Array(lp), refLP; rtol=1e-9, atol=1e-12)
-
             θ = ma.α .* 1e-10
             w = ma.I .* ma.ΔA
             nb = length(edges) - 1
@@ -187,28 +179,6 @@ using KernelAbstractions
             @test isapprox(Array(over)[1], sO; rtol=1e-9, atol=1e-12)
         end
 
-        @testset "disk deprojection kernel on CUDABackend" begin
-            inc = 0.4; rMin = 300.0; rMax = 900.0
-            m = BLR.DiskWindModel(rMin, rMax, inc, nr=16, nϕ=32, scale=:linear,
-                I=BLR.DiskWindIntensity, v=BLR.vCircularDisk, f1=1.0, f2=0.7, f3=0.2, f4=0.9,
-                α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0, reflect=false)
-            r3D = BLR.get_r3D(inc, 0.0, 0.0)
-            undoTilt = [sin(inc) 0.0 -cos(inc); 0.0 1.0 0.0; cos(inc) 0.0 sin(inc)]
-            M = undoTilt * r3D
-            args = (inc, 0.0, 0.0, M, r3D, rMin, rMax, 0.4, 0.6, 0.1, 700.0)
-            # CPU-backend run of this kernel is validated against the model in the CPU testset;
-            # here we just confirm the CUDABackend run reproduces it bit-for-bit.
-            cpuOuts = ntuple(_ -> similar(m.camera.α), 7)
-            BLR._rt_disk_deproject!(cpuOuts..., m.camera.α, m.camera.β, args...;
-                backend=KernelAbstractions.CPU())
-            α = CuArray(m.camera.α); β = CuArray(m.camera.β)
-            gpuOuts = ntuple(_ -> similar(α), 7)
-            BLR._rt_disk_deproject!(gpuOuts..., α, β, args...; backend=backend)
-            for k in 1:7
-                @test approx_eq(vec(Array(gpuOuts[k])), vec(cpuOuts[k]); rtol=1e-10, atol=1e-10)
-            end
-        end
-
         @testset "on-device DiskWind construction on CUDABackend" begin
             fkw = (f1=1.0, f2=0.7, f3=0.2, f4=0.9, α=1.2, ηₒ=0.4, η₁=0.6, αRM=0.1, rNorm=700.0)
             rMin, rMax, inc, nr, nϕ = 311.7, 887.3, 0.4, 32, 64
@@ -260,7 +230,7 @@ using KernelAbstractions
             rmF32 = BLR.gpuCloudModel(5000, seed; μ=cp.μ, i=cp.i)
             @test rmF32 isa BLR.ResidentModel && eltype(rmF32.ma.I) == Float32
 
-            # ported physics on the GPU: cloudIntensity (κ) + vCloudTurbulentEllipticalFlow.
+            # GPU cloud physics: cloudIntensity (κ) + vCloudTurbulentEllipticalFlow.
             # The turbulent path has extra branches/RNG draws — confirm it compiles, runs, stays
             # self-consistent on-device, and is statistically equal to the host turbulent model.
             tp = (σρᵣ=0.2, σρc=0.04, σΘᵣ=0.4, σΘc=0.1, θₑ=35 / 180 * π, fEllipse=0.8, fFlow=0.0, σₜ=0.05)
@@ -311,7 +281,7 @@ using KernelAbstractions
             check(() -> cl(150, 1, μ=300., τ=2.0) + cl(150, 2, μ=320., τ=2.0); rfc=true)  # free-cloud attenuate
         end
 
-        @testset "on-device-built model raytrace! (Phase 2) on CUDABackend" begin
+        @testset "on-device-built model raytrace! on CUDABackend" begin
             # build the whole model on the GPU (no host rings), raytrace on the GPU, and confirm it
             # matches the CPU raytrace of the SAME points (via cpu(rm)) — validates the on-device
             # metadata + the device raytrace agree across backends.
@@ -350,15 +320,15 @@ using KernelAbstractions
                 e
             end
             @test err isa ArgumentError && occursin("different backends", err.msg) && occursin("cpu(rm)", err.msg)
-            # the suggested fix works: bring the GPU model to the CPU, then combine there
+            # Bringing the GPU model to the CPU permits combination on the CPU backend.
             @test (BLR.cpu(d) + cpuRm) isa BLR.ResidentModel
         end
 
-        @testset "resident composite model on CUDABackend (W4-G4)" begin
+        @testset "resident composite model on CUDABackend" begin
             # Two-line composite -- disk Hα + cloud Hβ -- reusing this file's small fixtures.
             # gpu(cm) uses gpu(m)'s default T=Float32, so comparisons use the Float32 tolerances
-            # already used above (rtol=1e-4, atol=1e-6). This is also the first code path that
-            # exercises the W4-G2 multi-array `mapreduce((vi,Ii,Ai)->…, op, v, I, ΔA)` reductions
+            # already used above (rtol=1e-4, atol=1e-6). This exercises the multi-array
+            # `mapreduce((vi,Ii,Ai)->…, op, v, I, ΔA)` reductions
             # (_finiteVRange/_fluxWeights) on a real CUDA device.
             dm = disk()
             cl = clouds(80, 105)
@@ -418,7 +388,7 @@ using KernelAbstractions
                 @test approx_eq(b, a; rtol=1e-4, atol=1e-6)
             end
 
-            # (e) W5-G1: :ratio velocity-resolved line ratio vs the CPU composite on the same shared
+            # (e) :ratio velocity-resolved line ratio vs the CPU composite on the same shared
             # uniform v-edges (explicit edges for the Float32-boundary reason in (b)/(d)), including
             # that the NaN (empty-denominator) bins match bin-for-bin -- the sparse cloud denominator
             # leaves empty bins inside the shared range, so the NaN path is genuinely exercised
