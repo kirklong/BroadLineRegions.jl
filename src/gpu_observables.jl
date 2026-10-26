@@ -73,7 +73,7 @@ host `getProfile(::model, …)` semantics (binnedSum's left-exclusive bins). Cus
 custom `dx` integration element are not supported on the resident path (the model's `ΔA` is always used);
 pass a host `model` for either.
 """
-function getProfile(rm::ResidentModel, name::Union{String,Symbol,Function}; bins=100,
+@validated bins function getProfile(rm::ResidentModel, name::Union{String,Symbol,Function}; bins=100,
         dx::Union{Array{Float64,},Nothing}=nothing, kwargs...)
     isnothing(dx) || throw(ArgumentError("the GPU-resident getProfile does not accept a custom dx; use the host model path"))
     ma = rm.ma
@@ -151,7 +151,7 @@ end
 
 GPU-resident differential phase, matching `phase(::model, …)`.
 """
-function phase(rm::ResidentModel; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
+@validated bins function phase(rm::ResidentModel; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
         U::Vector{Float64}, V::Vector{Float64}, PA::Float64, BLRAng::Float64, bins=100, kwargs...)
     size(U) == size(V) || throw(ArgumentError("U and V must be the same size, got $(size(U)) and $(size(V))"))
     ma = rm.ma
@@ -182,7 +182,7 @@ end
 
 GPU-resident image second moment, matching `secondMoment(::model, …)`.
 """
-function secondMoment(rm::ResidentModel; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
+@validated bins function secondMoment(rm::ResidentModel; returnAvg::Bool=false, offAxisInds::Union{Nothing,Vector{Int}}=nothing,
         U::Vector{Float64}, V::Vector{Float64}, PA::Float64, BLRAng::Float64, bins=100, kwargs...)
     size(U) == size(V) || throw(ArgumentError("U and V must be the same size, got $(size(U)) and $(size(V))"))
     ma = rm.ma
@@ -289,6 +289,7 @@ uniform spacing; see `_rt_resident_edges`).
 function getSpectrum(rcm::ResidentCompositeModel; bins::Union{Int,Vector{Float64}}=100, z::Real=0.0,
         minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
         centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    _check_keywords(_normalize_keywords(kwargs), ())
     #shared wavelength range across all lines (observed frame): any side not pinned by the caller via
     #minX/maxX is auto-computed from per-line device v reductions (both pinned -> skip the reductions),
     #mirroring the CPU method
@@ -358,7 +359,7 @@ signature, branching at runtime (Julia cannot dispatch on keywords):
 - every other `name` requires the `line` keyword and forwards to the per-line `ResidentModel` method,
   whose restrictions apply (uniform bins only, no custom `dx`, no custom-`Function` profiles).
 """
-function getProfile(rcm::ResidentCompositeModel, name::Union{String,Symbol,Function};
+@validated bins function getProfile(rcm::ResidentCompositeModel, name::Union{String,Symbol,Function};
         line::Union{Nothing,String}=nothing, lines=nothing, kwargs...)
     if _isRatioName(name) #accepts :ratio and "ratio", like every other profile name's dual spelling
         line === nothing || error("getProfile(rcm, :ratio; ...): use `lines=(numerator, denominator)`, " *
@@ -385,6 +386,7 @@ function _ratioProfile(rcm::ResidentCompositeModel, lines::Tuple{String,String};
         bins::Union{Int,Vector{Float64}}=100, floor::Real=0.0,
         minX::Union{Real,Nothing}=nothing, maxX::Union{Real,Nothing}=nothing,
         centered::Bool=false, overflow::Union{Bool,Nothing}=nothing, kwargs...)
+    _check_keywords(_normalize_keywords(kwargs), ())
     a, b = lines
     rmA = rcm[a]; rmB = rcm[b] #errors listing the known lines on a miss
     floor >= 0.0 || error("getProfile(rcm, :ratio; ...): `floor` must be >= 0 (got $floor)")

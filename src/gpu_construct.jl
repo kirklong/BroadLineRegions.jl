@@ -177,7 +177,7 @@ use host construction + `gpu(m)` instead.
 Use `gpu`-backed construction (CUDA or Metal loaded) via `gpuDiskWindModel`; the default `CPU()` backend builds
 on the host and is mainly for testing the on-device pipeline without a GPU.
 """
-function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ::Int=256,
+@validated resident function residentDiskWindModel(rMin::Real, rMax::Real, i::Real; nr::Int=128, nϕ::Int=256,
         scale::Symbol=:log, rot::Real=0.0, θₒ::Real=0.0,
         f1::Real=NaN, f2::Real=NaN, f3::Real=NaN, f4::Real=NaN, α::Real=NaN,
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0, rₛ::Real=1.0,
@@ -209,10 +209,12 @@ counterpart of [`residentDiskWindModel`](@ref), defaulting to `Float32` (GeForce
 Apple GPUs have no FP64 at all). Requires a GPU extension (`using CUDA` or `using Metal`); the device
 is chosen by [`defaultGPUBackend`](@ref) unless `backend` is given.
 """
-gpuDiskWindModel(rMin::Real, rMax::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...) =
-    residentDiskWindModel(rMin, rMax, i; backend=backend, T=T, kwargs...)
-gpuDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...) =
-    residentDiskWindModel(r̄, rFac, α, i; backend=backend, T=T, kwargs...)
+@validated resident function gpuDiskWindModel(rMin::Real, rMax::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...)
+    _kw_residentDiskWindModel(rMin, rMax, i; backend=backend, T=T, kwargs...)
+end
+@validated resident function gpuDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; backend=defaultGPUBackend(), T=Float32, kwargs...)
+    _kw_residentDiskWindModel(r̄, rFac, α, i; backend=backend, T=T, kwargs...)
+end
 
 """
     residentDiskWindModel(r̄, rFac, α, i; rot=0.0, nr=128, nϕ=256, scale=:log, kwargs...) -> ResidentModel
@@ -220,12 +222,12 @@ gpuDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; backend=defaultGPUBac
 `r̄`/`rFac`/`α` parameterization (matching `DiskWindModel(r̄, rFac, α, i; ...)`): derives `rMin`/`rMax`
 via [`get_rMinMaxDiskWind`](@ref) and sets the intensity power-law to `α`.
 """
-function residentDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; rot::Real=0.0,
+@validated resident function residentDiskWindModel(r̄::Real, rFac::Real, α::Real, i::Real; rot::Real=0.0,
         nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
     (α != 1 / 2 && α != 3 / 2) || throw(ArgumentError("α cannot be 1/2 or 3/2 (divides by zero)"))
     r̄ > 0 || throw(ArgumentError("r̄ must be greater than 0"))
     rMin, rMax = get_rMinMaxDiskWind(Float64(r̄), Float64(rFac), Float64(α))
-    return residentDiskWindModel(rMin, rMax, i; nr=nr, nϕ=nϕ, scale=scale, rot=rot, α=α, kwargs...)
+    return _kw_residentDiskWindModel(rMin, rMax, i; nr=nr, nϕ=nϕ, scale=scale, rot=rot, α=α, kwargs...)
 end
 
 # ======================================================================================
@@ -513,7 +515,7 @@ Two built-in physics options are supported on-device (selected per call):
 
 For physics beyond these built-ins, build on the host and call `gpu(m)`.
 """
-function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Real=1.0, F::Real=0.5,
+@validated resident function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Real=1.0, F::Real=0.5,
         rₛ::Real=1.0, θₒ::Real=π / 2, γ::Real=1.0, ξ::Real=1.0, i::Real=0.0, rescale::Real=1.0,
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0,
         intensity::Symbol=:isotropic, κ::Real=0.0,
@@ -543,5 +545,6 @@ counterpart of [`residentCloudModel`](@ref), defaulting to `Float32`. Requires a
 is given. The Philox substreams are integer-exact, so the same `seed` draws the same uniforms on every
 backend.
 """
-gpuCloudModel(nClouds::Int, seed::Integer; backend=defaultGPUBackend(), T=Float32, kwargs...) =
-    residentCloudModel(nClouds, seed; backend=backend, T=T, kwargs...)
+@validated resident function gpuCloudModel(nClouds::Int, seed::Integer; backend=defaultGPUBackend(), T=Float32, kwargs...)
+    _kw_residentCloudModel(nClouds, seed; backend=backend, T=T, kwargs...)
+end

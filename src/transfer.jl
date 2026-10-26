@@ -4,7 +4,7 @@
 
 Calculate response function for use in reverberation mapping calculations.
 """
-function response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
+@validated callback function response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
     η = ηₒ + η₁*(r/rNorm)^αRM
     return η
 end

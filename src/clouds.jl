@@ -7,7 +7,7 @@ using Distributions, Random
 
 Returns a Gamma distribution with parameters derived from the input parameters as in Pancoast+ 2014 equations 7-10.
 """
-function getGamma(;μ::Float64,β::Float64,F::Float64) #parameters as in Pancoast+ 2014 equation 7-10
+@validated plain function getGamma(;μ::Float64,β::Float64,F::Float64) #parameters as in Pancoast+ 2014 equation 7-10
     α = β^(-2)
     θ = μ*β^2*(1-F)
     return Gamma(α,θ) #note -- doesn't work for real things? appears too small by factor of μF i.e. need to add μF to result to "shift"?
@@ -76,7 +76,7 @@ Generates a model `ring` struct for a single cloud drawn from a thick disk-like 
 # Returns:
 A model `ring` struct representing the properties of the cloud. 
 """
-function drawCloud(;μ::Float64=500.,β::Float64=1.0,F::Float64=0.5,ϕ₀::Float64=0.0,i::Float64=π/4,rot::Float64=0.0,rₛ::Float64=1.0,θₒ::Float64=0.0,θₒSystem::Float64=0.0,
+@validated cloud function drawCloud(;μ::Float64=500.,β::Float64=1.0,F::Float64=0.5,ϕ₀::Float64=0.0,i::Float64=π/4,rot::Float64=0.0,rₛ::Float64=1.0,θₒ::Float64=0.0,θₒSystem::Float64=0.0,
     I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,ξ::Float64=1.0,rng::AbstractRNG=Random.GLOBAL_RNG,kwargs...)
     # γ = getGamma(μ=μ,β=β,F=F)
     # r = getR(rₛ,γ)
@@ -91,7 +91,7 @@ function drawCloud(;μ::Float64=500.,β::Float64=1.0,F::Float64=0.5,ϕ₀::Float
     xyPlaneX = sini*xyzSys[1] - cosi*xyzSys[3] #undo_tilt = [sin(i) 0 -cos(i); 0 1 0; cos(i) 0 sin(i)] rows 1-2, row 3 unused
     xyPlaneY = xyzSys[2]
     ϕ = atan(xyPlaneY,xyPlaneX) #ϕ after rotation, measured from +x in disk plane
-    η = response(r;kwargs...)
-    return ring(r=r,i=i,v=v,I=I,ϕ=ϕ,ΔA=1.0,Δr=1.0,Δϕ=1.0,scale=nothing,rot=rot,θₒ=θₒ,ϕ₀=ϕ₀,reflect=reflect,rng=rng,η=η,
-        x=xyzSys[1],y=xyzSys[2],z=xyzSys[3];kwargs...) #cache the already-computed (post-reflection) system coordinates
+    η = _kw_response(r; (k=>v for (k,v) in pairs(kwargs) if k in acceptedKeywords(response))...)
+    return ring(Val(:unchecked);r=r,i=i,v=v,I=I,ϕ=ϕ,ΔA=1.0,Δr=1.0,Δϕ=1.0,scale=nothing,rot=rot,θₒ=θₒ,ϕ₀=ϕ₀,reflect=reflect,rng=rng,η=η,rₛ=rₛ,θₒSystem=θₒSystem,
+        x=xyzSys[1],y=xyzSys[2],z=xyzSys[3],kwargs...) #cache the already-computed (post-reflection) system coordinates
 end

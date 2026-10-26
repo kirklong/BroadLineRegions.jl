@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 module BroadLineRegions
 const BLR = BroadLineRegions
+include("keywords.jl")
 include("structs.jl")
 include("util.jl")
 include("gpu_arrays.jl")

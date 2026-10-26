@@ -410,3 +410,22 @@ using KernelAbstractions
         end
     end
 end
+
+@testset "CUDA ASCII keyword parity" begin
+    if CUDA.functional()
+        a = BLR.gpuCloudModel(32, 71; mu=200., beta=0.7, theta_o=0.3, gamma=1.2, xi=0.6,
+            r_s=2., kappa=0.2, intensity=:cloud, tau=0.4)
+        u = BLR.gpuCloudModel(32, 71; μ=200., β=0.7, θₒ=0.3, γ=1.2, ξ=0.6,
+            rₛ=2., κ=0.2, intensity=:cloud, τ=0.4)
+        for f in fieldnames(typeof(a.ma))
+            @test isequal(Array(getfield(a.ma,f)), Array(getfield(u.ma,f)))
+        end
+        opts = (; nr=6, f1=1.,f2=0.3,f3=0.2,f4=0.1)
+        d = BLR.gpuDiskWindModel(300.,900.,0.4; n_phi=12, alpha=1., r_s=2., eta_o=0.3, opts...)
+        e = BLR.gpuDiskWindModel(300.,900.,0.4; nϕ=12, α=1., rₛ=2., ηₒ=0.3, opts...)
+        @test isequal(Array(d.ma.I),Array(e.ma.I))
+        @test isequal(Array(d.ma.v),Array(e.ma.v))
+        @test_throws ArgumentError BLR.gpuCloudModel(0,71; misspelled=1.)
+        @test_throws ArgumentError BLR.gpuDiskWindModel(300.,900.,0.4; n_phi=12,nϕ=12)
+    end
+end

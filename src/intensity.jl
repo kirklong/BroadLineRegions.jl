@@ -122,7 +122,7 @@ Calculates the intensity from a disk-wind model of the BLR following the prescri
 # Returns:
 - intensity (arbitrary units) as a Vector{Float64}
 """
-function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64}, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
+@validated callback function DiskWindIntensity(;r::Union{Vector{Float64},Float64}, i::Float64, ϕ::Union{Vector{Float64},Float64}, f1::Float64, f2::Float64, f3::Float64, f4::Float64, α::Float64, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
     if typeof(r) == Float64 || typeof(ϕ) == Float64
         I = (r >= rMin && r <= rMax) ? DiskWind_I_(r, ϕ, i, f1, f2, f3, f4, α) : 0.0
     elseif typeof(r) == Vector{Float64} && typeof(ϕ) == Vector{Float64}
@@ -139,7 +139,7 @@ end
 
 Returns a constant intensity value at all radii and azimuthal angles, rescaled by `rescale` factor.
 """
-function IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, rescale::Float64=1.0, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
+@validated callback function IsotropicIntensity(;r::Union{Vector{Float64},Float64}, ϕ::Union{Vector{Float64},Float64}, rescale::Float64=1.0, rMin::Float64 = 0.0, rMax::Float64 = Inf, _...)
     if typeof(ϕ) == Float64 && typeof(r) == Float64
         I = (round(r,sigdigits=9) >= round(rMin,sigdigits=9) && round(r,sigdigits=9) <= round(rMax,sigdigits=9)) ? rescale : 0.0
     else
@@ -174,7 +174,7 @@ Calculate the intensity of the cloud at radius `r` from the central mass and inc
 # Returns
 - Intensity (arbitrary units) as a `Float64`
 """
-function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
+@validated callback function cloudIntensity(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0, _...)
     xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒ) #system coordinates xyz
     ϕw = atan(xyzSys[2],xyzSys[1]) #angle between cloud and BH line of sight
     I = W(ϕw,κ) #clouds don't have scaling -- the scaling is set by geometry itself, just whether they are on or off 
@@ -188,7 +188,7 @@ end
 Calculates the intensity using `cloudIntensity` but with an extra layer of masking based on azimuthal angle `ϕ` and the specified range `[ϕMin, ϕMax]`. If `ϕ` is outside this range, the intensity is set to 0.0.
 If overdense is `true`, the intensity is multiplied by 2.0 to account for the "lost" cloud and thus preserve total intensity in the model.
 """
-function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
+@validated callback function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot::Float64,i::Float64,κ::Float64=0.0,ϕMin::Float64,ϕMax::Float64,overdense::Bool=false, _...)
     if ϕ > π || ϕ < -π
         ϕ = atan(sin(ϕ),cos(ϕ))
     end
@@ -200,7 +200,7 @@ function IϕCloudMask(;r::Float64,ϕ::Float64,θₒ::Float64,ϕ₀::Float64,rot:
     end
     I = 0.0
     if ϕ >= ϕMin && ϕ <= ϕMax
-        I = cloudIntensity(r=r,ϕ=ϕ,θₒ=θₒ,ϕ₀=ϕ₀,rot=rot,i=i,κ=κ)
+        I = _kw_cloudIntensity(r=r,ϕ=ϕ,θₒ=θₒ,ϕ₀=ϕ₀,rot=rot,i=i,κ=κ)
         if overdense
             I *= 2.0 #x2 to replace cloud "lost" 
         end
@@ -214,7 +214,7 @@ end
 
 Calculates the intensity using `DiskWindIntensity` but with an extra layer of masking based on azimuthal angle `ϕ` and the specified range `[ϕMin, ϕMax]`. If `ϕ` is outside this range, the intensity is set to 0.0.
 """
-function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Float64},Float64},i::Float64,f1::Float64,f2::Float64,f3::Float64,f4::Float64,α::Float64,ϕMin::Float64,ϕMax::Float64, _...)
+@validated callback function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Float64},Float64},i::Float64,f1::Float64,f2::Float64,f3::Float64,f4::Float64,α::Float64,ϕMin::Float64,ϕMax::Float64, rMin::Float64=0.0, rMax::Float64=Inf, _...)
     I = nothing
     if typeof(ϕ) == Float64
         if ϕ > π || ϕ < -π
@@ -226,9 +226,9 @@ function IϕDiskWindMask(;r::Union{Vector{Float64},Float64},ϕ::Union{Vector{Flo
         if ϕMax > π || ϕMax < -π
             ϕMax = atan(sin(ϕMax),cos(ϕMax))
         end
-        I = (ϕ >= ϕMin && ϕ <= ϕMax) ? DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α) : 0.0 #left side of disk goes 0 -> -π, right side goes 0 -> π, where 0 (top) is tilted towards the observer (exclude back of disk)
+        I = (ϕ >= ϕMin && ϕ <= ϕMax) ? _kw_DiskWindIntensity(r=r,i=i,ϕ=ϕ,f1=f1,f2=f2,f3=f3,f4=f4,α=α,rMin=rMin,rMax=rMax) : 0.0 #left side of disk goes 0 -> -π, right side goes 0 -> π, where 0 (top) is tilted towards the observer (exclude back of disk)
     else
-        I = Float64[IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax)::Float64 for (ri,ϕi) in zip(r,ϕ)] #typed comprehension instead of vcat splat
+        I = Float64[_kw_IϕDiskWindMask(r=ri,ϕ=ϕi,i=i,f1=f1,f2=f2,f3=f3,f4=f4,α=α,ϕMin=ϕMin,ϕMax=ϕMax,rMin=rMin,rMax=rMax)::Float64 for (ri,ϕi) in zip(r,ϕ)] #typed comprehension instead of vcat splat
     end
     return I
 end

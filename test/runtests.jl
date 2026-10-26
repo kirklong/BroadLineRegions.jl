@@ -989,3 +989,5 @@ if get(ENV, "BLR_TEST_METAL", "0") == "1"
 else
     @info "skipping Metal GPU tests (set BLR_TEST_METAL=1 with Metal.jl available to run them)"
 end
+
+include("keywords.jl")

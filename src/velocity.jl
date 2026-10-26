@@ -14,7 +14,7 @@ vCirc(r::Float64, rₛ::Float64=1.0) = √(rₛ/(2*r))
 
 Calculate line of sight velocity for circular orbit at radius `r` from central mass and inclined at angle `i` (rad) over grid of azimuthal angles `ϕ` (rad).
 """
-function vCircularDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, rₛ=1.0, _...) 
+@validated callback function vCircularDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, rₛ=1.0, _...)
     return @. -vCirc(r,$rₛ)*$sin(i)*sin(ϕ) #circular velocity where sides of disk are at ±π/2, flip so that right side is negative to match CM96
 end
 
@@ -24,7 +24,7 @@ end
 
 Calculate line of sight velocity for circular orbit at radius `r` from central mass and inclined at angle `i` (rad) over grid of azimuthal angles `ϕ` (rad) with radial inflow/outflow.
 """
-function vCircularRadialDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, vᵣFrac::Union{Vector{Float64},Float64}=0.0, inflow::Union{Vector{Bool},Bool}=true, rₛ=1.0, _...) 
+@validated callback function vCircularRadialDisk(;r::Union{Float64,Vector{Float64}}, i::Float64, ϕ::Union{Vector{Float64},Float64}, vᵣFrac::Union{Vector{Float64},Float64}=0.0, inflow::Union{Vector{Bool},Bool}=true, rₛ=1.0, _...)
     vsini = @. vCirc(r,$rₛ)*$sin(i)
     inflow = @. inflow ? -1.0 : 1.0 #at ϕ = 0 if inflow make v negative
     vᵣ = @. vsini*cos(ϕ)*vᵣFrac*inflow
@@ -50,7 +50,7 @@ Calculate line of sight velocity for cloud in 3D space.
 # Returns
 - Line of sight velocity (`Float64`)
 """
-function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
+@validated callback function vCircularCloud(;r::Float64, ϕ₀::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, reflect::Bool=false, _...)
     v₀ = vCirc(r,rₛ)
     #proper circular-orbit tangent at ϕ₀: (-sin ϕ₀, +cos ϕ₀)*v₀ (perpendicular to the radius, r·v = 0),
     #then rotate into system coordinates and reflect if needed. The +cos ϕ₀ (vs -cos ϕ₀) is required so
@@ -89,7 +89,7 @@ Calculate line of sight velocity for cloud in 3D space with potential for ellipt
 # Returns
 - Line of sight velocity (`Float64`)
 """
-function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ::Float64, σΘc::Float64, θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64, 
+@validated callback function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ::Float64, σΘc::Float64, θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64,
     r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...)
     vc = vCirc(r,rₛ) #flip sign so that right side is negative
     vₜ = rand(rng,Normal(0.0,σₜ))*vc
@@ -110,7 +110,7 @@ function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ
     return vXYZ[1]+vₜ #line of sight velocity is x component after rotation (camera is at +x), turbulence only along line of sight (see Pancoast14 2.5.3)
 end
 
-function vElliptical(;a::Float64, i::Float64, ϕ::Union{Vector{Float64},Float64}, G::Float64=1.0, M::Float64=1.0, e::Float64=0.0, _...) 
+@validated callback function vElliptical(;a::Float64, i::Float64, ϕ::Union{Vector{Float64},Float64}, G::Float64=1.0, M::Float64=1.0, e::Float64=0.0, _...)
     """calculate line of sight velocity for elliptical orbit with semimajor axis a from central mass and inclined at angle i (rad) over grid of azimuthal angles ϕ (rad)
     params: 
         a: semimajor axis of ellipse {Float64}
@@ -127,7 +127,7 @@ function vElliptical(;a::Float64, i::Float64, ϕ::Union{Vector{Float64},Float64}
     return @. sqrt.(v²).*sin(i).*cos.(ϕ)
 end
 
-function rElliptical(;a::Float64, ϕ::Union{Vector{Float64},Float64}, e::Float64=0.0, _...) 
+@validated callback function rElliptical(;a::Float64, ϕ::Union{Vector{Float64},Float64}, e::Float64=0.0, _...)
     """calculate distances for elliptical orbit with semimajor axis a from central mass over grid of azimuthal angles ϕ (rad)
     params: 
         a: semimajor axis of ellipse {Float64}

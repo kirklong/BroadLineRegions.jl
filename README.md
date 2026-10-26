@@ -35,6 +35,8 @@ jlPkg.add("BroadLineRegions") #or use the github link
 ```
 
 ## Quickstart 
+
+ASCII keyword aliases (for example `mu`, `theta_o`, and `tau`) and optional strict custom-callback registration are described in [Keyword aliases and validation](docs/src/keywords.md).
 While this code is designed to be very flexible and modular such that you can implement your own bespoke models of the BLR easier, two popular models of the BLR are included as default models which one can play with. 
 
 To generate a "cloud" model similar to that of Pancoast+ 2011 and 2014, use syntax like:

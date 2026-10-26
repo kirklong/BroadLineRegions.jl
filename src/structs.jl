@@ -104,7 +104,7 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
     y::Union{V,F,Nothing}
     z::Union{V,F,Nothing}
 
-    function ring(;kwargs...) #could re-write this to use multiple dispatch? i.e. ring(;r::Float64, i::Float64, e::Float64, v::Float64, I::Float64, ϕ::Float64) etc.
+    function ring(::Val{:unchecked};kwargs...) #could re-write this to use multiple dispatch? i.e. ring(;r::Float64, i::Float64, e::Float64, v::Float64, I::Float64, ϕ::Float64) etc.
         """
         constructor for ring struct -- takes in kwargs (detailed above) and returns a ring object (detailed above) while checking for errors
         """
@@ -116,15 +116,15 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         try; I = kwargs[:I]; catch; error("I must be provided as kwarg"); end
         try; ϕ = kwargs[:ϕ]; catch; error("ϕ must be provided as kwarg"); end
         try; ΔA = kwargs[:ΔA]; catch; error("ΔA must be provided as kwarg"); end
-        try; rot = kwargs[:rot]; catch; println("rot not provided: defaulting to 0.0"); end
-        try; θₒ = kwargs[:θₒ]; catch; println("θₒ not provided: defaulting to 0.0"); end
-        try; ϕ₀ = kwargs[:ϕ₀]; catch; println("ϕ₀ not provided: defaulting to ϕ"); end
-        try; reflect = kwargs[:reflect]; catch; println("reflect not provided: defaulting to false"); end
-        try; τ = kwargs[:τ]; catch; println("τ not provided: defaulting to 0.0"); end
-        try; η = kwargs[:η]; catch; println("η not provided: defaulting to 1.0"); end
-        try; Δr = kwargs[:Δr]; catch; println("Δr not provided: defaulting to 1.0"); end
-        try; Δϕ = kwargs[:Δϕ]; catch; println("Δϕ not provided: defaulting to 1.0"); end
-        try; scale = kwargs[:scale]; catch; println("scale not provided: defaulting to nothing"); end
+        rot = get(kwargs, :rot, rot)
+        θₒ = get(kwargs, :θₒ, θₒ)
+        ϕ₀ = get(kwargs, :ϕ₀, ϕ₀)
+        reflect = get(kwargs, :reflect, reflect)
+        τ = get(kwargs, :τ, τ)
+        η = get(kwargs, :η, η)
+        Δr = get(kwargs, :Δr, Δr)
+        Δϕ = get(kwargs, :Δϕ, Δϕ)
+        scale = get(kwargs, :scale, scale)
         kwargs = values(kwargs)
 
         #check types of inputs
@@ -144,7 +144,7 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
         end
         @assert (typeof(r) == Vector{Float64}) || (typeof(r) == Float64) || (isa(r,Function)) "r must be Float64, Vector{Float64} or Function, got $(typeof(r))"   
         if isa(r,Function)
-            try; r = r(;kwargs...); catch; error("error in function r -- check kwargs"); end
+            r = _callback(r, kwargs)
             @assert length(r) == length(ϕ) "r must return a vector of the same length as ϕ"
         elseif typeof(r) == Vector{Float64}
             @assert length(r) == length(ϕ) "r must be the same length as ϕ"
@@ -152,7 +152,7 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
 
         @assert (typeof(η) == Vector{Float64}) || (typeof(η) == Float64) || (isa(η,Function)) "η must be Float64, Vector{Float64} or Function, got $(typeof(η))"  
         if isa(η,Function)
-            try; η = η(;kwargs...); catch; error("error in function η -- check kwargs"); end
+            η = _callback(η, kwargs)
             @assert length(η) == length(ϕ) "η must return a vector of the same length as ϕ"
         elseif typeof(η) == Vector{Float64}
             @assert length(η) == length(ϕ) "η must be the same length as ϕ"
@@ -166,7 +166,7 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
 
         @assert (typeof(v) == Vector{Float64}) || (typeof(v) == Float64) || (isa(v,Function)) "v must be Float64, Vector{Float64} or Function, got $(typeof(v))"
         if isa(v,Function)
-            try; v = v(;kwargs...); catch; error("error in function v -- check kwargs"); end
+            v = _callback(v, kwargs)
             @assert length(v) == length(ϕ) "v must return a vector of the same length as ϕ"
         elseif typeof(v) == Vector{Float64}
             @assert length(v) == length(ϕ) "v must be the same length as ϕ"
@@ -175,7 +175,7 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
 
         @assert (typeof(I) == Vector{Float64}) || (typeof(I) == Float64) || (typeof(I) == Matrix{Float64}) || (isa(I,Function)) "I must be Float64, Vector{Float64}, Matrix{Float64}, or Function, got $(typeof(I))"
         if isa(I,Function)
-            try; I = I(;kwargs...); catch; error("error in function I -- check kwargs"); end
+            I = _callback(I, kwargs)
             if length(r) == 1
                 @assert length(I) == length(ϕ) "I must return a vector of the same length as ϕ"
                 @assert typeof(I) == typeof(ϕ) "I and ϕ must be the same type"
@@ -194,7 +194,7 @@ mutable struct ring{V,F} #NOTE: should change this to be non-mutable (small ~10%
 
         @assert (typeof(τ) == Vector{Float64}) || (typeof(τ) == Float64) || (typeof(τ) == Matrix{Float64}) || (isa(τ,Function)) "τ must be Float64, Vector{Float64}, Matrix{Float64}, or Function, got $(typeof(τ))"
         if isa(τ,Function)
-            try; τ = τ(;kwargs...); catch; error("error in function τ -- check kwargs"); end
+            τ = _callback(τ, kwargs)
             if length(r) == 1
                 @assert length(τ) == length(ϕ) "τ must return a vector of the same length as ϕ"
                 @assert typeof(τ) == typeof(ϕ) "τ and ϕ must be the same type"
@@ -491,7 +491,7 @@ mutable struct model
         new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}(),nothing)
     end
 
-    function model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
+    function model(::Val{:unchecked}, rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
         """constructor for model struct -- takes in rMin, rMax, i, nr, nϕ, I, v, and scale and returns a model object (detailed above) while checking for errors
         params:
             rMin: minimum radius of model (in terms of rₛ) {Float64}
@@ -530,7 +530,8 @@ mutable struct model
         ΔA = scale == :log ? rMesh.^2 .* (Δr * Δϕ) : rMesh .* (Δr * Δϕ) #projected disk area, normalization doesn't matter
         rSystem = zeros(nr,nϕ); ϕSystem = zeros(nr,nϕ); ϕ₀ = zeros(nr,nϕ); η = zeros(nr,nϕ)
         xSystem = zeros(nr,nϕ); ySystem = zeros(nr,nϕ); zSystem = zeros(nr,nϕ) #3D system coordinate cache (camera at +x)
-        θₒ = 0.0; rot = 0.0
+        θₒ = 0.0; rot = get(kwargs, :rot, 0.0)
+        kwargs = (; (k=>v for (k,v) in pairs(kwargs) if k !== :rot)... )
         r3D = get_r3D(i,rot,θₒ)
         undo_tilt = [sin(i) 0.0 -cos(i); 0.0 1.0 0.0; cos(i) 0.0 sin(i)]
         M_raytrace = undo_tilt * r3D #constant for fixed (i, rot, θₒ) -- precompute once instead of per pixel
@@ -545,12 +546,12 @@ mutable struct model
         #custom I/v functions passed to the constructor must be thread-safe to benefit from julia -t N)
         rings = Vector{ring{Vector{Float64},Float64}}(undef, nr)
         Threads.@threads for k in 1:nr
-            rings[k] = ring(r = rSystem[k], i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕSystem[k], ϕ₀ = ϕ₀[k], ΔA = ΔA[k], rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=η[k], x=xSystem[k], y=ySystem[k], z=zSystem[k]; kwargs...)
+            rings[k] = ring(Val(:unchecked);r = rSystem[k], i = i, v = v, I = I, Δr = Δr, Δϕ = Δϕ, scale = scale, ϕ = ϕSystem[k], ϕ₀ = ϕ₀[k], ΔA = ΔA[k], rMin=rMin, rMax=rMax, rot=rot, θₒ=θₒ, η=η[k], x=xSystem[k], y=ySystem[k], z=zSystem[k], kwargs...)
         end
         m = new(rings,Dict{Symbol,profile}(),camera(stack(α,dims=1),stack(β,dims=1),false),[1],Dict{Any,Array}(),nothing)
     end
 
-    function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
+    function model(::Val{:unchecked}, r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
         """constructor for model struct -- takes in r̄, Sα, i, nr, nϕ, scale, and kwargs and returns a model object (detailed above) while checking for errors
         this version of the constructor creates a DiskWind model of the BLR as detailed in Long+2023
         params:
@@ -571,7 +572,7 @@ mutable struct model
         # println("r̄ = $r̄, rMin = $rMin, rMax = $rMax")
         kwargs = values(kwargs); kwargs = merge(kwargs, (; α = Sα))
         # println("kwargs = $kwargs")
-        model(rMin, rMax, i, nr, nϕ, DiskWindIntensity, vCircularDisk, scale; kwargs...)
+        model(Val(:unchecked), rMin, rMax, i, nr, nϕ, DiskWindIntensity, vCircularDisk, scale; kwargs...)
     end
 end
 
@@ -598,8 +599,8 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 # Note
 Similar to other DiskWind model constructor but must explicitly pass `rMin` and `rMax`.
 """
-function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
-    m = model(rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
+@validated disk function DiskWindModel(rMin::Float64, rMax::Float64, i::Float64; nr::Int=128, nϕ::Int=256, I::Function=DiskWindIntensity, v::Function=vCircularDisk, scale::Symbol=:log, kwargs...)
+    m = model(Val(:unchecked), rMin, rMax, i, nr, nϕ, I, v, scale; kwargs...)
     m.params = (; constructor=:DiskWindModel, rMin=rMin, rMax=rMax, i=i, nr=nr, nϕ=nϕ, I=I, v=v, scale=scale, kwargs...)
     return m
 end
@@ -627,9 +628,12 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 # Note
 Similar to another DiskWind model constructor but here we pass `r̄`, `rFac`, and `α`.
 """
-function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, kwargs...)
-    m = model(r̄, rFac, α, i, nr, nϕ, scale; kwargs...)
-    m.params = (; constructor=:DiskWindModelMean, r̄=r̄, rFac=rFac, α=α, i=i, rot=rot, nr=nr, nϕ=nϕ, scale=scale, kwargs...)
+@validated disk function DiskWindModel(r̄::Float64, rFac::Float64, α::Float64, i::Float64; rot::Float64=0.0, nr::Int=128, nϕ::Int=256, scale::Symbol=:log, I::Function=DiskWindIntensity, v::Function=vCircularDisk, kwargs...)
+    @assert (α != 1/2) && (α != 3/2) "α cannot be 1/2 or 3/2 as this divides by zero"
+    @assert r̄ > 0 "r̄ must be greater than 0"
+    rMin, rMax = get_rMinMaxDiskWind(r̄, rFac, α)
+    m = model(Val(:unchecked), rMin, rMax, i, nr, nϕ, I, v, scale; rot=rot, α=α, kwargs...)
+    m.params = (; constructor=:DiskWindModelMean, r̄=r̄, rFac=rFac, α=α, i=i, rot=rot, nr=nr, nϕ=nϕ, scale=scale, I=I, v=v, kwargs...)
     return m
 end
 
@@ -661,10 +665,10 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 # Note
 Similar to other `cloudModel` method but here you must explicitly pass `ϕ₀`, `i`, `rot`, and `θₒ`.
 """
-function cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5,
+@validated cloud function cloudModel(ϕ₀::Vector{Float64}, i::Vector{Float64}, rot::Vector{Float64}, θₒ::Vector{Float64}, θₒSystem::Float64, ξ::Float64; rₛ::Float64=1.0, μ::Float64=500., β::Float64=1.0, F::Float64=0.5,
     I::Union{Function,Float64}=IsotropicIntensity,v::Union{Function,Float64}=vCircularCloud,kwargs...)
     @assert length(ϕ₀) == length(i) == length(rot) == length(θₒ) "ϕ, i, rot, and θₒ must be the same length -- got $(length(ϕ)), $(length(i)), $(length(rot)), and $(length(θₒ))"
-    rings = [drawCloud(i=i[j],θₒ=θₒ[j],rot=rot[j],ϕ₀=ϕ₀[j],μ=μ,F=F,β=β,rₛ=rₛ,θₒSystem=θₒSystem,I=I,v=v,ξ=ξ;kwargs...) for j=1:length(ϕ₀)]
+    rings = [_kw_drawCloud(i=i[j],θₒ=θₒ[j],rot=rot[j],ϕ₀=ϕ₀[j],μ=μ,F=F,β=β,rₛ=rₛ,θₒSystem=θₒSystem,I=I,v=v,ξ=ξ;kwargs...) for j=1:length(ϕ₀)]
     m = model(rings)
     #store the argument vectors by reference (no copies) -- the only cost is keeping the inputs alive
     m.params = (; constructor=:cloudModelVectors, ϕ₀=ϕ₀, i=i, rot=rot, θₒ=θₒ, θₒSystem=θₒSystem, ξ=ξ, rₛ=rₛ, μ=μ, β=β, F=F, I=I, v=v, kwargs...)
@@ -687,7 +691,7 @@ function _drawPhiloxCloud(cloudInd::Integer, seed::Integer; μ::Float64=500., β
     ϕ₀ = rand(rng) * 2π
     θ = acos(cos(θₒ) + (1 - cos(θₒ)) * rand(rng)^γ)
     rot = rand(rng) * 2π
-    return drawCloud(i=i, θₒ=θ, rot=rot, ϕ₀=ϕ₀, μ=μ, F=F, β=β, rₛ=rₛ,
+    return _kw_drawCloud(i=i, θₒ=θ, rot=rot, ϕ₀=ϕ₀, μ=μ, F=F, β=β, rₛ=rₛ,
         θₒSystem=θₒ, I=I, v=v, ξ=ξ, rng=rng; kwargs...)
 end
 
@@ -734,7 +738,7 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 Similar to the other `cloudModel` methods, but here the per-cloud `ϕ₀`, `rot`, and `θₒ` values are drawn
 internally (one independent stream per cloud) while `i` is held constant for the system.
 """
-function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0, 
+@validated cloud function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float64=0.5, rₛ::Float64=1.0, θₒ::Float64=π/2, γ::Float64=1.0, ξ::Float64=1.0, i::Float64=0.0,
     I::Union{Function,Float64}=IsotropicIntensity, v::Union{Function,Float64}=vCircularCloud,
     rng::Union{AbstractRNG,Symbol}=Random.GLOBAL_RNG, seed::Union{Nothing,Integer}=nothing,
     parallel::Bool=true, kwargs...)
@@ -760,7 +764,7 @@ function cloudModel(nClouds::Int64; μ::Float64=500., β::Float64=1.0, F::Float6
     θ = acos.(cos(θₒ).+(1-cos(θₒ)).*rand(rng,nClouds).^γ) #θₒ for each cloud, from eqn 14
     rot = rand(rng,nClouds).*2π
     i = ones(nClouds).*i
-    m = cloudModel(ϕ₀,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
+    m = _kw_cloudModel(ϕ₀,i,rot,θ,θₒ,ξ, rₛ=rₛ,μ=μ,β=β,F=F,I=I,v=v,rng=rng;kwargs...)
     m.params = legacyParams #overwrite the inner :cloudModelVectors record with the nClouds-level one
     return m
 end
@@ -776,4 +780,23 @@ Base.show(io::IO, m::model) = begin
     else
         println(io, "\t-no camera set")
     end
+end
+
+# Direct constructors share the public checking contract with the named builders.
+function ring(; kwargs...)
+    kw = _normalize_keywords(kwargs)
+    _construction_keywords(kw, _RING_KEYS, (; I=IsotropicIntensity, v=vCircularCloud, r=nothing, η=nothing, τ=nothing))
+    ring(Val(:unchecked); kw...)
+end
+function model(rMin::Float64, rMax::Float64, i::Float64, nr::Int, nϕ::Int, I::Function, v::Function, scale::Symbol; kwargs...)
+    kw = _normalize_keywords(kwargs)
+    _construction_keywords(kw, (:rot, :τ, :η, :reflect), (; I=I, v=v);
+        reserved=(:rMin, :rMax, :i, :nr, :nϕ, :I, :v, :scale, :constructor, :r, :ϕ, :ϕ₀, :θₒ, :θₒSystem, :ΔA, :Δr, :Δϕ, :x, :y, :z))
+    model(Val(:unchecked), rMin, rMax, i, nr, nϕ, I, v, scale; kw...)
+end
+function model(r̄::Float64, rFac::Float64, Sα::Float64, i::Float64, nr::Int, nϕ::Int, scale::Symbol; kwargs...)
+    kw = _normalize_keywords(kwargs)
+    _construction_keywords(kw, (:rot, :τ, :η, :reflect), (; I=DiskWindIntensity, v=vCircularDisk);
+        reserved=(:r̄, :rFac, :α, :i, :nr, :nϕ, :scale, :constructor, :r, :ϕ, :ϕ₀, :θₒ, :θₒSystem, :ΔA, :Δr, :Δϕ, :x, :y, :z))
+    model(Val(:unchecked), r̄, rFac, Sα, i, nr, nϕ, scale; kw...)
 end

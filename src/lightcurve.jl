@@ -11,7 +11,7 @@ Generate a damped random walk continuum lightcurve following [MacLeod+2010](http
 # Returns:
 - `C::Vector{Float64}`: damped random walk array corresponding to times t
 """
-function DRW(;t::Array{Float64}=collect(range(0,stop=100,length=1001)), μ::Float64=0.0, τ::Float64=1.0, σ::Float64=0.1)
+@validated plain function DRW(;t::Array{Float64}=collect(range(0,stop=100,length=1001)), μ::Float64=0.0, τ::Float64=1.0, σ::Float64=0.1)
     nt = length(t)
     SF∞ = √2*σ #eq 4 of https://iopscience.iop.org/article/10.1088/0004-637X/721/2/1014/pdf
     C = zeros(nt)
