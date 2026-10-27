@@ -414,7 +414,7 @@ end
         uE = _cloud_uniform(T, key0, key1, cloudInd, n); n += 1
         zρ, n = _cloud_normal(T, key0, key1, cloudInd, n)
         zΘ, n = _cloud_normal(T, key0, key1, cloudInd, n)
-        ρ = uE < fEllipse ? vc + zρ * σρc : vc + zρ * σρᵣ
+        ρ = uE < fEllipse ? vc + zρ * (σρc * vc) : vc + zρ * (σρᵣ * vc)   # σρ is a fraction of vc (Pancoast+14)
         Θ = uE < fEllipse ? T(π) / 2 + zΘ * σΘc :
             (fFlow < T(0.5) ? zΘ * σΘᵣ + (T(π) - θₑ) : zΘ * σΘᵣ + θₑ)
         vx = sqrt(T(2)) * ρ * cos(Θ)
@@ -537,8 +537,8 @@ end
 - `ηₒ::Real=0.5`: Response intercept (see `response`), ASCII alias=`eta_o`.
 - `η₁::Real=0.5`: Response coefficient (see `response`), ASCII alias=`eta_1`.
 - `αRM::Real=0.0`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
-- `σρᵣ::Real=0.0`: Radial-orbit speed dispersion, ASCII alias=`sigma_rho_r`.
-- `σρc::Real=0.0`: Circular-orbit speed dispersion, ASCII alias=`sigma_rho_c`.
+- `σρᵣ::Real=0.0`: Radial-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_r`.
+- `σρc::Real=0.0`: Circular-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_c`.
 - `σΘᵣ::Real=0.0`: Radial-orbit angular dispersion, ASCII alias=`sigma_theta_r`.
 - `σΘc::Real=0.0`: Circular-orbit angular dispersion, ASCII alias=`sigma_theta_c`.
 - `θₑ::Real=0.0`: Velocity-space tilt angle, in radians, ASCII alias=`theta_e`.
@@ -604,8 +604,8 @@ end
 - `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
 - `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
 - `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
-- `σρᵣ`: Radial-orbit speed dispersion, ASCII alias=`sigma_rho_r`.
-- `σρc`: Circular-orbit speed dispersion, ASCII alias=`sigma_rho_c`.
+- `σρᵣ`: Radial-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_r`.
+- `σρc`: Circular-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_c`.
 - `σΘᵣ`: Radial-orbit angular dispersion, ASCII alias=`sigma_theta_r`.
 - `σΘc`: Circular-orbit angular dispersion, ASCII alias=`sigma_theta_c`.
 - `θₑ`: Velocity-space tilt angle, in radians, ASCII alias=`theta_e`.
