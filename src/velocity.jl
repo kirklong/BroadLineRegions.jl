@@ -72,13 +72,13 @@ end
     vCloudTurbulentEllipticalFlow(;σρᵣ::Float64, σρc::Float64, σΘᵣ::Float64, σΘc::Float64, 
             θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64, r::Float64, 
             i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, 
-            reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, σρRelative::Bool=false, _...)
+            reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...)
 
 Calculate line of sight velocity for cloud in 3D space with potential for elliptical orbital velocities, in/outflow, and turbulence as in Pancoast+14.
 
 # Arguments
-- `σρᵣ::Float64`: Radial standard deviation around radial orbits, ASCII alias=`sigma_rho_r`.
-- `σρc::Float64`: Radial standard deviation around circular orbits, ASCII alias=`sigma_rho_c`.
+- `σρᵣ::Float64`: Radial standard deviation around radial orbits, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_r`.
+- `σρc::Float64`: Radial standard deviation around circular orbits, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_c`.
 - `σΘᵣ::Float64`: Angular standard deviation around radial orbits, ASCII alias=`sigma_theta_r`.
 - `σΘc::Float64`: Angular standard deviation around circular orbits, ASCII alias=`sigma_theta_c`.
 - `θₑ::Float64`: Angle in v_ϕ-v_r plane, ASCII alias=`theta_e`.
@@ -93,22 +93,21 @@ Calculate line of sight velocity for cloud in 3D space with potential for ellipt
 - `ϕ₀::Float64=0.0`: Starting azimuthal angle in ring plane (rad), ASCII alias=`phi_0`.
 - `reflect::Bool=false`: Whether the point is reflected across the midplane of the disk
 - `rng::AbstractRNG=Random.GLOBAL_RNG`: Random number generator
-- `σρRelative::Bool=false`: If true, `σρᵣ`/`σρc` are fractions of the local circular velocity (like `σₜ`) instead of absolute (units of c), ASCII alias=`sigma_rho_relative`.
 - `_...`: Extra kwargs, ignored
 
 # Returns
 - Line of sight velocity (`Float64`)
 """
 @validated callback function vCloudTurbulentEllipticalFlow(;σρᵣ::Float64,σρc::Float64, σΘᵣ::Float64, σΘc::Float64, θₑ::Float64, fEllipse::Float64, fFlow::Float64, σₜ::Float64,
-    r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, σρRelative::Bool=false, _...)
+    r::Float64, i::Float64, rot::Float64, θₒ::Float64, rₛ::Float64=1.0, ϕ₀::Float64=0.0, reflect::Bool=false, rng::AbstractRNG=Random.GLOBAL_RNG, _...)
     vc = vCirc(r,rₛ) #flip sign so that right side is negative
     vₜ = rand(rng,Normal(0.0,σₜ))*vc
     ρ = 0.0; Θ = 0.0
     if rand(rng) < fEllipse #elliptical orbit, distribution deviating from circular by σρc, σΘc, Pancoast 14 2.5.1
-        ρ = rand(rng,Normal(vc,σρRelative ? σρc*vc : σρc))
+        ρ = rand(rng,Normal(vc,σρc*vc)) #σρc is a fraction of vc (Pancoast+14 2.5.1), like σₜ
         Θ = π/2 + rand(rng,Normal(0.0,σΘc))
     else #in/outflowing orbit, distribution deviating from circular by σρᵣ, σΘᵣ, Pancoast14 2.5.2
-        ρ = rand(rng,Normal(vc,σρRelative ? σρᵣ*vc : σρᵣ))
+        ρ = rand(rng,Normal(vc,σρᵣ*vc)) #σρᵣ is a fraction of vc (Pancoast+14 2.5.2)
         Θ = fFlow < 0.5 ? rand(rng,Normal(0.0,σΘᵣ)) + (π - θₑ) : rand(rng,Normal(0.0,σΘᵣ)) + θₑ
     end
     vx = √2*ρ*cos(Θ); vy = ρ*sin(Θ) #local (radial, tangential) components: radial along x, tangential along y at ϕ₀ = 0
