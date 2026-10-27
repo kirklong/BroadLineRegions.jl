@@ -143,9 +143,6 @@ mP2 = BLR.cloudModel(nClouds,μ=4/rsDay,F=0.25,β=0.8,θₒ=30/180*π,i=20/180*�
 ```
 Where the first argument passed to [`cloudModel`](@ref BLR.cloudModel) is the number of clouds to generate (here we use a relatively small number just for demonstration purposes), and the keyword arguments supplied mostly correspond to the values in the table above and are fully described in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract). The extra keyword arguments set to 0 but not in the table are options not used in this calculation, and the final line specifies that we would like the intensity calculated with the [`cloudIntensity`](@ref BLR.cloudIntensity) function, the velocities calculated with [`vCloudTurbulentEllipticalFlow`](@ref BLR.vCloudTurbulentEllipticalFlow), and that the optical depth of the cloud is 0.
 
-!!! note "σρ is a fraction of the circular velocity"
-    The radial-speed dispersions `σρc` and `σρᵣ` are fractions of the local circular velocity, i.e. ``\rho \sim \mathcal{N}(v_{\rm circ}, \sigma_\rho v_{\rm circ})``, as defined in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) §2.5.1–2.5.2 (like `σₜ`). Earlier versions of `BroadLineRegions.jl` treated them as absolute speeds in units of ``c``, so `σρ` values fitted with those versions are not comparable (`σρ = 0` is unaffected).
-
 To compare to Figure 4 in [Pancoast+2014](https://ui.adsabs.harvard.edu/abs/2014MNRAS.445.3055P/abstract) we can again generate transfer functions for both models:
 
 ```julia
