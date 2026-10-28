@@ -2,6 +2,20 @@
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia.
 
+## General Introduction and Motivation
+One of the observational hallmarks of quasars/active galactic nuclei (AGN) is that they have extremely broad emission lines. The
+widths of these emission lines are so broad (often many thousands of km/s) that we assume they can only be created by fast rotation of
+line-emitting gas orbiting a supermassive black hole. Another key feature of AGN is that they are also variable in time, and these two facts present a unique opportunity to measure supermassive black hole masses directly in AGN:
+
+$$M_{\rm{SMBH}} = f\frac{R\Delta V^2}{G}$$
+
+The width of the line provides a natural proxy for $\Delta V$, and the variability of AGN allows for a time delay to be observed between the continuum assumed to originate in the accretion disk near the black hole and the broad-line region. This time delay then
+provides a natural estimate for the distance from the SMBH to the BLR, assuming these variations propagate at the speed of light, as $R\approx c\Delta t$. The BLR occupies the region between the accretion disk and the dusty torus within a "standard" active galactic nucleus (AGN), and is unique for these reasons as it is near enough the black hole to be rotating quite fast (to produce such broad profiles and have delays that are short enough to be measured with relatively small timescale observing campaigns) under the influence of mostly the mass of the supermassive black hole alone while simultaneously being far enough away that the gas is not completely ionized by the central source (or else no emission line could be produced) and such that relativistic effects are likely not too important such that we can use the simple formula for the mass above.
+
+But one wrinkle remains in this simple equation for estimating the mass, which is the "Virial factor" $f$. $f$ encodes all of the unknown properties of the source related to its geometry and kinematics, and thus to obtain the most accurate value for $M$ we must assume some kind of model for the BLR. There are many possible models for the BLR that are used to try to reproduce all of the observational data products, and this is the motivation for `BroadLineRegions.jl`, which allows for fast and flexible dynamical modeling of the BLR through an open-source framework accessible to anyone. This kind of modeling allows us to not only better understand how to most accurately measure supermassive black hole masses across cosmic time but also enables a more fundamental understanding of the environment around supermassive black holes by better understanding the true nature of the geometry and kinematics of the BLR.
+
+Below we show a few simple examples of how to generate different kinds of simple dynamical models of the BLR using `BroadLineRegions.jl`. More detailed usage examples are available in the [full documentation](usage_examples.md).
+
 ![Sample combined model animation for parameters in Long+2025](mCombined.gif)
 ## Installation 
 ### Julia
