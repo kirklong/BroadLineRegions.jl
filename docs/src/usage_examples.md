@@ -7,6 +7,20 @@ Pages = ["usage_examples.md"]
 Depth = 2:3
 ```
 
+## General workflow
+In general, the process by which `BroadLineRegions.jl` has been designed to work is in two simple steps: 
+1. Create a model (place flux on a camera, and trace it back to its physical origin):
+    a. Use an existing recipe with default parameterizations 
+    b. Use an existing recipe but overload with your own custom functions for key parameters (i.e. change the intensity, velocity distribution, etc.)
+    c. Optionally combine multiple types of models to create more complicated BLR morphologies (i.e. place some clouds near one radius with one distribution, then some other ones at a different radial distribution, then merge them into one combined model)
+2. Observe your model to make predictions:
+    a. To generate 1D profiles, call `getProfile` on your final model from step 1. This method is quite flexible, and by default can return many common observables one would want to know about the BLR, including line, delay, and phase profiles. Of course it is also possible to pass custom functions to `getProfile` in case you want to generate a 1D profile that is not included by default. This recipe by default uses simple rectangular integration across the relevant quantity to compute the integrated results across whatever model you provide from step 1. 
+    b. Similarly you can generate 2D/3D observables (transfer functions, images, and geometric representations) with their relevant functions/plotting recipes.
+    c. Optionally, if you have a combined model from step 1, perform elementary radiative transfer and `raytrace!` your combined model before proceeding with observing it. 
+    d. Do your own custom analysis! Everything in `BroadLineRegions.jl` has been designed to be flexible and all constituent parts of models can be accessed with relatively simple syntax as shown in the examples below, so it should be possible to integrate custom routines for analysis beyond what the package provides by default hopefully without too much friction. 
+
+You can then compare model results against data, iteratively fit, etc. Full examples of this process as applied to a few different scenarios are shown below: 
+
 ## Reproducing the line profile and transfer function shown in [CM96](https://ui.adsabs.harvard.edu/abs/1996ApJ...466..704C/abstract)
 
 CM96 showed that disk-wind models of the BLR could produce single-peaked line profiles, and as part of their results they generated a hypothetical 2D transfer function for a disk-wind BLR as applied to NGC 5548. We can reproduce such a map with just a few lines of code using `BroadLineRegions.jl`. 

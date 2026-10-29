@@ -60,8 +60,15 @@ mClouds = BLR.cloudModel(100_000,mu=500.,beta=1.,F=0.5,theta_o=30/180*pi,gamma=1
 ```
 See each function's documentation (either online or in the REPL with i.e. `?BLR.cloudModel`) for a list of all parameters, their defaults, and available spelled out ASCII keyword aliases. 
 Note that the internal code still uses largely unicode names, so to access struct fields only the unicode versions are supported (i.e. only `m.camera.α` works, and `m.camera.alpha` will produce an error). 
-You can of course define fully custom models by passing your own "rings" (on a camera) and optionally any default profiles, a camera struct, and submodel start indices:
 
+If you prefer to start from the geometric basis of one of these models but modify how some internal portion is calculated, you can pass your own custom functions to them to enable this functionality. For example if you wanted to generate a geometry similar to the `DiskWindModel` example above but with a custom intensity prescription you could write something like: 
+```julia
+myCustomIntensityFx(;r) = 1./r
+mDiskCustom = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,nϕ=48,scale=:log,
+        I=myCustomIntensityFx)
+```
+
+The code is designed in such a way that by default coordinates are always in reference to a virtual "camera" imaging the system, and by default the inner Struct we use to hold these points is called a `ring` (which acts as a "ring" of points on an image, from which we "raytrace" back to physical space at construction). You can of course go beyond these default recipes and define fully custom models by passing your own "rings" and optionally your own "camera" system to the model, such that you can configure the code quite flexible while still being able to interface with existing models:
 ```julia
 mCustom = BLR.model(myCustomRings,nothing,myCustomCamera,[1]) #a custom model with no profiles, a user-defined camera for raytracing/visualization, and with no submodels
 ```
@@ -79,7 +86,7 @@ myIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity sc
 BLR.acceptedKeywords(::typeof(myIntensity)) = (:level,)
 ```
 
-Models can be combined simply by writing `mCombined = m1 + m2`. 
+Models can be combined simply by writing `mCombined = m1 + m2`. After combining, you can run quick occlusion/optical depth raytracing calculations through `raytrace!`, but note that this implementation is by default exceedingly rudimentary (no complicated radiative transfer is solved, instead emission is just added up proportionally to $e^{-\tau}$ at each point along a ray until it reaches a specified optical depth stopping point and after that it is assumed all remaining emission along the ray is blocked, and you must supply the expected $\tau$ and emission values when creating the submodels). 
 
 Generate profiles (i.e. line, phase, delay, or whatever else your heart desires) for models with syntax like:
 ```julia
@@ -87,6 +94,7 @@ m = mDisk #or mClouds, mCustom, or however you have set up your model
 p = BLR.getProfile(m,:line) #generate line profile with default parameters
 BLR.setProfile!(m,p) #optinally store the profile in model data structure 
 ```
+These profiles are just simple estimates using weighted sums (rectangular Riemann sum integral approximations only), so smooth profiles can depend highly on the number of points, especially in the case of discrete "cloud" models. 
 
 A few default visualization recipes exist as well:
 ```julia
@@ -126,4 +134,4 @@ lorem ipsum
 ```
 
 ## Contributing
-If you would like to contribute to the package, please open a pull request on the [GitHub](https://github.com/kirklong/BroadLineRegions.jl). For bug reports and feature requests, please open an issue on the GitHub. 
+If you would like to contribute to the package, please open a pull request on the [GitHub](https://github.com/kirklong/BroadLineRegions.jl). For bug reports and feature requests, please open an issue on the GitHub. Contributions should be done in their appropriate files&mdash; for example if you find yourself using a custom function often with the `getProfile` method and want to add it as a default for all users this should be done in the relevant `profiles.jl` file to maintain the organizational structure of the codebase. After making a change you can ensure you did not break any existing functionality by running the test suite with: `julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()`. By default this performs only the CPU tests, but if you have access to a GPU set `BLR_TEST_CUDA=1` and/or `BLR_TEST_METAL=1` as environment variables before running the test suite. Appropriate LLM-assisted contributions are allowed&mdash; for reviews we require that authors write pull requests in their own langauge to demonstrate understanding of what the LLM has done, and be willing to be accountable for its actions, but do not require that contributed code itself be written by humans. If LLMs are used we also encourage the use of an "AI Ledger" that documents what has been done a nd why (an example of which can be found [here](https://github.com/kirklong/DCNN2Paper/blob/main/docs/llm_history/RESEARCH_HISTORY.md)).
