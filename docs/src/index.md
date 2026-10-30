@@ -1,6 +1,7 @@
 # BroadLineRegions.jl
 
 A fast and flexible toolkit for modeling the broad-line region (BLR) in Julia.
+![Sample combined model animation for parameters in Long+2025](mCombined.gif)
 
 ## General Introduction and Motivation
 One of the observational hallmarks of quasars/active galactic nuclei (AGN) is that they have extremely broad emission lines. The
@@ -16,7 +17,6 @@ But one wrinkle remains in this simple equation for estimating the mass, which i
 
 Below we show a few simple examples of how to generate different kinds of simple dynamical models of the BLR using `BroadLineRegions.jl`. More detailed usage examples are available in the [full documentation](usage_examples.md).
 
-![Sample combined model animation for parameters in Long+2025](mCombined.gif)
 ## Installation 
 ### Julia
 ```julia
