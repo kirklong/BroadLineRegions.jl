@@ -829,7 +829,7 @@ Additional callback options follow the selected helpers; see [`acceptedKeywords`
 end
 Base.show(io::IO, m::model) = begin 
     println(io, "model struct with $(length(m.rings)) rings:")
-    if isdefined(m, :profiles) && length(m.profiles) > 0 && !isnothing(m.profiles)
+    if isdefined(m, :profiles) && !isnothing(m.profiles) && !isempty(m.profiles)
         println(io, "\t-profiles: $(keys(m.profiles))")
     else
         println(io, "\t-no profiles set")

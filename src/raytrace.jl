@@ -22,12 +22,12 @@ Calculate where ray traced back from camera coordinates `α` and `β` intersects
 This function is *coordinate* raytracing only. To raytrace models and combine intensities, see `raytrace!`. 
 """
 function raytrace(α::Float64, β::Float64, i::Float64, rot::Float64, θₒPoint::Float64)
-    xRing = (β*cos(rot) - α*cos(i)*sin(rot))/(cos(i)*cos(θₒPoint)+cos(rot)*sin(i)*sin(θₒPoint)) #system x
+    xRing = -(β*cos(rot) - α*cos(i)*sin(rot))/(cos(i)*cos(θₒPoint)+cos(rot)*sin(i)*sin(θₒPoint)) #system x
     yRing = (α*(cos(i)*cos(θₒPoint)+sec(rot)*sin(i)*sin(θₒPoint))+β*cos(θₒPoint)*tan(rot))/(cos(i)*cos(θₒPoint)*sec(rot)+sin(i)*sin(θₒPoint)) #system y
     r = √(xRing^2 + yRing^2)
     ϕ₀ = atan(yRing,xRing) #original ϕ₀ (no rotation)
     xyzSys = rotate3D_scalar(r,ϕ₀,i,rot,θₒPoint) #system coordinates xyz
-    ϕ = atan(xyzSys[2],xyzSys[1]) #ϕ after rotation, measured from +x in disk plane
+    ϕ = atan(xyzSys[2],sin(i)*xyzSys[1]-cos(i)*xyzSys[3]) #ϕ after rotation, measured from +x in disk plane
     return r, ϕ, ϕ₀
 end
 

@@ -2,6 +2,8 @@ using BroadLineRegions
 using Test
 using Random
 
+include("coordinate_transforms.jl")
+
 @testset "DiskWind model initialized successfully" begin
     mLAll = BLR.DiskWindModel(8.5e3,50.,1.,45/180*π,nr=4096,nϕ=1024,
         I=BLR.DiskWindIntensity,v=BLR.vCircularDisk,f1=1.0,f2=1.0,

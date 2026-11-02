@@ -63,26 +63,35 @@ Note that the internal code still uses largely unicode names, so to access struc
 
 If you prefer to start from the geometric basis of one of these models but modify how some internal portion is calculated, you can pass your own custom functions to them to enable this functionality. For example if you wanted to generate a geometry similar to the `DiskWindModel` example above but with a custom intensity prescription you could write something like: 
 ```julia
-myCustomIntensityFx(;r) = 1./r
+myCustomIntensityFx(;r,level=1.0,kwargs...) = level./r #custom intensity that scales ∝ 1/r with some "level"
 mDiskCustom = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,nϕ=48,scale=:log,
-        I=myCustomIntensityFx)
+        I=myCustomIntensityFx,level=2.) #pass extra new parameter level to custom intensity function
 ```
 
-The code is designed in such a way that by default coordinates are always in reference to a virtual "camera" imaging the system, and by default the inner Struct we use to hold these points is called a `ring` (which acts as a "ring" of points on an image, from which we "raytrace" back to physical space at construction). You can of course go beyond these default recipes and define fully custom models by passing your own "rings" and optionally your own "camera" system to the model, such that you can configure the code quite flexible while still being able to interface with existing models:
+The code is designed in such a way that by default coordinates are always in reference to a virtual "camera" imaging the system, and by default the inner Struct we use to hold these points is called a `ring` (which acts as a "ring" of points on an image, from which we "raytrace" back to physical space at construction). You can of course go beyond these default recipes and define fully custom models by passing your own "rings" and your own "camera" system to the model, such that you can configure the code quite flexibly while still being able to interface with existing models. Below we show an example of this general process for a very simple custom BLR model consisting of just a single BLR "cloud": 
 ```julia
-mCustom = BLR.model(myCustomRings,nothing,myCustomCamera,[1]) #a custom model with no profiles, a user-defined camera for raytracing/visualization, and with no submodels
+α,β = (0.,-50.) #start by defining (in camera coordinates) a "cloud"
+myCustomCamera = BLR.camera([α],[β],false) #define custom BLR "camera" struct (α and β must be vectors, because usually you have more than one point in your BLR...)
+
+i = 30/180*π #suppose we view system at physical inclination of 30 deg
+
+#"raytrace" from camera coordinates to physical coordinates, calculate r and ϕ of our BLR "cloud" in physical space
+xRing = -β/cos(i); yRing = α #coordinate convention for "ring" plane defined such that ϕ=0 points towards observer
+r = √(xRing^2 + yRing^2)
+ϕ = atan(yRing, xRing)
+
+myCustomRings = Vector{BLR.ring}(undef, 1) #allocate empty vector of rings, in this case of size 1 to hold our singular BLR "cloud"
+myCustomRings[1] = BLR.ring(r=r, i=i, ϕ=ϕ, v=0.0, I=1.0, ΔA=1.) #fill our vector using the calculated parameters above, using the bare minimum required parameters (see full examples/documentation for all possibilities)
+
+#create our custom BLR, which then can be combined with other BLR models and profiles/images can be calculated from as in other examples
+mCustom = BLR.model(myCustomRings, Dict{Symbol,BLR.profile}(), myCustomCamera, [1]) #note we also pass empty dictionary of profiles (since none have been pre-calculated) and pass vector of submodel indices [1] as this model doesn't have any subcomponents. 
 ```
-And you can also define your own custom functions as overrides to the defaults used in any of the existing `BroadLineRegions.jl` models:
-```julia
-myIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity scaling like 1/r 
-mCustomDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,n4=24,n_phi=48,scale=:log,
-        I=myIntensityFx,level=2.) #instead of using default DiskWindIntensity use custom myIntensityFx with level=2.
-```
+
 Note that `BroadLineRegions.jl` attempts to make sure you have correctly passed keyword arguments for functions, and will issue a warning if it detects 
 a keyword argument that it does not know how to check. This warning would be issued in the above case, as `level` is not a parameter of any existing function. 
 For custom callbacks, you can thus optionally register extra keywords to enable stricter validation and suppress this warning:
 ```julia
-myIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity scaling like 1/r 
+myCustomIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity scaling like 1/r 
 BLR.acceptedKeywords(::typeof(myIntensity)) = (:level,)
 ```
 
