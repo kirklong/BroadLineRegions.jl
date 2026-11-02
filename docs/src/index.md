@@ -42,7 +42,7 @@ jlPkg.add("BroadLineRegions") #or use the github link
 ```
 
 ## Quickstart 
-While this code is designed to be very flexible and modular such that you can implement your own bespoke models of the BLR easier, two popular models of the BLR are included as default models which one can play with. 
+While this code is designed to be very flexible and modular such that you can implement your own bespoke models of the BLR more easily, two popular models of the BLR are included as default models which one can play with.
 
 To generate a "cloud" model similar to that of Pancoast+ 2011 and 2014, use syntax like:
 ```julia
@@ -57,13 +57,13 @@ mDisk = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,nϕ=48,scale=:log,
         f1=1.0,f2=1.0,f3=1.0,f4=1.0,reflect=false,τ=5.)
 ```
 
-In case you do not like unicode symbols, spelled out keyword aliases (for example `mu`, `theta_o`, and `tau`) are also available for all parameters (and can be mixed and matched with the unicode symbols), i.e. for the cloud model example above we could also write:
+In case you do not like Unicode symbols, spelled out keyword aliases (for example `mu`, `theta_o`, and `tau`) are also available for all parameters (and can be mixed and matched with the Unicode symbols), i.e. for the cloud model example above we could also write:
 ```julia
 mClouds = BLR.cloudModel(100_000,mu=500.,beta=1.,F=0.5,theta_o=30/180*pi,gamma=1.,xi=1.,i=0.,
         I=BLR.IsotropicIntensity,v=BLR.vCircularCloud,rescale=1e-5,tau=0.0)
 ```
-See each function's documentation (either online or in the REPL with i.e. `?BLR.cloudModel`) for a list of all parameters, their defaults, and available spelled out ASCII keyword aliases. 
-Note that the internal code still uses largely unicode names, so to access struct fields only the unicode versions are supported (i.e. only `m.camera.α` works, and `m.camera.alpha` will produce an error). 
+See each function's documentation (either online or in the REPL with e.g. `?BLR.cloudModel`) for a list of all parameters, their defaults, and available spelled out ASCII keyword aliases.
+Note that the internal code still uses largely Unicode names, so to access struct fields only the Unicode versions are supported (i.e. only `m.camera.α` works, and `m.camera.alpha` will produce an error).
 
 If you prefer to start from the geometric basis of one of these models but modify how some internal portion is calculated, you can pass your own custom functions to them to enable this functionality. For example if you wanted to generate a geometry similar to the `DiskWindModel` example above but with a custom intensity prescription you could write something like: 
 ```julia
@@ -72,7 +72,7 @@ mDiskCustom = BLR.DiskWindModel(500.,5.,1.,30/180*π,nr=24,nϕ=48,scale=:log,
         I=myCustomIntensityFx,level=2.) #pass extra new parameter level to custom intensity function
 ```
 
-The code is designed in such a way that by default coordinates are always in reference to a virtual "camera" imaging the system, and by default the inner Struct we use to hold these points is called a `ring` (which acts as a "ring" of points on an image, from which we "raytrace" back to physical space at construction). You can of course go beyond these default recipes and define fully custom models by passing your own "rings" and your own "camera" system to the model, such that you can configure the code quite flexibly while still being able to interface with existing models. Below we show an example of this general process for a very simple custom BLR model consisting of just a single BLR "cloud": 
+The code is designed in such a way that by default coordinates are always in reference to a virtual "camera" imaging the system, and by default the inner struct we use to hold these points is called a `ring` (which acts as a "ring" of points on an image, from which we "raytrace" back to physical space at construction). You can of course go beyond these default recipes and define fully custom models by passing your own "rings" and your own "camera" system to the model, such that you can configure the code quite flexibly while still being able to interface with existing models. Below we show an example of this general process for a very simple custom BLR model consisting of just a single BLR "cloud":
 ```julia
 α,β = (0.,-50.) #start by defining (in camera coordinates) a "cloud"
 myCustomCamera = BLR.camera([α],[β],false) #define custom BLR "camera" struct (α and β must be vectors, because usually you have more than one point in your BLR...)
@@ -95,8 +95,8 @@ Note that `BroadLineRegions.jl` attempts to make sure you have correctly passed 
 a keyword argument that it does not know how to check. This warning would be issued in the above case, as `level` is not a parameter of any existing function. 
 For custom callbacks, you can thus optionally register extra keywords to enable stricter validation and suppress this warning:
 ```julia
-myCustomIntensityFx(; r, level=1.0, kwargs...) = level/r #a simple custom intensity scaling like 1/r 
-BLR.acceptedKeywords(::typeof(myIntensity)) = (:level,)
+myCustomIntensityFx(; r, level=1.0, kwargs...) = level ./ r #a simple custom intensity scaling like 1/r
+BLR.acceptedKeywords(::typeof(myCustomIntensityFx)) = (:level,)
 ```
 
 Models can be combined simply by writing `mCombined = m1 + m2`. After combining, you can run quick occlusion/optical depth raytracing calculations through `raytrace!`, but note that this implementation is by default exceedingly rudimentary (no complicated radiative transfer is solved, instead emission is just added up proportionally to $e^{-\tau}$ at each point along a ray until it reaches a specified optical depth stopping point and after that it is assumed all remaining emission along the ray is blocked, and you must supply the expected $\tau$ and emission values when creating the submodels). 
@@ -105,7 +105,7 @@ Generate profiles (i.e. line, phase, delay, or whatever else your heart desires)
 ```julia
 m = mDisk #or mClouds, mCustom, or however you have set up your model
 p = BLR.getProfile(m,:line) #generate line profile with default parameters
-BLR.setProfile!(m,p) #optinally store the profile in model data structure 
+BLR.setProfile!(m,p) #optionally store the profile in model data structure
 ```
 These profiles are just simple estimates using weighted sums (rectangular Riemann sum integral approximations only), so smooth profiles can depend highly on the number of points, especially in the case of discrete "cloud" models. 
 
@@ -116,31 +116,32 @@ img = BLR.image(m,:I) #make an image of the model intensity, can pass any other 
 geometry = BLR.plot3d(m) #visualize the geometry of the system in a 3d plot, can also color points according to any parameter
 ```
 
-Note that no functions are exported by default into the global namespace to prevent overlap with other modules, and you must prepend the module name to all methods to access them. `BroadLineRegions.jl` exports itself as both `BroadLineRegions` and `BLR`, so both of these prefixes are equivalent, i.e. `BroadLineRegions.model == BLR.model`. If adding this prefix annoys you, you can avoid this by specifying the functions you want added to the global namespace in your `import`/`Using` statement. For example:
+Note that no functions are exported by default into the global namespace to prevent overlap with other modules, and you must prepend the module name to all methods to access them. `BroadLineRegions.jl` exports itself as both `BroadLineRegions` and `BLR`, so both of these prefixes are equivalent, i.e. `BroadLineRegions.model == BLR.model`. If adding this prefix annoys you, you can avoid this by specifying the functions you want added to the global namespace in your `import`/`using` statement. For example:
 
 ```julia
-using BLR: DiskWindModel, cloudModel
-mDisk = DiskWindModel(parms...) #instead of BLR.DiskWindModel
+using BroadLineRegions: DiskWindModel, cloudModel
+mDisk = DiskWindModel(params...) #instead of having to type BLR.DiskWindModel
 ```
 
 For more detailed examples, see the [Usage and Examples](@ref) page.
 
 Full documentation is available in the [API](@ref) section.
 
-Also note that if you are using `BroadLineRegions` from within Python you will need to modify all the code examples with the corresponding name that you imported julia with, i.e. the simple cloud example in the quickstart above in Python would become: 
+Also note that if you are using `BroadLineRegions` from within Python you will need to modify all the code examples with the corresponding name that you imported Julia with, i.e. the simple cloud example in the quickstart above in Python would become:
 
 ```python
 from juliacall import Main as jl
 import numpy as np
-jl.seval("Using BroadLineRegions") #load BLR into Main
+jl.seval("using BroadLineRegions") #load BLR into Main
 
-mClouds = jl.BLR.cloudModel(100_000,μ=500.,β=1.,F=0.5,θₒ=30/180*np.pi,γ=1.,ξ=1.,i=0.,
-             I=jl.BLR.IsotropicIntensity,v=jl.BLR.vCircularCloud,rescale=1e-5,τ=0.0)
+# Use ASCII keyword aliases: Python normalizes some Unicode identifiers (e.g. θₒ).
+mClouds = jl.BLR.cloudModel(100_000,mu=500.,beta=1.,F=0.5,theta_o=30/180*np.pi,gamma=1.,xi=1.,i=0.,
+             I=jl.BLR.IsotropicIntensity,v=jl.BLR.vCircularCloud,rescale=1e-5,tau=0.0)
 ```
 
 ## Performance tips
 
-Starting Julia with multiple threads (`julia -t N`) speeds up disk-wind model construction, especially for larger models, but note that currently "cloud" models are not parallelized to ensure RNG draws are reproducible. GPU support is now included for Metal (Apple) and CUDA devices, which greatly speed up model generation and observable calculations, especially when raytracing multicomponent models. You may also consider starting Julia with a `sysimage` to improve performance (see pure Julia example [here](https://julialang.github.io/PackageCompiler.jl/dev/sysimages.html), and instructions for enabling the functionality in `juliacall` [here](https://juliapy.github.io/PythonCall.jl/stable/juliacall/#julia-config)).
+Starting Julia with multiple threads (`julia -t N`) speeds up disk-wind model construction, especially for larger models, but note that "cloud" models use a serial construction path by default to preserve RNG reproducibility. GPU support is now included for Metal (Apple) and CUDA devices, which greatly speed up model generation and observable calculations, especially when raytracing multicomponent models. You may also consider starting Julia with a `sysimage` to improve performance (see pure Julia example [here](https://julialang.github.io/PackageCompiler.jl/dev/sysimages.html), and instructions for enabling the functionality in `juliacall` [here](https://juliapy.github.io/PythonCall.jl/stable/juliacall/#julia-config)).
 
 ## Referencing
 If you find this code useful in your work, please cite it as:
@@ -149,4 +150,4 @@ lorem ipsum
 ```
 
 ## Contributing
-If you would like to contribute to the package, please open a pull request on the [GitHub](https://github.com/kirklong/BroadLineRegions.jl). For bug reports and feature requests, please open an issue on the GitHub. Contributions should be done in their appropriate files&mdash; for example if you find yourself using a custom function often with the `getProfile` method and want to add it as a default for all users this should be done in the relevant `profiles.jl` file to maintain the organizational structure of the codebase. After making a change you can ensure you did not break any existing functionality by running the test suite with: `julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()`. By default this performs only the CPU tests, but if you have access to a GPU set `BLR_TEST_CUDA=1` and/or `BLR_TEST_METAL=1` as environment variables before running the test suite. Appropriate LLM-assisted contributions are allowed&mdash; for reviews we require that authors write pull requests in their own langauge to demonstrate understanding of what the LLM has done, and be willing to be accountable for its actions, but do not require that contributed code itself be written by humans. If LLMs are used we also encourage the use of an "AI Ledger" that documents what has been done a nd why (an example of which can be found [here](https://github.com/kirklong/DCNN2Paper/blob/main/docs/llm_history/RESEARCH_HISTORY.md)).
+If you would like to contribute to the package, please open a pull request on the [GitHub](https://github.com/kirklong/BroadLineRegions.jl). For bug reports and feature requests, please open an issue on the GitHub. Contributions should be done in their appropriate files&mdash; for example if you find yourself using a custom function often with the `getProfile` method and want to add it as a default for all users this should be done in the relevant `profiles.jl` file to maintain the organizational structure of the codebase. After making a change you can ensure you did not break any existing functionality by running the test suite with: `julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'`. By default this performs only the CPU tests, but if you have access to a GPU set `BLR_TEST_CUDA=1` and/or `BLR_TEST_METAL=1` as environment variables before running the test suite. Appropriate LLM-assisted contributions are allowed&mdash; for reviews we require that authors write pull requests in their own language to demonstrate understanding of what the LLM has done, and be willing to be accountable for its actions, but do not require that contributed code itself be written by humans. If LLMs are used we also encourage the use of an "AI Ledger" that documents what has been done and why (an example of which can be found [here](https://github.com/kirklong/DCNN2Paper/blob/main/docs/llm_history/RESEARCH_HISTORY.md)).
