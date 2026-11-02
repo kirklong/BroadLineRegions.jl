@@ -1,5 +1,5 @@
 # BroadLineRegions.jl
-![lifecycle](https://img.shields.io/badge/lifecycle-experimental-orange.svg)
+![lifecycle](https://img.shields.io/badge/lifecycle-stable-green.svg)
 [![CI](https://github.com/kirklong/BroadLineRegions.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/kirklong/BroadLineRegions.jl/actions/workflows/CI.yml)
 <!-- 
 ![lifecycle](https://img.shields.io/badge/lifecycle-maturing-blue.svg)
