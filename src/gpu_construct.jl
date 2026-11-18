@@ -168,9 +168,9 @@ end
 - `rₛ::Real=1.0`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
 - `vᵣFrac::Real=0.0`: Radial velocity fraction, ASCII alias=`v_r_frac`.
 - `τ::Real=0.0`: Optical depth, ASCII alias=`tau`.
-- `ηₒ::Real=0.5`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁::Real=0.5`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM::Real=0.0`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ::Real=0.5`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁::Real=0.5`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM::Real=0.0`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 Build a DiskWind model **directly on `backend`** as a device-resident [`ResidentModel`](@ref), without
 constructing host `ring`s — the on-device counterpart of `DiskWindModel(...) |> resident`. One fused
@@ -222,9 +222,9 @@ end
 - `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
 - `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
 - `τ`: Optical depth, ASCII alias=`tau`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 Build a DiskWind model directly on the GPU (device-resident [`ResidentModel`](@ref)) — the GPU
 counterpart of [`residentDiskWindModel`](@ref), defaulting to `Float32` (GeForce FP64 is ~1/64 rate;
@@ -247,9 +247,9 @@ end
 - `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
 - `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
 - `τ`: Optical depth, ASCII alias=`tau`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 `r̄`/`rFac`/`α` parameterization (matching `DiskWindModel(r̄, rFac, α, i; ...)`): derives `rMin`/`rMax`
 via [`get_rMinMaxDiskWind`](@ref) and sets the intensity power-law to `α`.
@@ -534,9 +534,9 @@ end
 - `ξ::Real=1.0`: Fraction of back-side clouds retained, ASCII alias=`xi`.
 - `τ::Real=0.0`: Optical depth, ASCII alias=`tau`.
 - `κ::Real=0.0`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
-- `ηₒ::Real=0.5`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁::Real=0.5`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM::Real=0.0`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ::Real=0.5`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁::Real=0.5`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM::Real=0.0`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 - `σρᵣ::Real=0.0`: Radial-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_r`.
 - `σρc::Real=0.0`: Circular-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_c`.
 - `σΘᵣ::Real=0.0`: Radial-orbit angular dispersion, ASCII alias=`sigma_theta_r`.
@@ -601,9 +601,9 @@ end
 - `ξ`: Fraction of back-side clouds retained, ASCII alias=`xi`.
 - `τ`: Optical depth, ASCII alias=`tau`.
 - `κ`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 - `σρᵣ`: Radial-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_r`.
 - `σρc`: Circular-orbit speed dispersion, as a fraction of the local circular velocity (like `σₜ`), ASCII alias=`sigma_rho_c`.
 - `σΘᵣ`: Radial-orbit angular dispersion, ASCII alias=`sigma_theta_r`.

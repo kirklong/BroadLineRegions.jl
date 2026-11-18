@@ -62,7 +62,8 @@ function _rt_resident_binvar(rm::ResidentModel, x, θ, w, bins; overflow::Bool=f
     return edges, _rt_bin_centers(edges), Float64.(Array(σ²))
 end
 
-# Reverberation delays as a resident device column (τ = η(r − x); see _rt_transfer_delays).
+# Reverberation delays as a resident device column (τ = r − x, geometric; see _rt_transfer_delays).
+# The responsivity η weights the transfer functions / :delay profile, it does not scale the delay.
 _rt_resident_delays(rm::ResidentModel) = _rt_transfer_delays(rm.ma; backend=rm.backend)
 
 """
@@ -84,7 +85,7 @@ pass a host `model` for either.
         return profile(name=:line, binEdges=edges, binCenters=centers, binSums=sums)
     elseif n == :delay
         delays = _rt_resident_delays(rm)
-        edges, centers, vals = _rt_resident_weighted_mean(rm, ma.v, delays .* ma.I .* ma.ΔA, ma.I .* ma.η .* ma.ΔA, bins; kwargs...)
+        edges, centers, vals = _rt_resident_weighted_mean(rm, ma.v, delays .* ma.I .* ma.η .* ma.ΔA, ma.I .* ma.η .* ma.ΔA, bins; kwargs...)
         return profile(name=:delay, binEdges=edges, binCenters=centers, binSums=vals)
     elseif n == :r
         edges, centers, vals = _rt_resident_weighted_mean(rm, ma.v, ma.r .* w, w, bins; kwargs...)
@@ -108,7 +109,8 @@ end
 """
     getΨt(rm::ResidentModel, tEdges::AbstractVector, overflow::Bool=false) -> Ψt
 
-GPU-resident 1D transfer function Ψ(t); uniform `tEdges` only. Matches the host `getΨt` (binnedSum's
+GPU-resident 1D transfer function Ψ(t) (histogram of I·ΔA·η over the geometric delays τ = r − x, η the
+local responsivity); uniform `tEdges` only. Matches the host `getΨt` (binnedSum's
 left-exclusive interior-edge convention, empty/NaN-poisoned bins floored to 1e-30, optional overflow into
 the edge bins).
 """
@@ -118,7 +120,7 @@ function getΨt(rm::ResidentModel, tEdges::AbstractVector, overflow::Bool=false)
     T = eltype(ma.I)
     dEdges = _rt_backend_adapt(T.(collect(tEdges)), ma)
     Ψt = similar(ma.I, length(tEdges) - 1); under = similar(ma.I, 1); over = similar(ma.I, 1)
-    _rt_psit!(Ψt, under, over, delays, ma.I, ma.ΔA, dEdges; backend=rm.backend)
+    _rt_psit!(Ψt, under, over, delays, ma.I, ma.ΔA, ma.η, dEdges; backend=rm.backend)
     Ψth = Float64.(Array(Ψt))
     @. Ψth = ifelse(Ψth > 0, Ψth, 1e-30)
     if overflow
@@ -132,7 +134,8 @@ end
 """
     getΨ(rm::ResidentModel, vEdges::AbstractVector, tEdges::AbstractVector) -> Ψ
 
-GPU-resident 2D transfer function Ψ(v, t); uniform edges only. Matches the host `getΨ`.
+GPU-resident 2D transfer function Ψ(v, t) (I·ΔA·η per (v, τ = r − x) bin, η the local responsivity);
+uniform edges only. Matches the host `getΨ`.
 """
 function getΨ(rm::ResidentModel, vEdges::AbstractVector, tEdges::AbstractVector)
     ma = rm.ma
@@ -140,7 +143,7 @@ function getΨ(rm::ResidentModel, vEdges::AbstractVector, tEdges::AbstractVector
     T = eltype(ma.I)
     dV = _rt_backend_adapt(T.(collect(vEdges)), ma); dT = _rt_backend_adapt(T.(collect(tEdges)), ma)
     Ψ = similar(ma.I, length(vEdges) - 1, length(tEdges) - 1)
-    _rt_psi2d!(Ψ, ma.v, delays, ma.I, ma.ΔA, dV, dT; backend=rm.backend)
+    _rt_psi2d!(Ψ, ma.v, delays, ma.I, ma.ΔA, ma.η, dV, dT; backend=rm.backend)
     Ψh = Float64.(Array(Ψ))
     @. Ψh = ifelse(Ψh > 0, Ψh, 1e-30)
     return Ψh
