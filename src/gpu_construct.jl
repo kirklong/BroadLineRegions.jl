@@ -1,5 +1,49 @@
 using KernelAbstractions
 
+@inline _device_point(r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect) =
+    (; r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect)
+
+struct _DeviceCallback{Fields,F}
+    f::F
+end
+
+"""
+    deviceCallback(f, fields::Symbol...)
+
+Adapt `f(r, ϕ, inc, extra...)` for `intensity` or `velocity` in the resident DiskWind
+and cloud builders. The named point `fields` are appended in the given order.
+For example, `deviceCallback(f, :θₒSystem, :x)` passes the model opening angle and
+the line-of-sight position as the fourth and fifth arguments. The field selection
+and callable signature are checked before kernel launch.
+"""
+deviceCallback(f, fields::Symbol...) = _DeviceCallback{fields,typeof(f)}(f)
+
+@inline _device_callback_args(point, fields) =
+    (point.r, point.ϕ, point.i, map(field -> getproperty(point, field), fields)...)
+
+@inline (callback::_DeviceCallback{Fields})(point) where {Fields} =
+    callback.f(_device_callback_args(point, Fields)...)
+
+function _device_point_callable(callback::_DeviceCallback{Fields}, name, point) where {Fields}
+    for field in Fields
+        hasproperty(point, field) || throw(ArgumentError("$name: no device point field `$field`"))
+    end
+    applicable(callback.f, _device_callback_args(point, Fields)...) ||
+        throw(ArgumentError("$name must accept (r, ϕ, inc) followed by the selected fields"))
+    return callback
+end
+
+# Resolve the signature on the host so the device only calls a specialized functor.
+function _device_point_callable(f, name, point)
+    f === nothing && return nothing
+    if applicable(f, point.r, point.ϕ, point.i)
+        return p -> f(p.r, p.ϕ, p.i)
+    end
+    applicable(f, point) ||
+        throw(ArgumentError("$name must accept (r, ϕ, inc) or (point), or use deviceCallback"))
+    return f
+end
+
 # On-device model construction. Builds the flat `ModelArrays` columns for a DiskWind
 # model directly on a `KernelAbstractions` backend via ONE fused kernel — deprojection + velocity +
 # intensity + reverberation response, one launch / one pass per pixel — and generates the camera
@@ -72,7 +116,7 @@ _rt_disk_radial_velocity_fn(::Type{T}, vᵣFrac, inflow::Bool, rₛ) where {T<:R
     outv, outI, outΔA, outτ, outη = out.v, out.I, out.ΔA, out.τ, out.η
     outx, outy, outz, outα, outβ, outreflect = out.x, out.y, out.z, out.α, out.β, out.reflect
     (nr, scaleLog, rStart, Δr, Δϕ, inc, rot, θₒ, m11, m12, m21, m22,
-        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac, τval) = P
+        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac, τval, rₛ) = P
     T = eltype(outr)
     k = (p - 1) % nr + 1
     j = (p - 1) ÷ nr + 1
@@ -89,8 +133,9 @@ _rt_disk_radial_velocity_fn(::Type{T}, vᵣFrac, inflow::Bool, rₛ) where {T<:R
         outv[p] = nan
         outI[p] = nan
     else
-        outv[p] = vfun(r, ϕ, inc)
-        outI[p] = Ifun(r, ϕ, inc)
+        point = _device_point(r, ϕ, ϕ₀, inc, rot, θₒ, θₒ, rₛ, x, y, z, false)
+        outv[p] = vfun(point)
+        outI[p] = Ifun(point)
     end
     outr[p] = r
     outϕ[p] = ϕ
@@ -111,14 +156,14 @@ end
 
 """
     _build_diskwind_modelarrays(rMin, rMax, inc, nr, nϕ, scale, rot, θₒ, Ifun, vfun;
-        ηₒ, η₁, αRM, rNorm, backend, T) -> ModelArrays
+        ηₒ, η₁, αRM, rNorm, rₛ, backend, T) -> ModelArrays
 
 Allocate the device columns on `backend` and run `_rt_build_disk_kernel!` to fill them, then
-wrap as a [`ModelArrays`](@ref). `Ifun`/`vfun` are GPU-safe scalar callables `(r, ϕ, inc) -> value`.
+wrap as a [`ModelArrays`](@ref). `Ifun` and `vfun` are GPU-safe callables of the disk point.
 """
 function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int, nϕ::Int,
         scale::Symbol, rot::Real, θₒ::Real, Ifun, vfun; ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
-        τ::Real=0.0, backend=KernelAbstractions.CPU(), T=Float64)
+        τ::Real=0.0, rₛ::Real=1.0, backend=KernelAbstractions.CPU(), T=Float64)
     rMin < rMax || throw(ArgumentError("rMin must be less than rMax"))
     nr > 1 || throw(ArgumentError("nr must be greater than 1"))
     nϕ > 1 || throw(ArgumentError("nϕ must be greater than 1"))
@@ -149,7 +194,7 @@ function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int,
     P = (nr, scaleLog, rStart, Δr, Δϕ,
         T(inc), T(rot), T(θₒ), T(M[1, 1]), T(M[1, 2]), T(M[2, 1]), T(M[2, 2]),
         T(r3D[1, 1]), T(r3D[1, 2]), T(r3D[2, 1]), T(r3D[2, 2]), T(r3D[3, 1]), T(r3D[3, 2]),
-        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac, T(τ))
+        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac, T(τ), T(rₛ))
     kernel! = _rt_build_disk_kernel!(backend)
     event = kernel!(ma, Ifun, vfun, P; ndrange=n)
     event !== nothing && wait(event)
@@ -181,9 +226,12 @@ response per pixel. Reproduces `flatten(DiskWindModel(rMin, rMax, i; ...))` to f
 The default physics is the built-in `DiskWindIntensity` (`f1`–`f4`, `α`) and `vCircularDisk` (`rₛ`). Pass
 `vᵣFrac`/`inflow` to switch the velocity to the built-in `vCircularRadialDisk` (Keplerian + radial
 in/outflow; `vᵣFrac = 0` is `vCircularDisk`). Advanced users may instead pass `intensity`/`velocity` as
-**GPU-safe scalar callables** `(r, ϕ, inc) -> value` (e.g. a `let`-closure over isbits parameters) to run
-custom physics in the same fused kernel; generic custom `Function`s that cannot run in a kernel should
-use host construction + `gpu(m)` instead.
+GPU-safe callables to run custom physics in the same kernel. Both the disk and cloud builders
+accept `(r, ϕ, inc)` and `(point)`, with the three-argument form taking precedence.
+Use [`deviceCallback`](@ref) to append selected fields as positional arguments.
+`point` is a named tuple with `r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect` on
+both builders. On the disk, both opening-angle fields are equal and `reflect` is false.
+Use host construction and `gpu(m)` for functions that need host operations.
 
 Use `gpu`-backed construction (CUDA or Metal loaded) via `gpuDiskWindModel`; the default `CPU()` backend builds
 on the host and is mainly for testing the on-device pipeline without a GPU.
@@ -205,8 +253,11 @@ on the host and is mainly for testing the on-device pipeline without a GPU.
         intensity
     end
     vfun = velocity === nothing ? _rt_disk_radial_velocity_fn(T, vᵣFrac, inflow, rₛ) : velocity
-    ma = _build_diskwind_modelarrays(rMin, rMax, i, nr, nϕ, scale, rot, θₒ, Ifun, vfun;
-        ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, τ=τ, backend=backend, T=T)
+    z = zero(T)
+    point = _device_point(T(rMin), z, z, T(i), T(rot), T(θₒ), T(θₒ), T(rₛ), z, z, z, false)
+    ma = _build_diskwind_modelarrays(rMin, rMax, i, nr, nϕ, scale, rot, θₒ,
+        _device_point_callable(Ifun, :intensity, point), _device_point_callable(vfun, :velocity, point);
+        ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, τ=τ, rₛ=rₛ, backend=backend, T=T)
     meta = _rt_diskwind_meta(ma, rMin, rMax, i, nr, nϕ, scale, backend, T)
     return ResidentModel(ma, backend, 1, meta)
 end
@@ -374,20 +425,6 @@ end
 # velocity is either `vCircularCloud` (no draws) or `vCloudTurbulentEllipticalFlow` (consumes extra
 # normals/uniform for turbulence + elliptical/flow). `useCloudI`/`useTurbulent` are scalar flags, so
 # every thread takes the same branch (no warp divergence). Returns every ModelArrays column.
-@inline _cloud_callback_point(r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect) =
-    (; r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect)
-
-# Resolve callback arity once on the host, before passing it to the device kernel.
-function _cloud_point_callable(f, name, point)
-    f === nothing && return nothing
-    if applicable(f, point.r, point.ϕ, point.i)
-        return p -> f(p.r, p.ϕ, p.i)
-    end
-    applicable(f, point) ||
-        throw(ArgumentError("$name must accept (r, ϕ, inc) or a single cloud point"))
-    return f
-end
-
 @inline function _rt_build_cloud_scalar(::Type{T}, key0::UInt32, key1::UInt32, cloudInd::UInt32,
         μ::T, β::T, F::T, rₛ::T, θₒ::T, γ::T, ξ::T, inc::T, rescale::T,
         ηₒ::T, η₁::T, αRM::T, rNorm::T, useCloudI::Bool, κ::T, useTurbulent::Bool,
@@ -423,7 +460,7 @@ end
     xyPlaneX = sini * x - cosi * z
     ϕ = atan(y, xyPlaneX)
     η = ηₒ + η₁ * (r / rNorm)^αRM
-    point = _cloud_callback_point(r, ϕ, ϕ₀, inc, rot, θ, θₒ, rₛ, x, y, z, reflect)
+    point = _device_point(r, ϕ, ϕ₀, inc, rot, θ, θₒ, rₛ, x, y, z, reflect)
 
     # intensity
     I = intensity === nothing ?
@@ -545,9 +582,9 @@ function _fill_cloud_modelarrays!(ma::ModelArrays, seed::Integer; μ::Real, β::
     end
     if intensity !== nothing || velocity !== nothing
         z, r = zero(T), one(T)
-        point = _cloud_callback_point(r, z, z, T(i), z, z, T(θₒ), T(rₛ), r, z, z, false)
-        intensity = _cloud_point_callable(intensity, :intensity, point)
-        velocity = _cloud_point_callable(velocity, :velocity, point)
+        point = _device_point(r, z, z, T(i), z, z, T(θₒ), T(rₛ), r, z, z, false)
+        intensity = _device_point_callable(intensity, :intensity, point)
+        velocity = _device_point_callable(velocity, :velocity, point)
     end
     s = seed % UInt64
     key0 = UInt32(s & 0xffffffff)
@@ -610,13 +647,11 @@ Pass `radial_sampler(u)` to replace the shifted Gamma distribution (`μ`, `β`, 
 The callable maps a seeded uniform variate `u::T` in (0, 1) to a positive, finite radius
 in the same units as `rₛ`.
 
-`intensity` and `velocity` accept `(r, ϕ, inc) -> value` callables in place of a built-in
-symbol, using the same signature as [`residentDiskWindModel`](@ref). For cloud-specific
-physics, either keyword can instead take a callable accepting a single named tuple with
-scalar fields `r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect`. If a callable
-accepts both forms, the builder uses the three-argument form. The local `θₒ` is the
-sampled orbit tilt. The position is in system coordinates after any reflection.
-The velocity callable returns a line-of-sight velocity in units of c.
+`intensity` and `velocity` accept the same callable forms as [`residentDiskWindModel`](@ref):
+`(r, ϕ, inc)`, `(point)`, or a [`deviceCallback`](@ref) with extra positional arguments.
+The cloud point has the same fields as the disk point. `θₒSystem` is the model opening
+angle and `θₒ` is the sampled orbit tilt. The position is in system coordinates
+after any reflection. The velocity callable returns a line-of-sight velocity in units of c.
 
 Callable results are converted to `T`. GPU callables must be isbits and use device-compatible
 operations. Use host construction and `gpu(m)` for functions that need host operations.

@@ -26,6 +26,25 @@ function test_device_callables(backend, ::Type{T}) where {T}
             @test Array(model.ma.I)[valid] ≈ intensity.(r[valid], ϕ[valid], inc[valid]) rtol=8eps(T)
             @test Array(model.ma.v)[valid] ≈ velocity.(r[valid], ϕ[valid], inc[valid]) rtol=8eps(T)
         end
+
+        # One adapter can request any number of fields in a chosen order.
+        emissivity = (r, ϕ, inc, scale_radius) -> scale_radius / r
+        flow = (r, ϕ, inc, x, opening, z) -> (abs(x) + opening * abs(z)) / r
+        extra_kw = (; θₒ=0.2, rₛ=3.0, intensity=BLR.deviceCallback(emissivity, :rₛ),
+            velocity=BLR.deviceCallback(flow, :x, :θₒSystem, :z), backend, T)
+        cloud = BLR.gpuCloudModel(128, 42; i=0.4, extra_kw...)
+        disk = BLR.gpuDiskWindModel(100., 300., 0.4; nr=8, nϕ=16, extra_kw...)
+        for model in (cloud, disk)
+            r, x, z = Array(model.ma.r), Array(model.ma.x), Array(model.ma.z)
+            valid = isfinite.(r)
+            @test any(valid)
+            @test Array(model.ma.I)[valid] ≈ T(3) ./ r[valid] rtol=8eps(T)
+            @test Array(model.ma.v)[valid] ≈ (abs.(x[valid]) .+ T(0.2) .* abs.(z[valid])) ./ r[valid] rtol=8eps(T)
+        end
+        @test_throws ArgumentError BLR.residentCloudModel(2, 1;
+            intensity=BLR.deviceCallback(emissivity, :unknown_field), backend, T)
+        @test_throws ArgumentError BLR.residentCloudModel(2, 1;
+            intensity=BLR.deviceCallback(emissivity, :x, :z), backend, T)
     end
 end
 

@@ -209,7 +209,7 @@ function _check_resident_keywords(kw, own, target; reserved=())
         get(kw, :radial_sampler, nothing) === nothing || append!(inactive, (:μ, :β, :F))
     else
         get(kw, :intensity, nothing) === nothing || append!(inactive, (:f1, :f2, :f3, :f4, :α))
-        get(kw, :velocity, nothing) === nothing || append!(inactive, (:rₛ, :vᵣFrac, :inflow))
+        get(kw, :velocity, nothing) === nothing || append!(inactive, (:vᵣFrac, :inflow))
     end
     unused = [k for k in keys(kw) if k in inactive]
     isempty(unused) || @warn "Unused keyword(s) for the selected physics: $(join(unused, ", "))"
