@@ -1,13 +1,5 @@
 using KernelAbstractions
 
-function _check_device_callable(backend, name, f, args...)
-    applicable(f, args...) || throw(ArgumentError("`$name` must be callable with the documented arguments"))
-    if !(backend isa KernelAbstractions.CPU) && !isbits(f)
-        throw(ArgumentError("`$name` must be an isbits callable on a GPU backend"))
-    end
-    return nothing
-end
-
 # On-device model construction. Builds the flat `ModelArrays` columns for a DiskWind
 # model directly on a `KernelAbstractions` backend via ONE fused kernel — deprojection + velocity +
 # intensity + reverberation response, one launch / one pass per pixel — and generates the camera
@@ -80,8 +72,7 @@ _rt_disk_radial_velocity_fn(::Type{T}, vᵣFrac, inflow::Bool, rₛ) where {T<:R
     outv, outI, outΔA, outτ, outη = out.v, out.I, out.ΔA, out.τ, out.η
     outx, outy, outz, outα, outβ, outreflect = out.x, out.y, out.z, out.α, out.β, out.reflect
     (nr, scaleLog, rStart, Δr, Δϕ, inc, rot, θₒ, m11, m12, m21, m22,
-        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac, τval,
-        responsivity) = P
+        r3d11, r3d12, r3d21, r3d22, r3d31, r3d32, rMinR, rMaxR, ηₒ, η₁, αRM, rNorm, ΔAfac, τval) = P
     T = eltype(outr)
     k = (p - 1) % nr + 1
     j = (p - 1) ÷ nr + 1
@@ -100,7 +91,6 @@ _rt_disk_radial_velocity_fn(::Type{T}, vᵣFrac, inflow::Bool, rₛ) where {T<:R
     else
         outv[p] = vfun(r, ϕ, inc)
         outI[p] = Ifun(r, ϕ, inc)
-        responsivity === nothing || (η = T(responsivity(r, ϕ, inc)))
     end
     outr[p] = r
     outϕ[p] = ϕ
@@ -128,7 +118,7 @@ wrap as a [`ModelArrays`](@ref). `Ifun`/`vfun` are GPU-safe scalar callables `(r
 """
 function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int, nϕ::Int,
         scale::Symbol, rot::Real, θₒ::Real, Ifun, vfun; ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
-        τ::Real=0.0, responsivity=nothing, backend=KernelAbstractions.CPU(), T=Float64)
+        τ::Real=0.0, backend=KernelAbstractions.CPU(), T=Float64)
     rMin < rMax || throw(ArgumentError("rMin must be less than rMax"))
     nr > 1 || throw(ArgumentError("nr must be greater than 1"))
     nϕ > 1 || throw(ArgumentError("nϕ must be greater than 1"))
@@ -159,7 +149,7 @@ function _build_diskwind_modelarrays(rMin::Real, rMax::Real, inc::Real, nr::Int,
     P = (nr, scaleLog, rStart, Δr, Δϕ,
         T(inc), T(rot), T(θₒ), T(M[1, 1]), T(M[1, 2]), T(M[2, 1]), T(M[2, 2]),
         T(r3D[1, 1]), T(r3D[1, 2]), T(r3D[2, 1]), T(r3D[2, 2]), T(r3D[3, 1]), T(r3D[3, 2]),
-        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac, T(τ), responsivity)
+        rMinR, rMaxR, T(ηₒ), T(η₁), T(αRM), T(rNorm), ΔAfac, T(τ))
     kernel! = _rt_build_disk_kernel!(backend)
     event = kernel!(ma, Ifun, vfun, P; ndrange=n)
     event !== nothing && wait(event)
@@ -169,7 +159,7 @@ end
 """
     residentDiskWindModel(rMin, rMax, i; nr=128, nϕ=256, scale=:log, rot=0.0, θₒ=0.0,
         f1, f2, f3, f4, α, ηₒ=0.5, η₁=0.5, αRM=0.0, rNorm=1.0, rₛ=1.0,
-        intensity=nothing, velocity=nothing, responsivity=nothing, backend=KernelAbstractions.CPU(), T=Float64) -> ResidentModel
+        intensity=nothing, velocity=nothing, backend=KernelAbstractions.CPU(), T=Float64) -> ResidentModel
 
 # Parameters
 - `nϕ::Int=256`: Number of azimuthal bins, ASCII alias=`n_phi`.
@@ -193,9 +183,7 @@ The default physics is the built-in `DiskWindIntensity` (`f1`–`f4`, `α`) and 
 in/outflow; `vᵣFrac = 0` is `vCircularDisk`). Advanced users may instead pass `intensity`/`velocity` as
 **GPU-safe scalar callables** `(r, ϕ, inc) -> value` (e.g. a `let`-closure over isbits parameters) to run
 custom physics in the same fused kernel; generic custom `Function`s that cannot run in a kernel should
-use host construction + `gpu(m)` instead. `responsivity(r, ϕ, inc)` supplies a local response
-weight η in place of the default power law. These callables leave the DiskWind quadrature
-grid and its area weights intact.
+use host construction + `gpu(m)` instead.
 
 Use `gpu`-backed construction (CUDA or Metal loaded) via `gpuDiskWindModel`; the default `CPU()` backend builds
 on the host and is mainly for testing the on-device pipeline without a GPU.
@@ -205,7 +193,7 @@ on the host and is mainly for testing the on-device pipeline without a GPU.
         f1::Real=NaN, f2::Real=NaN, f3::Real=NaN, f4::Real=NaN, α::Real=NaN,
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0, rₛ::Real=1.0,
         vᵣFrac::Real=0.0, inflow::Bool=true, τ::Real=0.0,
-        intensity=nothing, velocity=nothing, responsivity=nothing,
+        intensity=nothing, velocity=nothing,
         backend=KernelAbstractions.CPU(), T=Float64)
     T <: Real || throw(ArgumentError("element type T must be <: Real, got $T"))
     _check_gpu_eltype(backend, T)
@@ -217,10 +205,8 @@ on the host and is mainly for testing the on-device pipeline without a GPU.
         intensity
     end
     vfun = velocity === nothing ? _rt_disk_radial_velocity_fn(T, vᵣFrac, inflow, rₛ) : velocity
-    responsivity === nothing ||
-        _check_device_callable(backend, :responsivity, responsivity, one(T), zero(T), T(i))
     ma = _build_diskwind_modelarrays(rMin, rMax, i, nr, nϕ, scale, rot, θₒ, Ifun, vfun;
-        ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, τ=τ, responsivity=responsivity, backend=backend, T=T)
+        ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm, τ=τ, backend=backend, T=T)
     meta = _rt_diskwind_meta(ma, rMin, rMax, i, nr, nϕ, scale, backend, T)
     return ResidentModel(ma, backend, 1, meta)
 end
@@ -388,47 +374,28 @@ end
 # velocity is either `vCircularCloud` (no draws) or `vCloudTurbulentEllipticalFlow` (consumes extra
 # normals/uniform for turbulence + elliptical/flow). `useCloudI`/`useTurbulent` are scalar flags, so
 # every thread takes the same branch (no warp divergence). Returns every ModelArrays column.
-# Separate callback streams keep the package's main Philox stream private.
-struct _CloudDraws{T,S}
-    key0::UInt32
-    key1::UInt32
-    cloud::UInt32
-end
-
-@inline function (d::_CloudDraws{T,S})(index::Integer) where {T,S}
-    words = _philox4x32_bijection((index >> 2) % UInt32, d.cloud, UInt32(S), UInt32(0), d.key0, d.key1)
-    u = @inbounds words[(index & 3) + 1]
-    return min((T(u) + T(0.5)) * T(2.3283064365386963e-10), prevfloat(one(T)))
-end
-
-@inline _device_scalar(::Type{T}, x::Real, args...) where {T} = T(x)
-@inline _device_scalar(::Type{T}, f, args...) where {T} = T(f(args...))
-_device_parameter(::Type{T}, x::Real) where {T} = T(x)
-_device_parameter(::Type{T}, f) where {T} = f
-
-@inline _cloud_point(r, ϕ, i, ϕ₀, rot, tilt, opening_angle, γ, rₛ, x, y, z, x_pre, reflect) =
-    (; r, ϕ, i, ϕ₀, rot, tilt, opening_angle, γ, rₛ, x, y, z, x_pre, reflect)
+@inline _cloud_callback_point(r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect) =
+    (; r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect)
 
 @inline function _rt_build_cloud_scalar(::Type{T}, key0::UInt32, key1::UInt32, cloudInd::UInt32,
-        μ::T, β::T, F::T, rₛ::T, opening, concentration, ξ::T, inc::T, rescale::T,
+        μ::T, β::T, F::T, rₛ::T, θₒ::T, γ::T, ξ::T, inc::T, rescale::T,
         ηₒ::T, η₁::T, αRM::T, rNorm::T, useCloudI::Bool, κ::T, useTurbulent::Bool,
-        σρᵣ::T, σρc::T, σΘᵣ::T, σΘc::T, flow_angle, fEllipse::T, fFlow::T, turbulence,
-        callbacks=(nothing, nothing, nothing, nothing)) where {T<:Real}
-    radial_sampler, intensity, velocity, responsivity = callbacks
+        σρᵣ::T, σρc::T, σΘᵣ::T, σΘc::T, θₑ::T, fEllipse::T, fFlow::T, σₜ::T,
+        radial_sampler=nothing, intensity=nothing, velocity=nothing) where {T<:Real}
     sini, cosi = sincos(inc)
     ϕ₀ = _cloud_uniform(T, key0, key1, cloudInd, 0) * T(2π)
     uθ = _cloud_uniform(T, key0, key1, cloudInd, 1)
+    cosθₒ_o = cos(θₒ)
+    θ = acos(cosθₒ_o + (one(T) - cosθₒ_o) * uθ^γ)
     rot = _cloud_uniform(T, key0, key1, cloudInd, 2) * T(2π)
     r, n = if radial_sampler === nothing
         g, next = _cloud_gamma(T, key0, key1, cloudInd, one(T) / (β * β), 3)
         (rₛ + μ * F + μ * β * β * (one(T) - F) * g, next)
     else
-        (T(radial_sampler(_CloudDraws{T,1}(key0, key1, cloudInd))), 3)
+        # Float32 rounding can turn the largest uniform into 1.
+        u = min(_cloud_uniform(T, key0, key1, cloudInd, 3), prevfloat(one(T)))
+        (T(radial_sampler(u)), 4)
     end
-    θₒ = _device_scalar(T, opening, r)
-    γ = _device_scalar(T, concentration, r)
-    cosθₒ_o = cos(θₒ)
-    θ = acos(cosθₒ_o + (one(T) - cosθₒ_o) * uθ^γ)
 
     sinϕ₀, cosϕ₀ = sincos(ϕ₀)
     sinrot, cosrot = sincos(rot)
@@ -444,8 +411,8 @@ _device_parameter(::Type{T}, f) where {T} = f
 
     xyPlaneX = sini * x - cosi * z
     ϕ = atan(y, xyPlaneX)
-    point = _cloud_point(r, ϕ, inc, ϕ₀, rot, θ, θₒ, γ, rₛ, x, y, z, xPre, reflect)
-    η = responsivity === nothing ? ηₒ + η₁ * (r / rNorm)^αRM : T(responsivity(point))
+    η = ηₒ + η₁ * (r / rNorm)^αRM
+    point = _cloud_callback_point(r, ϕ, ϕ₀, inc, rot, θ, θₒ, rₛ, x, y, z, reflect)
 
     # intensity
     I = intensity === nothing ?
@@ -454,10 +421,8 @@ _device_parameter(::Type{T}, f) where {T} = f
     # velocity
     vc = sqrt(rₛ / (2 * r))
     vLOS = if velocity !== nothing
-        T(velocity(point, _CloudDraws{T,2}(key0, key1, cloudInd)))
+        T(velocity(point))
     elseif useTurbulent
-        σₜ = _device_scalar(T, turbulence, r, θₒ, γ)
-        θₑ = _device_scalar(T, flow_angle, r)
         zt, n = _cloud_normal(T, key0, key1, cloudInd, n)
         vₜ = zt * σₜ * vc
         uE = _cloud_uniform(T, key0, key1, cloudInd, n); n += 1
@@ -493,12 +458,13 @@ end
     outv, outI, outΔA, outτ, outη = out.v, out.I, out.ΔA, out.τ, out.η
     outx, outy, outz, outα, outβ, outreflect = out.x, out.y, out.z, out.α, out.β, out.reflect
     (key0, key1, μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm, useCloudI, κ, useTurbulent,
-        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, τval, callbacks) = P
+        σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, τval, radial_sampler, intensity, velocity) = P
     T = eltype(outr)
     cloudInd = p % UInt32
     r, ϕ, ϕ₀, i, rot, θ, v, I, ΔA, _, η, x, y, z, reflect = _rt_build_cloud_scalar(
         T, key0, key1, cloudInd, μ, β, F, rₛ, θₒ, γ, ξ, inc, rescale, ηₒ, η₁, αRM, rNorm,
-        useCloudI, κ, useTurbulent, σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ, callbacks)
+        useCloudI, κ, useTurbulent, σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse, fFlow, σₜ,
+        radial_sampler, intensity, velocity)
     outr[p] = r
     outϕ[p] = ϕ
     outϕ₀[p] = ϕ₀
@@ -551,34 +517,34 @@ columns (`_fill_cloud_modelarrays!(rm.ma, seed; ..., backend=rm.backend)`) — b
 build with the same arguments.
 """
 function _fill_cloud_modelarrays!(ma::ModelArrays, seed::Integer; μ::Real, β::Real, F::Real, rₛ::Real,
-        θₒ, γ, ξ::Real, i::Real, rescale::Real, ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
+        θₒ::Real, γ::Real, ξ::Real, i::Real, rescale::Real, ηₒ::Real, η₁::Real, αRM::Real, rNorm::Real,
         useCloudI::Bool=false, κ::Real=0.0, useTurbulent::Bool=false, σρᵣ::Real=0.0, σρc::Real=0.0,
-        σΘᵣ::Real=0.0, σΘc::Real=0.0, θₑ=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ=0.0,
-        radial_sampler=nothing, intensity=nothing, velocity=nothing, responsivity=nothing,
-        τ::Real=0.0, backend=KernelAbstractions.CPU())
+        σΘᵣ::Real=0.0, σΘc::Real=0.0, θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0,
+        τ::Real=0.0, radial_sampler=nothing, intensity=nothing, velocity=nothing,
+        backend=KernelAbstractions.CPU())
     T = eltype(ma.r)
+    if radial_sampler !== nothing
+        applicable(radial_sampler, T(0.5)) ||
+            throw(ArgumentError("radial_sampler must be callable with one $T argument"))
+    end
+    for (name, f) in pairs((; radial_sampler, intensity, velocity))
+        f === nothing && continue
+        if name !== :radial_sampler
+            z, r = zero(T), one(T)
+            point = _cloud_callback_point(r, z, z, T(i), z, z, T(θₒ), T(rₛ), r, z, z, false)
+            applicable(f, point) || throw(ArgumentError("$name must be callable with a cloud point"))
+        end
+        if !(backend isa KernelAbstractions.CPU) && !isbits(f)
+            throw(ArgumentError("$name must be an isbits callable on a GPU backend"))
+        end
+    end
     s = seed % UInt64
     key0 = UInt32(s & 0xffffffff)
     key1 = UInt32((s >> 32) & 0xffffffff)
-    r, z = one(T), zero(T)
-    point = _cloud_point(r, z, T(i), z, z, z, r, r, T(rₛ), r, z, z, r, false)
-    radial_sampler === nothing ||
-        _check_device_callable(backend, :radial_sampler, radial_sampler, _CloudDraws{T,1}(key0, key1, UInt32(1)))
-    intensity === nothing || _check_device_callable(backend, :intensity, intensity, point)
-    velocity === nothing ||
-        _check_device_callable(backend, :velocity, velocity, point, _CloudDraws{T,2}(key0, key1, UInt32(1)))
-    responsivity === nothing || _check_device_callable(backend, :responsivity, responsivity, point)
-    θₒ isa Real || _check_device_callable(backend, :θₒ, θₒ, r)
-    γ isa Real || _check_device_callable(backend, :γ, γ, r)
-    if useTurbulent
-        θₑ isa Real || _check_device_callable(backend, :θₑ, θₑ, r)
-        σₜ isa Real || _check_device_callable(backend, :σₜ, σₜ, r, r, r)
-    end
     P = (key0, key1, T(μ), T(β), T(F), T(rₛ),
-        _device_parameter(T, θₒ), _device_parameter(T, γ), T(ξ), T(i), T(rescale), T(ηₒ), T(η₁), T(αRM), T(rNorm),
-        useCloudI, T(κ), useTurbulent, T(σρᵣ), T(σρc), T(σΘᵣ), T(σΘc), _device_parameter(T, θₑ),
-        T(fEllipse), T(fFlow), _device_parameter(T, σₜ), T(τ),
-        (radial_sampler, intensity, velocity, responsivity))
+        T(θₒ), T(γ), T(ξ), T(i), T(rescale), T(ηₒ), T(η₁), T(αRM), T(rNorm),
+        useCloudI, T(κ), useTurbulent, T(σρᵣ), T(σρc), T(σΘᵣ), T(σΘc), T(θₑ),
+        T(fEllipse), T(fFlow), T(σₜ), T(τ), radial_sampler, intensity, velocity)
     kernel! = _rt_build_cloud_kernel!(backend)
     event = kernel!(ma, P; ndrange=length(ma.r))
     event !== nothing && wait(event)
@@ -587,8 +553,7 @@ end
 
 """
     residentCloudModel(nClouds, seed; μ=500.0, β=1.0, F=0.5, rₛ=1.0, θₒ=π/2, γ=1.0, ξ=1.0, i=0.0,
-        rescale=1.0, ηₒ=0.5, η₁=0.5, αRM=0.0, rNorm=1.0,
-        radial_sampler=nothing, responsivity=nothing, intensity=:isotropic, velocity=:circular,
+        rescale=1.0, ηₒ=0.5, η₁=0.5, αRM=0.0, rNorm=1.0, radial_sampler=nothing,
         backend=KernelAbstractions.CPU(), T=Float64) -> ResidentModel
 
 # Parameters
@@ -630,36 +595,28 @@ Two built-in physics options are supported on-device (selected per call):
   `vCloudTurbulentEllipticalFlow` (`velocity=:turbulent`, parameters `σρᵣ, σρc, σΘᵣ, σΘc, θₑ, fEllipse,
   fFlow, σₜ`). The turbulent path draws extra normals/uniform per cloud from the same substream.
 
-Optional callables run inside the same kernel:
+Pass `radial_sampler(u)` to replace the shifted Gamma distribution (`μ`, `β`, `F`).
+The callable maps a seeded uniform variate `u::T` in (0, 1) to a positive, finite radius
+in the same units as `rₛ`.
 
-- `radial_sampler(draw)` replaces the shifted Gamma radius. Return a finite positive radius
-  in the same units as `rₛ`. `draw(j)` gives a uniform in (0, 1) of type `T` for each
-  nonnegative integer index `j`. Reusing an index repeats its draw. Different clouds and
-  the radial and custom velocity callables use separate seeded streams. Replacing
-  the Gamma sampler can also change subsequent built-in draws at the same seed.
-- `θₒ(r)` and `γ(r)` can replace the scalar opening angle and tilt-shape exponent.
-  With `velocity=:turbulent`, `θₑ(r)` and `σₜ(r, opening_angle, γ)` can replace the
-  scalar flow angle and turbulent dispersion. Angles are in radians.
-- `intensity(point)` returns the mean-emission weight. `responsivity(point)` returns η,
-  the multiplier in the transfer function. `velocity(point, draw)` returns the
-  line-of-sight velocity in units of c, with the same sign convention as the built-ins.
-  The point is a named tuple with fields `r, ϕ, i, ϕ₀, rot, tilt, opening_angle, γ, rₛ,
-  x, y, z, x_pre, reflect`. `tilt` is the sampled orbit tilt. Position includes any reflection,
-  and `x_pre` is the line-of-sight coordinate before reflection.
+`intensity` and `velocity` also accept callables in place of a built-in symbol, like the
+host constructor's `I` and `v`. Each receives one named tuple with scalar fields
+`r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect`. The local `θₒ` is the sampled
+orbit tilt. The position is in system coordinates after any reflection. The velocity
+callable returns a line-of-sight velocity in units of c.
 
-Callables receive scalar values of model type `T` (except the Boolean `reflect`), and
-their results are converted to `T`. On GPUs they must be isbits and use device-compatible
-operations. Use host construction and `gpu(m)` for callables that need host operations.
+Callable results are converted to `T`. GPU callables must be isbits and use device-compatible
+operations. Use host construction and `gpu(m)` for functions that need host operations.
 
 `theta_o` uses the letter o. `θ` and `θ₀` are not opening-angle aliases.
 """
 @validated resident function residentCloudModel(nClouds::Int, seed::Integer; μ::Real=500.0, β::Real=1.0, F::Real=0.5,
-        rₛ::Real=1.0, θₒ=π / 2, γ=1.0, ξ::Real=1.0, i::Real=0.0, rescale::Real=1.0,
+        rₛ::Real=1.0, θₒ::Real=π / 2, γ::Real=1.0, ξ::Real=1.0, i::Real=0.0, rescale::Real=1.0,
         ηₒ::Real=0.5, η₁::Real=0.5, αRM::Real=0.0, rNorm::Real=1.0,
         intensity=:isotropic, κ::Real=0.0,
         velocity=:circular, σρᵣ::Real=0.0, σρc::Real=0.0, σΘᵣ::Real=0.0, σΘc::Real=0.0,
-        θₑ=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ=0.0, τ::Real=0.0,
-        radial_sampler=nothing, responsivity=nothing,
+        θₑ::Real=0.0, fEllipse::Real=0.0, fFlow::Real=0.0, σₜ::Real=0.0, τ::Real=0.0,
+        radial_sampler=nothing,
         backend=KernelAbstractions.CPU(), T=Float64)
     T <: Real || throw(ArgumentError("element type T must be <: Real, got $T"))
     _check_gpu_eltype(backend, T)
@@ -671,9 +628,8 @@ operations. Use host construction and `gpu(m)` for callables that need host oper
         rescale=rescale, ηₒ=ηₒ, η₁=η₁, αRM=αRM, rNorm=rNorm,
         useCloudI=(intensity === :cloud), κ=κ, useTurbulent=(velocity === :turbulent),
         σρᵣ=σρᵣ, σρc=σρc, σΘᵣ=σΘᵣ, σΘc=σΘc, θₑ=θₑ, fEllipse=fEllipse, fFlow=fFlow, σₜ=σₜ, τ=τ,
-        radial_sampler, responsivity,
-        intensity=(intensity isa Symbol ? nothing : intensity),
-        velocity=(velocity isa Symbol ? nothing : velocity), backend=backend, T=T)
+        radial_sampler, intensity=intensity isa Symbol ? nothing : intensity,
+        velocity=velocity isa Symbol ? nothing : velocity, backend=backend, T=T)
     return ResidentModel(ma, backend, 1, _rt_cloud_meta(ma, backend, T))
 end
 

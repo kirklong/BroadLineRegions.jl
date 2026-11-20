@@ -182,10 +182,10 @@ end
 
 _resident_keywords(::Val{:residentDiskWindModel}) = (:nr, :nϕ, :scale, :rot, :θₒ,
     :f1, :f2, :f3, :f4, :α, :ηₒ, :η₁, :αRM, :rNorm, :rₛ, :vᵣFrac, :inflow,
-    :τ, :intensity, :velocity, :responsivity, :backend, :T)
+    :τ, :intensity, :velocity, :backend, :T)
 _resident_keywords(::Val{:residentCloudModel}) = (:μ, :β, :F, :rₛ, :θₒ, :γ, :ξ, :i,
     :rescale, :ηₒ, :η₁, :αRM, :rNorm, :intensity, :κ, :velocity, :σρᵣ, :σρc,
-    :σΘᵣ, :σΘc, :θₑ, :fEllipse, :fFlow, :σₜ, :radial_sampler, :responsivity, :τ, :backend, :T)
+    :σΘᵣ, :σΘc, :θₑ, :fEllipse, :fFlow, :σₜ, :τ, :radial_sampler, :backend, :T)
 
 function _profile_keywords(name)
     n = name isa Function ? :function : Symbol(name)
@@ -211,7 +211,6 @@ function _check_resident_keywords(kw, own, target; reserved=())
         get(kw, :intensity, nothing) === nothing || append!(inactive, (:f1, :f2, :f3, :f4, :α))
         get(kw, :velocity, nothing) === nothing || append!(inactive, (:rₛ, :vᵣFrac, :inflow))
     end
-    get(kw, :responsivity, nothing) === nothing || append!(inactive, (:ηₒ, :η₁, :αRM, :rNorm))
     unused = [k for k in keys(kw) if k in inactive]
     isempty(unused) || @warn "Unused keyword(s) for the selected physics: $(join(unused, ", "))"
     kw
