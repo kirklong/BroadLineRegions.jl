@@ -50,7 +50,9 @@ A mutable structure to hold parameters of each model ring, where the "ring" is a
 - `τ`: Optical depth.
   - `Union{Vector{Float64}, Float64, Function}`
 
-- `η`: Response parameter for reverberation.
+- `η`: Local responsivity for reverberation: weights each point's contribution to the transfer
+  functions (`getΨ`, `getΨt`, `:delay` profile) as I·ΔA·η. It does not scale the delay (τ = r − x)
+  and does not enter the mean line profile.
   - `Union{Vector{Float64}, Float64, Function}`
 
 - `Δr`: Distance between camera pixels in r.
@@ -86,7 +88,7 @@ Optional parameters with defaults:
 - `ϕ₀=0.0`: Initial azimuthal angle, ASCII alias=`phi_0`.
 - `ΔA=1.0`: Projected pixel area, ASCII alias=`delta_a`.
 - `τ=0.0`: Optical depth, ASCII alias=`tau`.
-- `η=1.0`: Response parameter, ASCII alias=`eta`.
+- `η=1.0`: Local responsivity (transfer-function weight, not a delay scale; see `response`), ASCII alias=`eta`.
 - `Δr=1.0`: Radial pixel spacing, ASCII alias=`delta_r`.
 - `Δϕ=1.0`: Azimuthal pixel spacing, ASCII alias=`delta_phi`.
 - `θₒSystem`: Optional system opening angle supplied to callbacks, ASCII alias=`theta_o_system`.
@@ -613,10 +615,10 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 - `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
 - `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
 - `τ`: Optical depth, ASCII alias=`tau`.
-- `η`: Response override, ASCII alias=`eta`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `η`: Responsivity override (transfer-function weight, not a delay scale; see `response`), ASCII alias=`eta`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 
@@ -652,10 +654,10 @@ Uses the model constructor to create a DiskWind model of the BLR as detailed in 
 - `rₛ`: Scale radius (in terms of ``r_s``), ASCII alias=`r_s`.
 - `vᵣFrac`: Radial velocity fraction, ASCII alias=`v_r_frac`.
 - `τ`: Optical depth, ASCII alias=`tau`.
-- `η`: Response override, ASCII alias=`eta`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `η`: Responsivity override (transfer-function weight, not a delay scale; see `response`), ASCII alias=`eta`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 - `kwargs...`: Extra keyword arguments for model constructor (see examples)
 
@@ -697,11 +699,11 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function
 - `v::Union{Function,Float64}=vCircularCloud`: Velocity function
 - `τ`: Optical depth, ASCII alias=`tau`.
-- `η`: Response override, ASCII alias=`eta`.
+- `η`: Responsivity override (transfer-function weight, not a delay scale; see `response`), ASCII alias=`eta`.
 - `κ`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 
@@ -779,11 +781,11 @@ Uses the model constructor to create a cloud model of the BLR similar to Pancoas
 - `seed::Union{Nothing,Integer}=nothing`: Required when `rng=:philox`. For legacy seeded models, pass `rng=MersenneTwister(seed)`.
 - `parallel::Bool=true`: Whether to use threaded cloud generation for the `rng=:philox` path.
 - `τ`: Optical depth, ASCII alias=`tau`.
-- `η`: Response override, ASCII alias=`eta`.
+- `η`: Responsivity override (transfer-function weight, not a delay scale; see `response`), ASCII alias=`eta`.
 - `κ`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 

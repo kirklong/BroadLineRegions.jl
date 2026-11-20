@@ -30,7 +30,7 @@ Several internal optimizations affect how you should interact with models:
   *not* threaded so that seeded models (`rng=...`) reproduce identically.
 
 - **Delays in combined models.** For combined (multi-submodel) models all time delays are computed
-  with the general geometric formula `t = η(r − x)` (see `tCloud`) for every point to ensure the 
+  with the general geometric formula `t = r − x` (see `tCloud`) for every point to ensure the
   most general formula is applied to be correct with all custom implementations. Thus it is critical in any combined 
   models for performance that `ring.x` is set properly for all submodels. 
 

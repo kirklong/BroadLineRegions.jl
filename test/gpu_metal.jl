@@ -24,6 +24,7 @@ end
     else
         @info "running Metal GPU tests on $(Metal.device())"
         backend = Metal.MetalBackend()
+        test_device_callables(backend, Float32)
         cpuB = KernelAbstractions.CPU()
 
         function approx_eq(a, b; rtol=1e-4, atol=1e-6)
@@ -217,24 +218,24 @@ end
             m = BLR.raytrace!(builders[1]())
             ma = BLR.gpu(m; backend=backend).ma
             delays = BLR._rt_transfer_delays(ma; backend=backend)
-            @test approx_eq(Array(delays), Array(ma.η) .* (Array(ma.r) .- Array(ma.x)); rtol=1e-6, atol=1e-6)
+            @test approx_eq(Array(delays), Array(ma.r) .- Array(ma.x); rtol=1e-6, atol=1e-6)
 
             host_delays = Array(delays)
-            host_v = Array(ma.v); host_I = Array(ma.I); host_A = Array(ma.ΔA)
+            host_v = Array(ma.v); host_I = Array(ma.I); host_A = Array(ma.ΔA); host_η = Array(ma.η)
             finV = filter(isfinite, host_v); finT = filter(isfinite, host_delays)
             vEdges = Float32.(collect(range(minimum(finV), maximum(finV), length=21)))
             tEdges = Float32.(collect(range(minimum(finT), maximum(finT), length=16)))
 
             Ψ = Metal.zeros(Float32, length(vEdges)-1, length(tEdges)-1)
-            BLR._rt_psi2d!(Ψ, ma.v, delays, ma.I, ma.ΔA, MtlArray(vEdges), MtlArray(tEdges); backend=backend)
+            BLR._rt_psi2d!(Ψ, ma.v, delays, ma.I, ma.ΔA, ma.η, MtlArray(vEdges), MtlArray(tEdges); backend=backend)
             ΨC = zeros(Float32, length(vEdges)-1, length(tEdges)-1)
-            BLR._rt_psi2d!(ΨC, host_v, host_delays, host_I, host_A, vEdges, tEdges; backend=cpuB)
+            BLR._rt_psi2d!(ΨC, host_v, host_delays, host_I, host_A, host_η, vEdges, tEdges; backend=cpuB)
             @test relclose(vec(Array(Ψ)), vec(ΨC); rtol=1e-5)
 
             Ψt = Metal.zeros(Float32, length(tEdges)-1); under = Metal.zeros(Float32, 1); over = Metal.zeros(Float32, 1)
-            BLR._rt_psit!(Ψt, under, over, delays, ma.I, ma.ΔA, MtlArray(tEdges); backend=backend)
+            BLR._rt_psit!(Ψt, under, over, delays, ma.I, ma.ΔA, ma.η, MtlArray(tEdges); backend=backend)
             ΨtC = zeros(Float32, length(tEdges)-1); uC = zeros(Float32, 1); oC = zeros(Float32, 1)
-            BLR._rt_psit!(ΨtC, uC, oC, host_delays, host_I, host_A, tEdges; backend=cpuB)
+            BLR._rt_psit!(ΨtC, uC, oC, host_delays, host_I, host_A, host_η, tEdges; backend=cpuB)
             @test relclose(Array(Ψt), ΨtC; rtol=1e-5)
             @test isapprox(Array(under)[1], uC[1]; rtol=1e-5, atol=1e-7)
             @test isapprox(Array(over)[1], oC[1]; rtol=1e-5, atol=1e-7)

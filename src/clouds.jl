@@ -76,11 +76,11 @@ Generates a model `ring` struct for a single cloud drawn from a thick disk-like 
 - `I::Union{Function,Float64}=IsotropicIntensity`: Intensity function/value
 - `v::Union{Function,Float64}=vCircularCloud`: Velocity function/value
 - `τ`: Optical depth, ASCII alias=`tau`.
-- `η`: Response override, ASCII alias=`eta`.
+- `η`: Responsivity override (transfer-function weight, not a delay scale; see `response`), ASCII alias=`eta`.
 - `κ`: Cloud intensity anisotropy (see `cloudIntensity`), ASCII alias=`kappa`.
-- `ηₒ`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
 - `kwargs...`: Extra keyword arguments for `I` and `v` functions (see examples)
 
