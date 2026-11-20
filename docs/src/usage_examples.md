@@ -773,6 +773,9 @@ mGPU = BLR.gpuDiskWindModel(3000.,100.,1.0,75/180*π;nr=2048,nϕ=1024,scale=:log
 p = BLR.getProfile(mGPU, :line, bins=101)
 ```
 
+The cloud builder accepts the same `intensity` and `velocity` callables, so a function with
+this signature can be used in either model.
+
 A *general* `Function` that cannot run in a kernel (closures over arrays, calls into
 non-GPU libraries, etc.) should instead be used to build the model on the CPU and then moved over with
 `BLR.gpu(m)`. For a more detailed worked example of the `(r, ϕ, inc) -> value` form to model your own physics on, see the built-in
@@ -800,21 +803,20 @@ function two_radial_bands(u)
     return T(900) * exp(((u - p) / (one(T) - p)) * log(T(2400) / T(900)))
 end
 
-# A keyword-style intensity function can also be passed as I to cloudModel on the host.
-radial_intensity(; r, kwargs...) = oftype(r, 150) / r
+radial_intensity(r, ϕ, inc) = oftype(r, 150) / r  # shared with DiskWind
 infall_velocity(p) = -sqrt(p.rₛ / (2 * p.r)) * (p.x / p.r)
 
 mGPU = BLR.gpuCloudModel(100_000, 42; i=π / 4, radial_sampler=two_radial_bands,
-    intensity=p -> radial_intensity(; p...), velocity=infall_velocity)
+    intensity=radial_intensity, velocity=infall_velocity)
 p = BLR.getProfile(mGPU, :line; bins=101)
 ```
 
 The threshold selects the band, and rescaling the variate within that band gives its
 quantile. The sampler can also be a closure capturing GPU-compatible scalar parameters.
-The cloud intensity and velocity callables each receive one cloud point. A host
-keyword-style function that uses those fields can be adapted by splatting the point
-as keywords, as shown above. See [`residentCloudModel`](@ref BLR.residentCloudModel)
-for the available fields.
+The intensity law uses the shared DiskWind signature. The infall law takes one cloud
+point because it needs the line-of-sight position. A host keyword-style function that
+uses the cloud fields can also be adapted as `point -> f(; point...)`. See
+[`residentCloudModel`](@ref BLR.residentCloudModel) for the available fields.
 
 !!! note "Responsivity and delay"
     η weights each point's contribution to the transfer function. Geometric delays are

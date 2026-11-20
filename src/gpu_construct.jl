@@ -377,6 +377,17 @@ end
 @inline _cloud_callback_point(r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect) =
     (; r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect)
 
+# Resolve callback arity once on the host, before passing it to the device kernel.
+function _cloud_point_callable(f, name, point)
+    f === nothing && return nothing
+    if applicable(f, point.r, point.ϕ, point.i)
+        return p -> f(p.r, p.ϕ, p.i)
+    end
+    applicable(f, point) ||
+        throw(ArgumentError("$name must accept (r, ϕ, inc) or a single cloud point"))
+    return f
+end
+
 @inline function _rt_build_cloud_scalar(::Type{T}, key0::UInt32, key1::UInt32, cloudInd::UInt32,
         μ::T, β::T, F::T, rₛ::T, θₒ::T, γ::T, ξ::T, inc::T, rescale::T,
         ηₒ::T, η₁::T, αRM::T, rNorm::T, useCloudI::Bool, κ::T, useTurbulent::Bool,
@@ -527,16 +538,16 @@ function _fill_cloud_modelarrays!(ma::ModelArrays, seed::Integer; μ::Real, β::
         applicable(radial_sampler, T(0.5)) ||
             throw(ArgumentError("radial_sampler must be callable with one $T argument"))
     end
-    for (name, f) in pairs((; radial_sampler, intensity, velocity))
-        f === nothing && continue
-        if name !== :radial_sampler
-            z, r = zero(T), one(T)
-            point = _cloud_callback_point(r, z, z, T(i), z, z, T(θₒ), T(rₛ), r, z, z, false)
-            applicable(f, point) || throw(ArgumentError("$name must be callable with a cloud point"))
+    if !(backend isa KernelAbstractions.CPU)
+        for (name, f) in pairs((; radial_sampler, intensity, velocity))
+            isbits(f) || throw(ArgumentError("$name must be an isbits callable on a GPU backend"))
         end
-        if !(backend isa KernelAbstractions.CPU) && !isbits(f)
-            throw(ArgumentError("$name must be an isbits callable on a GPU backend"))
-        end
+    end
+    if intensity !== nothing || velocity !== nothing
+        z, r = zero(T), one(T)
+        point = _cloud_callback_point(r, z, z, T(i), z, z, T(θₒ), T(rₛ), r, z, z, false)
+        intensity = _cloud_point_callable(intensity, :intensity, point)
+        velocity = _cloud_point_callable(velocity, :velocity, point)
     end
     s = seed % UInt64
     key0 = UInt32(s & 0xffffffff)
@@ -599,11 +610,13 @@ Pass `radial_sampler(u)` to replace the shifted Gamma distribution (`μ`, `β`, 
 The callable maps a seeded uniform variate `u::T` in (0, 1) to a positive, finite radius
 in the same units as `rₛ`.
 
-`intensity` and `velocity` also accept callables in place of a built-in symbol, like the
-host constructor's `I` and `v`. Each receives one named tuple with scalar fields
-`r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect`. The local `θₒ` is the sampled
-orbit tilt. The position is in system coordinates after any reflection. The velocity
-callable returns a line-of-sight velocity in units of c.
+`intensity` and `velocity` accept `(r, ϕ, inc) -> value` callables in place of a built-in
+symbol, using the same signature as [`residentDiskWindModel`](@ref). For cloud-specific
+physics, either keyword can instead take a callable accepting a single named tuple with
+scalar fields `r, ϕ, ϕ₀, i, rot, θₒ, θₒSystem, rₛ, x, y, z, reflect`. If a callable
+accepts both forms, the builder uses the three-argument form. The local `θₒ` is the
+sampled orbit tilt. The position is in system coordinates after any reflection.
+The velocity callable returns a line-of-sight velocity in units of c.
 
 Callable results are converted to `T`. GPU callables must be isbits and use device-compatible
 operations. Use host construction and `gpu(m)` for functions that need host operations.

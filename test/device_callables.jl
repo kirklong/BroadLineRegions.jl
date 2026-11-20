@@ -14,6 +14,18 @@ function test_device_callables(backend, ::Type{T}) where {T}
         @test Array(m.ma.v) == ifelse.(Array(m.ma.reflect), -one(T), one(T))
         @test_throws ArgumentError BLR.residentCloudModel(2, 1; radial_sampler=17, backend, T)
         @test_throws ArgumentError BLR.residentCloudModel(2, 1; intensity=17, backend, T)
+
+        intensity = (r, ϕ, inc) -> inv(r)
+        velocity = (r, ϕ, inc) -> ϕ * inc / r
+        cloud = BLR.gpuCloudModel(128, 42; i=0.4, intensity, velocity, backend, T)
+        disk = BLR.gpuDiskWindModel(100., 300., 0.4; nr=8, nϕ=16, intensity, velocity, backend, T)
+        for model in (cloud, disk)
+            r, ϕ, inc = Array(model.ma.r), Array(model.ma.ϕ), Array(model.ma.i)
+            valid = isfinite.(r)
+            @test any(valid)
+            @test Array(model.ma.I)[valid] ≈ intensity.(r[valid], ϕ[valid], inc[valid]) rtol=8eps(T)
+            @test Array(model.ma.v)[valid] ≈ velocity.(r[valid], ϕ[valid], inc[valid]) rtol=8eps(T)
+        end
     end
 end
 
