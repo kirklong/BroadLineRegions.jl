@@ -10,6 +10,7 @@ using KernelAbstractions
     else
         @info "running GPU tests on $(CUDA.name(CUDA.device()))"
         backend = CUDA.CUDABackend()
+        test_device_callables(backend, Float32)
 
         # NaN-aware elementwise approx (raytrace output is compacted so it should be NaN-free,
         # but stay defensive).

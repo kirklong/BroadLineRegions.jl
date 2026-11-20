@@ -971,6 +971,7 @@ end
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
+include("device_callables.jl")
 include("recipes.jl")
 
 # GPU correctness tests are opt-in: they need a CUDA device and the CUDA.jl weak dependency in the

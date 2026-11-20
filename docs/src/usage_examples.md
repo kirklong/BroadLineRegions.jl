@@ -760,10 +760,10 @@ session additionally pays one-time kernel compilation.)
     implement custom physics that are not easily ported to the GPU; otherwise just use `gpuDiskWindModel`/`gpuCloudModel` when you
     rebuild "standard" geometries every iteration.
 
-### Custom intensity / velocity on the GPU
+### Custom callables in on-device models
 
-`gpuDiskWindModel` accepts custom physics, as long as it can run inside a kernel — pass `intensity` (or
-`velocity`) as a **GPU-safe scalar callable** `(r, ϕ, inc) -> value` that closes only over `isbits`
+`gpuDiskWindModel` accepts `intensity`, `velocity`, and `responsivity` as
+**GPU-safe scalar callables** `(r, ϕ, inc) -> value` that close only over `isbits`
 values. For example, for a disk with uniform emissivity (every point set to `1`):
 
 ```julia
@@ -780,6 +780,39 @@ GPU-safe closures: [`_rt_disk_intensity_fn`](@ref BLR._rt_disk_intensity_fn) (th
 direct port of the CPU [`DiskWind_I_`](@ref BLR.DiskWind_I_)) and
 [`_rt_disk_velocity_fn`](@ref BLR._rt_disk_velocity_fn) /
 [`_rt_disk_radial_velocity_fn`](@ref BLR._rt_disk_radial_velocity_fn) for an example velocity calculation.
+
+#### A custom radial distribution for GPU clouds
+
+Use `radial_sampler` to sample a radius for each cloud on the device. This example draws 70% of
+its clouds uniformly in log radius between 150 and 400, and the other 30% between 900 and
+2400, in units of the Schwarzschild radius.
+
+```julia
+using CUDA  # use Metal on a supported Apple GPU
+import BroadLineRegions as BLR
+
+function two_radial_bands(draw)
+    inner = draw(0) < 0.7f0
+    lo, hi = inner ? (150.0f0, 400.0f0) : (900.0f0, 2400.0f0)
+    return lo * exp(draw(1) * log(hi / lo))
+end
+
+mGPU = BLR.gpuCloudModel(100_000, 42; i=Float32(π / 4), radial_sampler=two_radial_bands)
+p = BLR.getProfile(mGPU, :line; bins=101)
+```
+
+`draw(j)` gives a uniform variate at nonnegative integer index `j` in that cloud's seeded
+stream. Use a fresh index for each independent draw. The radial sampler is independent of
+the built-in angular and velocity draws. `residentCloudModel` accepts the same callables
+and can run the example on the CPU. See [`residentCloudModel`](@ref BLR.residentCloudModel)
+for radius-dependent opening angle and kinematics and for the per-cloud intensity, velocity,
+and responsivity signatures.
+
+!!! note "Responsivity and delay"
+    η weights each point's contribution to the transfer function. Geometric delays are
+    `r - x`, and the mean line profile is independent of η. Models using nonunit η on
+    v0.4.2 should regenerate their transfer functions because that release used η to
+    scale delays.
 
 ### Summary of everything else that works on the GPU
 

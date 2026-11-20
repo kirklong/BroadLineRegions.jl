@@ -24,6 +24,7 @@ end
     else
         @info "running Metal GPU tests on $(Metal.device())"
         backend = Metal.MetalBackend()
+        test_device_callables(backend, Float32)
         cpuB = KernelAbstractions.CPU()
 
         function approx_eq(a, b; rtol=1e-4, atol=1e-6)
