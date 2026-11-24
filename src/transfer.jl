@@ -3,11 +3,17 @@
     response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
 
 # Parameters
-- `ηₒ::Float64=0.5`: Response intercept (see `response`), ASCII alias=`eta_o`.
-- `η₁::Float64=0.5`: Response coefficient (see `response`), ASCII alias=`eta_1`.
-- `αRM::Float64=0.0`: Response power-law index (see `response`), ASCII alias=`alpha_rm`.
+- `ηₒ::Float64=0.5`: Responsivity intercept (see `response`), ASCII alias=`eta_o`.
+- `η₁::Float64=0.5`: Responsivity coefficient (see `response`), ASCII alias=`eta_1`.
+- `αRM::Float64=0.0`: Responsivity power-law index (see `response`), ASCII alias=`alpha_rm`.
 
-Calculate response function for use in reverberation mapping calculations.
+Local responsivity η(r) = ηₒ + η₁ (r/rNorm)^αRM used in reverberation-mapping calculations.
+
+η is the *responsivity* of each point (how strongly its line emission responds to a continuum change):
+it weights every transfer-function product — `getΨ`, `getΨt`, and the `:delay` profile — as I·ΔA·η.
+It does **not** scale the delay (delays are always the geometric light-travel time τ = r − x) and it
+does not enter the mean line profile (`getProfile(m, :line)`) or any other non-variable product.
+The default (ηₒ = η₁ = 0.5, αRM = 0) gives η ≡ 1.
 """
 @validated callback function response(r::Float64; ηₒ::Float64=0.5, η₁::Float64=0.5, αRM::Float64=0.0, rNorm::Float64=1.0, _...)
     η = ηₒ + η₁*(r/rNorm)^αRM
@@ -22,9 +28,28 @@ Positional-argument version of `response` for hot loops — avoids the per-call 
 response(r::Float64, ηₒ::Float64, η₁::Float64, αRM::Float64, rNorm::Float64) = ηₒ + η₁*(r/rNorm)^αRM
 
 """
+    _transfer_η(m::model, I)
+
+Per-point responsivity η aligned elementwise with the intensity gather `I` (= `getVariable(m, :I)`):
+per-ring scalar η is broadcast across that ring's points; combined models use `expandPerPoint`.
+"""
+function _transfer_η(m::model, I)
+    if length(m.subModelStartInds) > 1
+        return expandPerPoint(m, :η) #aligned with the flattened combined-model gathers
+    end
+    η = getVariable(m, :η)
+    size(η) == size(I) && return η
+    ηf = similar(I, Float64)
+    ηf .= η #per-ring scalar η (vector over rings) broadcast across each ring's row
+    return ηf
+end
+
+"""
     getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
 
 Calculate the 2D transfer function Ψ for a model `m` over specified velocity and time bins, whose edges are given by `vEdges` and `tEdges`.
+Each point contributes I·ΔA·η to the (v, τ) bin it falls in, where τ = r − x is the geometric delay
+and η is the point's local responsivity (see [`response`](@ref)); η does not shift the delay.
 
 A device-resident method (`getΨ(::ResidentModel, …)`) runs this on the GPU without re-flattening the
 model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.ResidentModel).
@@ -33,15 +58,16 @@ function getΨ(m::model,vEdges::Array{Float64},tEdges::Array{Float64})
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
     v = getVariable(m,:v)
+    η = _transfer_η(m, I)
     delays = getVariable(m,t) #pass t itself (not a closure) so the result is memoized in m.cache
     Ψ = zeros(length(vEdges)-1,length(tEdges)-1)
-    ΨAccumulate!(Ψ, v, delays, I, ΔA, vec(vEdges), vec(tEdges))
+    ΨAccumulate!(Ψ, v, delays, I, ΔA, η, vec(vEdges), vec(tEdges))
     @. Ψ = ifelse(Ψ > 0, Ψ, 1e-30) #empty (or NaN-poisoned) bins floored
     return Ψ
 end
 
 """
-    ΨAccumulate!(Ψ, v, delays, I, ΔA, vEdges, tEdges)
+    ΨAccumulate!(Ψ, v, delays, I, ΔA, η, vEdges, tEdges)
 
 Single-pass accumulation for `getΨ` (function barrier): one sweep over all points, locating each
 point's (velocity, delay) bin instead of building a boolean mask per bin pair (the old approach was
@@ -54,15 +80,15 @@ NaN velocities/delays never land in a bin; NaN intensities/areas still accumulat
 the final floor maps the poisoned bin to 1e-30. This matches the line profile and every other
 `binnedSum`-based observable, so a shared edge set bins identically everywhere.
 """
-function ΨAccumulate!(Ψ::Matrix{Float64}, v, delays, I, ΔA, vEdges::AbstractVector{Float64}, tEdges::AbstractVector{Float64})
+function ΨAccumulate!(Ψ::Matrix{Float64}, v, delays, I, ΔA, η, vEdges::AbstractVector{Float64}, tEdges::AbstractVector{Float64})
     nV = length(vEdges)-1; nT = length(tEdges)-1
-    @inbounds for (vi, di, Ii, Ai) in zip(v, delays, I, ΔA)
+    @inbounds for (vi, di, Ii, Ai, ηi) in zip(v, delays, I, ΔA, η)
         (isfinite(vi) && isfinite(di)) || continue
         (vi <= vEdges[1] || vi >= vEdges[end]) && continue   # binnedSum convention, no overflow bins
         (di <= tEdges[1] || di >= tEdges[end]) && continue
         bv = searchsortedfirst(vEdges, vi) - 1
         bt = searchsortedfirst(tEdges, di) - 1
-        Ψ[bv, bt] += Ii*Ai
+        Ψ[bv, bt] += Ii*Ai*ηi #responsivity-weighted
     end
     return Ψ
 end
@@ -90,7 +116,8 @@ end
 """
     getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
 
-Calculate the 1D transfer function Ψ(t) for a model `m` over specified time edges `tEdges`.
+Calculate the 1D transfer function Ψ(t) for a model `m` over specified time edges `tEdges`
+(histogram of I·ΔA·η over the geometric delays τ = r − x; η is the local responsivity).
 The `overflow` parameter determines whether to include contributions from delays outside the specified edges in the edge bins.
 
 A device-resident method (`getΨt(::ResidentModel, …)`) runs this on the GPU without re-flattening the
@@ -99,9 +126,10 @@ model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.Reside
 function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
     I = getVariable(m,:I)
     ΔA = getVariable(m,:ΔA)
+    η = _transfer_η(m, I)
     delays = getVariable(m,t)
     Ψt = zeros(length(tEdges)-1)
-    sUnder, sOver = ΨtAccumulate!(Ψt, delays, I, ΔA, vec(tEdges))
+    sUnder, sOver = ΨtAccumulate!(Ψt, delays, I, ΔA, η, vec(tEdges))
     @. Ψt = ifelse(Ψt > 0, Ψt, 1e-30) #empty (or NaN-poisoned) bins floored BEFORE overflow is added
     if overflow
         Ψt[1] += sUnder > 0 ? sUnder : 1e-30 #note: adds 1e-30 even when nothing under/overflowed -- pre-existing behavior, kept
@@ -111,7 +139,7 @@ function getΨt(m::model,tEdges::Array{Float64},overflow::Bool=false;)
 end
 
 """
-    ΨtAccumulate!(Ψt, delays, I, ΔA, tEdges) -> (sUnder, sOver)
+    ΨtAccumulate!(Ψt, delays, I, ΔA, η, tEdges) -> (sUnder, sOver)
 
 Single-pass accumulation for `getΨt` (function barrier -- the gathered arrays are not inferrable in
 the caller). Same `binnedSum` (`searchsortedfirst`, left-exclusive interior edge) convention as
@@ -119,17 +147,17 @@ the caller). Same `binnedSum` (`searchsortedfirst`, left-exclusive interior edge
 `delays >= tEdges[end]`, NaN in neither) in the same sweep, matching `binnedSum`'s `overflow=true`
 edge-bin folding.
 """
-function ΨtAccumulate!(Ψt::Vector{Float64}, delays, I, ΔA, tEdges::AbstractVector{Float64})
+function ΨtAccumulate!(Ψt::Vector{Float64}, delays, I, ΔA, η, tEdges::AbstractVector{Float64})
     nT = length(tEdges)-1
     sUnder = 0.0; sOver = 0.0
-    @inbounds for (di, Ii, Ai) in zip(delays, I, ΔA)
+    @inbounds for (di, Ii, Ai, ηi) in zip(delays, I, ΔA, η)
         isnan(di) && continue #NaN delays belong to neither a bin nor the overflow buckets (as before)
         if di <= tEdges[1]
-            sUnder += Ii*Ai
+            sUnder += Ii*Ai*ηi
         elseif di >= tEdges[end]
-            sOver += Ii*Ai
+            sOver += Ii*Ai*ηi
         else
-            Ψt[searchsortedfirst(tEdges, di) - 1] += Ii*Ai
+            Ψt[searchsortedfirst(tEdges, di) - 1] += Ii*Ai*ηi
         end
     end
     return sUnder, sOver

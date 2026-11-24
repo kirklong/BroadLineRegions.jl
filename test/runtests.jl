@@ -300,7 +300,7 @@ end
     @test all(mC.camera.β[j] == mC.rings[j].z for j in 1:length(mC.rings))
     #delay spot-check: tCloud must agree with direct recomputation
     rc = mC.rings[1]
-    @test isapprox(BLR.tCloud(rc), rc.η*(rc.r - BLR.rotate3D_scalar(rc.r, rc.ϕ₀, rc.i, rc.rot, rc.θₒ, rc.reflect)[1]), rtol=1e-12)
+    @test isapprox(BLR.tCloud(rc), (rc.r - BLR.rotate3D_scalar(rc.r, rc.ϕ₀, rc.i, rc.rot, rc.θₒ, rc.reflect)[1]), rtol=1e-12)
 
     #lazy path: a hand-built ring without x/y/z computes and caches on first access
     rl = BLR.ring(r=100.0, i=0.3, v=0.001, I=1.0, ϕ=0.5, ϕ₀=0.5, ΔA=1.0, rot=0.2, θₒ=0.1, reflect=true)
@@ -351,7 +351,7 @@ end
     mc = mD + mC
     #fast paths must match the per-ring closure computation exactly (combined delays = tCloud everywhere)
     pFast = BLR.getProfile(mc, :delay, bins=31, centered=true)
-    d(ring) = BLR.tCloud(ring).*ring.I
+    d(ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? BLR.tCloud(ring)*ring.I*ring.η : BLR.tCloud(ring).*ring.I.*ring.η
     den(ring) = (typeof(ring.r) == Float64 && typeof(ring.ϕ) == Float64) ? ring.I*ring.η : ring.I.*ring.η
     pNum = BLR.binModel(31, m=mc, yVariable=d, xVariable=:v, centered=true)
     pDen = BLR.binModel(31, m=mc, yVariable=den, xVariable=:v, centered=true)
@@ -387,8 +387,8 @@ end
     getr(ring) = ring.r
     @test isequal(BLR.getVariable(m3, getr), BLR.getVariable(m3, :r))
 
-    #DEFINITION (combined models): Ψ(t) is the histogram of I⋅ΔA over the general tCloud delays
-    #t = η(r − x), per point, for every submodel. Reference computed ring-by-ring from first
+    #DEFINITION (combined models): Ψ(t) is the histogram of I⋅ΔA⋅η (η = responsivity) over the general
+    #geometric tCloud delays t = r − x, per point, for every submodel. Reference computed ring-by-ring from first
     #principles -- seed- and version-independent, so this pins the convention without magic numbers.
     dRef = Float64[]; iRef = Float64[]; aRef = Float64[]; vRef = Float64[]; ηRef = Float64[]
     for r in mc.rings
@@ -402,16 +402,16 @@ end
     end
     ΨRef = map(1:length(tEdges)-1) do j
         mask = (dRef .> tEdges[j]) .& (dRef .<= tEdges[j+1]) #binnedSum convention (left-exclusive)
-        s = sum(iRef[mask].*aRef[mask])
+        s = sum(iRef[mask].*aRef[mask].*ηRef[mask])
         s > 0 ? s : 1e-30 #replicate getΨt's empty-bin floor
     end
     @test all(isapprox.(Ψ1, ΨRef, rtol=1e-10))
-    #and the :delay profile is the intensity(×η)-weighted mean of those same tCloud delays per velocity bin
+    #and the :delay profile is the responsivity (I×η)-weighted mean of those same tCloud delays per velocity bin
     vEdges = collect(range(-0.05, stop=0.05, length=22))
     pD = BLR.getProfile(mc, :delay, bins=vEdges, centered=false)
     dProfRef = map(1:length(vEdges)-1) do j
         mask = (vRef .>= vEdges[j]) .& (vRef .< vEdges[j+1]) .& isfinite.(dRef) .& isfinite.(iRef)
-        sum(dRef[mask].*iRef[mask].*aRef[mask]) / sum(iRef[mask].*ηRef[mask].*aRef[mask])
+        sum(dRef[mask].*iRef[mask].*ηRef[mask].*aRef[mask]) / sum(iRef[mask].*ηRef[mask].*aRef[mask])
     end
     fin = isfinite.(pD.binSums) .& isfinite.(dProfRef)
     @test count(fin) > 10 #most velocity bins should be populated
@@ -971,6 +971,7 @@ end
 include("raytrace_reference.jl")
 include("gpu_arrays.jl")
 include("gpu_kernels.jl")
+include("device_callables.jl")
 include("recipes.jl")
 
 # GPU correctness tests are opt-in: they need a CUDA device and the CUDA.jl weak dependency in the

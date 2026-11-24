@@ -48,9 +48,9 @@ end
     m = BLR.raytrace!(disk + clouds)   # realistic usage: transfer functions run on a raytraced model
     ma = BLR.flatten(m)
 
-    # delay kernel τ = η(r − x); equals getVariable(m, BLR.t) to rounding
+    # delay kernel τ = r − x (geometric); equals getVariable(m, BLR.t) to rounding
     delays = BLR._rt_transfer_delays(ma; backend=KernelAbstractions.CPU())
-    @test delays ≈ ma.η .* (ma.r .- ma.x)
+    @test delays == ma.r .- ma.x
     @test all(isapprox.(delays, BLR.getVariable(m, BLR.t, flatten=true); rtol=1e-9, atol=1e-9))
 
     finV = filter(isfinite, ma.v); finT = filter(isfinite, delays)
@@ -59,16 +59,16 @@ end
 
     # 2D Ψ(v,t): kernel vs the CPU accumulator on identical inputs (binning correctness, pre-floor)
     Ψ = zeros(length(vEdges)-1, length(tEdges)-1)
-    BLR._rt_psi2d!(Ψ, ma.v, delays, ma.I, ma.ΔA, vEdges, tEdges; backend=KernelAbstractions.CPU())
+    BLR._rt_psi2d!(Ψ, ma.v, delays, ma.I, ma.ΔA, ma.η, vEdges, tEdges; backend=KernelAbstractions.CPU())
     Ψref = zeros(size(Ψ))
-    BLR.ΨAccumulate!(Ψref, ma.v, delays, ma.I, ma.ΔA, vEdges, tEdges)
+    BLR.ΨAccumulate!(Ψref, ma.v, delays, ma.I, ma.ΔA, ma.η, vEdges, tEdges)
     @test Ψ ≈ Ψref
 
     # 1D Ψ(t) + overflow buckets vs ΨtAccumulate!
     Ψt = zeros(length(tEdges)-1); under = zeros(1); over = zeros(1)
-    BLR._rt_psit!(Ψt, under, over, delays, ma.I, ma.ΔA, tEdges; backend=KernelAbstractions.CPU())
+    BLR._rt_psit!(Ψt, under, over, delays, ma.I, ma.ΔA, ma.η, tEdges; backend=KernelAbstractions.CPU())
     Ψtref = zeros(length(tEdges)-1)
-    sU, sO = BLR.ΨtAccumulate!(Ψtref, delays, ma.I, ma.ΔA, tEdges)
+    sU, sO = BLR.ΨtAccumulate!(Ψtref, delays, ma.I, ma.ΔA, ma.η, tEdges)
     @test Ψt ≈ Ψtref
     @test under[1] ≈ sU
     @test over[1] ≈ sO
@@ -84,13 +84,13 @@ end
     refOvf = BLR.binnedSum(dExact, wExact .* Ae; bins=tE, overflow=true)[3]
 
     ΨtK = zeros(length(tE)-1); uK = zeros(1); oK = zeros(1)
-    BLR._rt_psit!(ΨtK, uK, oK, dExact, wExact, Ae, tE; backend=KernelAbstractions.CPU())
+    BLR._rt_psit!(ΨtK, uK, oK, dExact, wExact, Ae, ones(length(dExact)), tE; backend=KernelAbstractions.CPU())
     @test ΨtK ≈ refNoOvf                                   # interior bins (kernel)
     assembled = copy(ΨtK); assembled[1] += uK[1]; assembled[end] += oK[1]
     @test assembled ≈ refOvf                               # overflow folding (kernel)
 
     ΨtA = zeros(length(tE)-1)
-    sU, sO = BLR.ΨtAccumulate!(ΨtA, dExact, wExact, Ae, tE)
+    sU, sO = BLR.ΨtAccumulate!(ΨtA, dExact, wExact, Ae, ones(length(dExact)), tE)
     @test ΨtA ≈ refNoOvf                                   # interior bins (CPU transfer fn)
     asmA = copy(ΨtA); asmA[1] += sU; asmA[end] += sO
     @test asmA ≈ refOvf                                    # overflow folding (CPU transfer fn)
@@ -117,7 +117,7 @@ end
             @test got.binEdges ≈ ref.binEdges
             @test nanapprox(got.binSums, ref.binSums; rtol=1e-10)
         end
-        # :delay uses the unified η(r−x) delay (matches getΨt); ≈ host getProfile(:delay) to ~1e-8
+        # :delay uses the unified geometric (r−x) delay, I·η-weighted (matches getΨt); ≈ host getProfile(:delay) to ~1e-8
         @test nanapprox(BLR.getProfile(rm, :delay; bins=bins).binSums, BLR.getProfile(m, :delay; bins=bins).binSums)
         for sym in (:phase, :moment2)
             ref = BLR.getProfile(m, sym; bins=bins, U=U, V=V, PA=PA, BLRAng=BLRAng)
