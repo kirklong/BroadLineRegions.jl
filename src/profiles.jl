@@ -229,14 +229,15 @@ end
 """
     tDisk(ring::ring)
 
-    Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 - \\cos(\\phi) \\sin(i)\\right)``
+    Calculate geometric time delays for a point in a disk as `` t = r \\left(1 - \\cos(\\phi) \\sin(i)\\right)``.
+    The responsivity `η` does not enter the delay; it weights the transfer functions (see `response`).
 """
-tDisk(ring::ring) = @. ring.η*ring.r*(1 - cos(ring.ϕ)*sin(ring.i)) #time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
+tDisk(ring::ring) = @. ring.r*(1 - cos(ring.ϕ)*sin(ring.i)) #time delays for Keplerian disk [rₛ], or a cloud modelled as a point in a disk
 
 """
     tCloud(ring::ring)
 
-    Calculate time delays from the general geometric formula ``t = \\eta (r - x)``, where ``x`` is the
+    Calculate time delays from the general geometric formula ``t = r - x``, where ``x`` is the
     3D system coordinate of the point towards the camera (cached on the ring, see `getXYZ`).
 
     Despite the name this is exact for *any* geometry: for a flat ring (``\\theta_o = 0``) it reduces
@@ -246,13 +247,13 @@ tDisk(ring::ring) = @. ring.η*ring.r*(1 - cos(ring.ϕ)*sin(ring.i)) #time delay
 """
 tCloud(ring::ring) = begin
     x = getXYZ(ring)[1] #cached system coordinates (computed once, reused every call)
-    η = ring.η; r = ring.r
-    return @. η*(r - x) #could also calculate new incliation angle based on θₒ, but this is simpler, +x
+    r = ring.r
+    return @. r - x #could also calculate new incliation angle based on θₒ, but this is simpler, +x
 end
 """
     t(ring::ring)
 
-    Calculate time delays for a point in a disk as `` t = \\eta r \\left(1 + \\cos(\\phi) \\sin(i)\\right)`` or a cloud with opening angle ``\\theta_o``
+    Calculate geometric time delays for a point in a disk as `` t = r \\left(1 - \\cos(\\phi) \\sin(i)\\right)`` or a cloud with opening angle ``\\theta_o``
     as the x-coordinate of the point subtracted from the radial distance of the point ``t = r - x``.
 """
 t(ring::ring) = begin 
@@ -432,7 +433,8 @@ Return a profile for the model based on the specified name.
 - `m`: Model object to get the profile from
 - `name`: Name of the profile to get. Options include:
   - `:line`: Returns the line profile (integrated intensity as function of velocity)
-  - `:delay`: Returns the delay profile (mean delays weighted by intensity/responsivity vs. velocity)
+  - `:delay`: Returns the delay profile: the responsivity-weighted mean geometric delay per velocity bin,
+    Σ τ·I·η·ΔA / Σ I·η·ΔA (τ = r − x; η = local responsivity, see `response`)
   - `:r`: Returns the mean radius (weighted by intensity) as function of velocity 
   - `:ϕ`: Returns the mean azimuthal angle (weighted by intensity) as function of velocity
   - `:phase`: Returns the phase profile (integrated phase as function of velocity)
@@ -467,10 +469,10 @@ the model each call; see [`gpu`](@ref BLR.gpu) and [`ResidentModel`](@ref BLR.Re
         #intensity-weighted mean delay per velocity bin, built from memoized arrays
         if length(m.subModelStartInds) == 1 #single model: getVariable(m,t) resolves tDisk/tCloud once and hits m.cache (shared with getΨ/getΨt)
             delays = getVariable(m,t); I = getVariable(m,:I); η = getVariable(m,:η); v = getVariable(m,:v)
-            p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
+            p = binWeightedMean(m, v, delays.*I.*η, I.*η, bins, dx; kwargs...)
         else #combined model: getVariable(m,t) resolves to the general tCloud formula for every point (same delays as getΨ/getΨt -- exact consistency); expandPerPoint aligns per-ring scalar η with flattened I
             delays = getVariable(m,t); I = getVariable(m,:I,flatten=true); η = expandPerPoint(m,:η); v = getVariable(m,:v,flatten=true)
-            p = binWeightedMean(m, v, delays.*I, I.*η, bins, dx; kwargs...)
+            p = binWeightedMean(m, v, delays.*I.*η, I.*η, bins, dx; kwargs...)
         end
     elseif n == :r
         if isnothing(dx) #fast path from memoized arrays

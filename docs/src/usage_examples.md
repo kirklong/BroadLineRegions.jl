@@ -760,11 +760,12 @@ session additionally pays one-time kernel compilation.)
     implement custom physics that are not easily ported to the GPU; otherwise just use `gpuDiskWindModel`/`gpuCloudModel` when you
     rebuild "standard" geometries every iteration.
 
-### Custom intensity / velocity on the GPU
+### Custom intensity / velocity / radial distributions on the GPU
 
-`gpuDiskWindModel` accepts custom physics, as long as it can run inside a kernel — pass `intensity` (or
-`velocity`) as a **GPU-safe scalar callable** `(r, ϕ, inc) -> value` that closes only over `isbits`
-values. For example, for a disk with uniform emissivity (every point set to `1`):
+`gpuDiskWindModel` and `gpuCloudModel` accept custom `intensity` and `velocity` functions.
+To run inside the kernel, use a GPU-safe scalar callable such as `(r, ϕ, inc) -> value`
+that captures only `isbits` values. This disk-wind example sets a uniform emissivity
+of 1 at every point on the disk.
 
 ```julia
 mGPU = BLR.gpuDiskWindModel(3000.,100.,1.0,75/180*π;nr=2048,nϕ=1024,scale=:log,
@@ -773,9 +774,53 @@ mGPU = BLR.gpuDiskWindModel(3000.,100.,1.0,75/180*π;nr=2048,nϕ=1024,scale=:log
 p = BLR.getProfile(mGPU, :line, bins=101)
 ```
 
-A *general* `Function` that cannot run in a kernel (closures over arrays, calls into
-non-GPU libraries, etc.) should instead be used to build the model on the CPU and then moved over with
-`BLR.gpu(m)`. For a more detailed worked example of the `(r, ϕ, inc) -> value` form to model your own physics on, see the built-in
+If your function needs more geometry, use [`deviceCallback`](@ref BLR.deviceCallback)
+to select the fields. Both builders pass `r, ϕ, inc` first, followed by the selected fields
+in the order you list them. This six-argument intensity function uses the model opening
+angle and two Cartesian coordinates.
+
+```julia
+function weighted_intensity(r, ϕ, inc, opening, x, z)
+    return cos(opening) * exp(-(x*x + z*z) / (r*r))
+end
+
+intensity = BLR.deviceCallback(weighted_intensity, :θₒSystem, :x, :z)
+# Now you can pass intensity=intensity to either gpuDiskWindModel or gpuCloudModel.
+```
+
+For cloud models, `radial_sampler(u)` controls where the points are drawn.
+The example below puts 70% of the probability in the inner annulus and 30% in the outer annulus, with a
+log-uniform radius within each band. `BLR.jl` supplies a seeded uniform variate to the
+sampler for each cloud.
+
+```julia
+function two_radial_bands(u)
+    T = typeof(u)
+    p = T(0.7)
+    if u < p
+        lo, hi, q = T(150), T(400), u / p
+    else
+        lo, hi, q = T(900), T(2400), (u - p) / (one(T) - p)
+    end
+    return lo * exp(q * log(hi / lo))
+end
+
+clouds = BLR.gpuCloudModel(100_000, 42; i=π / 4, radial_sampler=two_radial_bands)
+cloud_profile = BLR.getProfile(clouds, :line; bins=101)
+```
+
+DiskWind uses a grid with projected-area weights. To redistribute the emission radially
+on that grid, use an intensity function that varies with `r`.
+
+You can also pass a callable that takes a single named tuple with the point's geometry.
+See [`residentDiskWindModel`](@ref BLR.residentDiskWindModel) and
+[`residentCloudModel`](@ref BLR.residentCloudModel) for the available fields.
+
+If a function needs host-only operations, use it with the CPU constructor and move the
+resulting model to the GPU with `BLR.gpu(m)`. This adds CPU construction and transfer
+cost each time you rebuild the model.
+
+For even more detailed worked examples of the `(r, ϕ, inc) -> value` form to model your own physics on, see the built-in
 GPU-safe closures: [`_rt_disk_intensity_fn`](@ref BLR._rt_disk_intensity_fn) (the device intensity, a
 direct port of the CPU [`DiskWind_I_`](@ref BLR.DiskWind_I_)) and
 [`_rt_disk_velocity_fn`](@ref BLR._rt_disk_velocity_fn) /

@@ -139,62 +139,64 @@ function _rt_weighted_variance!(σ²::AbstractVector, sumW::AbstractVector, sumW
     return σ²
 end
 
-# Reverberation delay τ = η·(r − x) (the general `tCloud` form; equals `tDisk` to rounding for a flat
-# ring). One thread per point; reproduces `getVariable(m, t)` for the resident pipeline without a
-# host round-trip.
-@kernel function _rt_transfer_delays_kernel!(delays, η, r, x)
+# Reverberation delay τ = r − x (the geometric light-travel delay; the general `tCloud` form, equal to
+# `tDisk` to rounding for a flat ring). One thread per point; reproduces `getVariable(m, t)` for the
+# resident pipeline without a host round-trip. The responsivity η is NOT a delay scale: it enters the
+# transfer functions as a per-point weight (see `_rt_psi2d!` / `_rt_psit!`).
+@kernel function _rt_transfer_delays_kernel!(delays, r, x)
     idx = @index(Global)
-    delays[idx] = η[idx] * (r[idx] - x[idx])
+    delays[idx] = r[idx] - x[idx]
 end
 
-function _rt_transfer_delays!(delays::AbstractArray, η::AbstractArray, r::AbstractArray,
+function _rt_transfer_delays!(delays::AbstractArray, r::AbstractArray,
         x::AbstractArray; backend=KernelAbstractions.CPU())
-    size(delays) == size(η) == size(r) == size(x) || throw(DimensionMismatch("delay arrays must have matching sizes"))
+    size(delays) == size(r) == size(x) || throw(DimensionMismatch("delay arrays must have matching sizes"))
     kernel! = _rt_transfer_delays_kernel!(backend)
-    event = kernel!(delays, η, r, x; ndrange=length(delays))
+    event = kernel!(delays, r, x; ndrange=length(delays))
     event !== nothing && wait(event)
     return delays
 end
 
 _rt_transfer_delays(ma::ModelArrays; backend=KernelAbstractions.CPU()) =
-    _rt_transfer_delays!(similar(ma.r), ma.η, ma.r, ma.x; backend=backend)
+    _rt_transfer_delays!(similar(ma.r), ma.r, ma.x; backend=backend)
 
-# 2D transfer function Ψ(v, t): single-pass atomic accumulation of I·ΔA into (velocity, delay) bins,
+# 2D transfer function Ψ(v, t): single-pass atomic accumulation of I·ΔA·η (η = local responsivity) into
+# (velocity, delay) bins,
 # uniform edges only, matching getΨ's `ΨAccumulate!` (binnedSum left-exclusive interior edges, no
 # overflow bins so boundary points are dropped, NaN v/delay dropped, NaN weights poison their bin so
 # the caller's `>0 ? Ψ : 1e-30` floor maps them to 1e-30).
-@kernel function _rt_psi2d_kernel!(Ψ, v, delays, I, ΔA, vEdges, tEdges, nV, nT)
+@kernel function _rt_psi2d_kernel!(Ψ, v, delays, I, ΔA, η, vEdges, tEdges, nV, nT)
     idx = @index(Global)
     bv = _rt_uniform_bin_index(v[idx], vEdges, nV, false)
     bt = _rt_uniform_bin_index(delays[idx], tEdges, nT, false)
     if bv != 0 && bt != 0
-        @atomic Ψ[bv + (bt - 1) * nV] += I[idx] * ΔA[idx]
+        @atomic Ψ[bv + (bt - 1) * nV] += I[idx] * ΔA[idx] * η[idx]
     end
 end
 
 function _rt_psi2d!(Ψ::AbstractMatrix, v::AbstractArray, delays::AbstractArray, I::AbstractArray,
-        ΔA::AbstractArray, vEdges::AbstractVector, tEdges::AbstractVector;
+        ΔA::AbstractArray, η::AbstractArray, vEdges::AbstractVector, tEdges::AbstractVector;
         backend=KernelAbstractions.CPU())
     nV = length(vEdges) - 1
     nT = length(tEdges) - 1
     size(Ψ) == (nV, nT) || throw(DimensionMismatch("Ψ must be ($nV, $nT)"))
-    length(v) == length(delays) == length(I) == length(ΔA) || throw(DimensionMismatch("Ψ inputs must have matching lengths"))
+    length(v) == length(delays) == length(I) == length(ΔA) == length(η) || throw(DimensionMismatch("Ψ inputs must have matching lengths"))
     fill!(Ψ, zero(eltype(Ψ)))
     Ψflat = reshape(Ψ, nV * nT)
     kernel! = _rt_psi2d_kernel!(backend)
-    event = kernel!(Ψflat, v, delays, I, ΔA, vEdges, tEdges, nV, nT; ndrange=length(v))
+    event = kernel!(Ψflat, v, delays, I, ΔA, η, vEdges, tEdges, nV, nT; ndrange=length(v))
     event !== nothing && wait(event)
     return Ψ
 end
 
-# 1D transfer function Ψ(t): I·ΔA binned by delay (uniform edges, same binnedSum convention as getΨt),
+# 1D transfer function Ψ(t): I·ΔA·η (η = local responsivity) binned by delay (uniform edges, same binnedSum convention as getΨt),
 # with optional overflow accumulation of under-/over-range weight into the first/last bin. `under`/
 # `over` are length-1 device arrays so the single sweep also collects the overflow sums.
-@kernel function _rt_psit_kernel!(Ψt, under, over, delays, I, ΔA, tEdges, nT)
+@kernel function _rt_psit_kernel!(Ψt, under, over, delays, I, ΔA, η, tEdges, nT)
     idx = @index(Global)
     di = delays[idx]
     if !isnan(di)
-        w = I[idx] * ΔA[idx]
+        w = I[idx] * ΔA[idx] * η[idx]
         if di <= tEdges[1]
             @atomic under[1] += w
         elseif di >= tEdges[nT+1]
@@ -206,16 +208,16 @@ end
 end
 
 function _rt_psit!(Ψt::AbstractVector, under::AbstractVector, over::AbstractVector,
-        delays::AbstractArray, I::AbstractArray, ΔA::AbstractArray, tEdges::AbstractVector;
+        delays::AbstractArray, I::AbstractArray, ΔA::AbstractArray, η::AbstractArray, tEdges::AbstractVector;
         backend=KernelAbstractions.CPU())
     nT = length(tEdges) - 1
     length(Ψt) == nT || throw(DimensionMismatch("Ψt must have length length(tEdges)-1"))
-    length(delays) == length(I) == length(ΔA) || throw(DimensionMismatch("Ψt inputs must have matching lengths"))
+    length(delays) == length(I) == length(ΔA) == length(η) || throw(DimensionMismatch("Ψt inputs must have matching lengths"))
     fill!(Ψt, zero(eltype(Ψt)))
     fill!(under, zero(eltype(under)))
     fill!(over, zero(eltype(over)))
     kernel! = _rt_psit_kernel!(backend)
-    event = kernel!(Ψt, under, over, delays, I, ΔA, tEdges, nT; ndrange=length(delays))
+    event = kernel!(Ψt, under, over, delays, I, ΔA, η, tEdges, nT; ndrange=length(delays))
     event !== nothing && wait(event)
     return Ψt, under, over
 end
